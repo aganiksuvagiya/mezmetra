@@ -1,0 +1,44 @@
+# Render Blueprint for the API: one long-running Node 22 process. The database is Aiven PostgreSQL and the two web
+# apps (admin, customer) are static sites on Cloudflare Pages - see README, "Deploying".
+# Values marked `sync: false` are asked for in the Render dashboard the first time; they never live in git.
+services:
+  - type: web
+    name: mezmitra-api
+    runtime: node
+    plan: free # free plans sleep after 15 minutes without traffic; switch to a paid plan for real restaurants
+    region: singapore # choose the region closest to your Aiven database
+    buildCommand: npm ci -w backend
+    startCommand: npm run start -w backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY # Render puts exactly one proxy in front of the API
+        value: "1"
+      - key: DATABASE_POOL_MAX
+        value: "5"
+      - key: ALLOW_SIGNUP
+        value: "true"
+      - key: PAYMENT_METHODS # UPI only for now; "upi,cash,razorpay" brings the others back
+        value: upi
+      - key: DATABASE_URL # Aiven "Service URI"
+        sync: false
+      - key: DATABASE_CA_CERT # contents of aiven-ca.pem (see README)
+        sync: false
+      - key: APP_SECRET # 32+ random characters; use the same value as backend/.env if you also run locally against Aiven
+        sync: false
+      - key: SUPER_ADMIN_EMAILS # your own account's email: it gets the Platform section (all restaurants, suspend/reactivate)
+        sync: false
+      - key: SMTP_URL # email for password reset, e.g. smtps://user:app-password@smtp.gmail.com:465 (see README)
+        sync: false
+      - key: MAIL_FROM # e.g. MezMitra <no-reply@yourdomain.in>
+        sync: false
+      - key: ADMIN_APP_URL # https URL of the admin site (base of the reset link)
+        sync: false
+      - key: CORS_ORIGINS # https URLs of the admin and customer sites, comma separated
+        sync: false
+      - key: CUSTOMER_APP_URL # https URL of the customer site (goes inside every table QR code)
+        sync: false

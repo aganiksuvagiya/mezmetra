@@ -1,0 +1,25 @@
+{
+  "name": "mezmitra",
+  "private": true,
+  "version": "1.0.0",
+  "description": "QR table ordering for restaurants: API, admin panel and customer menu on PostgreSQL (Aiven)",
+  "workspaces": [
+    "backend",
+    "admin",
+    "customer"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,admin,menu -c blue,magenta,green \"npm run dev -w backend\" \"npm run dev -w admin\" \"npm run dev -w customer\"",
+    "test": "npm test -w backend",
+    "build": "npm run build -w admin && npm run build -w customer",
+    "db:migrate": "npm run migrate -w backend",
+    "db:seed": "npm run seed -w backend",
+    "db:check": "npm run db:check -w backend",
+    "demo:history": "npm run demo:history -w backend --",
+    "demo:prices": "npm run demo:prices -w backend --",
+    "demo:qr": "npm run demo:qr -w backend --"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
