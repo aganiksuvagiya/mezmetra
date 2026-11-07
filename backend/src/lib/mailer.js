@@ -8,23 +8,28 @@ import { config } from '../config.js';
  * `send({ to, subject, text, html })` resolves when the mail was handed to the server.
  */
 export function createMailer() {
-  if (!config.smtpUrl) {
-    return {
-      configured: false,
-      async send({ to, subject, text }) {
-        if (config.isProd) {
-          console.warn(`[mail] SMTP_URL is not set, so "${subject}" to ${to} was not sent.`);
-          return;
-        }
-        console.log(`[mail] SMTP_URL is not set, so this email was NOT sent. It would have been:\n  To: ${to}\n  Subject: ${subject}\n\n${text}\n`);
-      },
-    };
-  }
-  const transport = nodemailer.createTransport(config.smtpUrl);
-  return {
-    configured: true,
-    send: (message) => transport.sendMail({ from: config.mailFrom, ...message }),
+  const unconfigured = {
+    configured: false,
+    async send({ to, subject, text }) {
+      if (config.isProd) {
+        console.warn(`[mail] SMTP is not set up, so "${subject}" to ${to} was not sent.`);
+        return;
+      }
+      console.log(`[mail] SMTP is not set up, so this email was NOT sent. It would have been:\n  To: ${to}\n  Subject: ${subject}\n\n${text}\n`);
+    },
   };
+
+  // An empty value, or a placeholder such as "none" (some dashboards insist on a value), means "no email".
+  const url = config.smtpUrl.trim();
+  if (!url || ['none', 'no', 'off', '-'].includes(url.toLowerCase())) return unconfigured;
+  try {
+    const transport = nodemailer.createTransport(url);
+    return { configured: true, send: (message) => transport.sendMail({ from: config.mailFrom, ...message }) };
+  } catch (err) {
+    // A mistyped SMTP_URL must not stop the whole API from starting.
+    console.warn(`[mail] SMTP_URL is not valid (${err.message}); password reset emails will not be sent.`);
+    return unconfigured;
+  }
 }
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

@@ -1,6 +1,7 @@
 # Render Blueprint for the API: one long-running Node 22 process. The database is Aiven PostgreSQL and the two web
 # apps (admin, customer) are static sites on Cloudflare Pages - see README, "Deploying".
 # Values marked `sync: false` are asked for in the Render dashboard the first time; they never live in git.
+# Email for password reset (SMTP_URL, MAIL_FROM) is optional: add both later in the dashboard (Environment) when you have an SMTP account.
 services:
   - type: web
     name: mezmitra-api
@@ -31,10 +32,6 @@ services:
       - key: APP_SECRET # 32+ random characters; use the same value as backend/.env if you also run locally against Aiven
         sync: false
       - key: SUPER_ADMIN_EMAILS # your own account's email: it gets the Platform section (all restaurants, suspend/reactivate)
-        sync: false
-      - key: SMTP_URL # email for password reset, e.g. smtps://user:app-password@smtp.gmail.com:465 (see README)
-        sync: false
-      - key: MAIL_FROM # e.g. MezMitra <no-reply@yourdomain.in>
         sync: false
       - key: ADMIN_APP_URL # https URL of the admin site (base of the reset link)
         sync: false
