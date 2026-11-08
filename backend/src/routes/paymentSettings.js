@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { HttpError, conflict, parse } from '../lib/errors.js';
 import { decryptSecret, encryptSecret } from '../lib/crypto.js';
 import { pingRazorpay } from '../lib/razorpay.js';
-import { MOBILE_RE, VPA_RE, normalizeMobile } from '../lib/upi.js';
+import { VPA_RE } from '../lib/upi.js';
 
 const KEY_ID = /^rzp_(test|live)_[A-Za-z0-9]{6,40}$/;
 
@@ -13,14 +13,6 @@ const putSchema = z.object({
   upi_enabled: z.boolean().optional(),
   // The restaurant's UPI ID (VPA), e.g. name@okhdfcbank. An empty string clears it.
   upi_id: z.union([z.literal(''), z.string().trim().regex(VPA_RE, 'Enter a valid UPI ID, like name@bank')]).optional(),
-  // The restaurant's mobile number for "Pay phone number" in any UPI app. An empty string clears it.
-  upi_mobile: z
-    .string()
-    .trim()
-    // Text without any digit stays as typed so it is rejected below (it must not silently count as "clear the number").
-    .transform((v) => (v === '' ? '' : normalizeMobile(v) || v))
-    .refine((v) => v === '' || MOBILE_RE.test(v), 'Enter a 10-digit mobile number, like 98765 43210')
-    .optional(),
   // Show the Google Pay / PhonePe / Paytm buttons (they only work for a business UPI ID).
   upi_pay_buttons: z.boolean().optional(),
   razorpay_enabled: z.boolean().optional(),
@@ -35,7 +27,6 @@ const out = (s) => ({
   cash_enabled: s.cash_enabled,
   upi_enabled: s.upi_enabled,
   upi_id: s.upi_id,
-  upi_mobile: s.upi_mobile,
   upi_pay_buttons: s.upi_pay_buttons,
   razorpay_enabled: s.razorpay_enabled,
   razorpay_key_id: s.razorpay_key_id,
@@ -66,7 +57,6 @@ export function paymentSettingsRouter(db) {
       const razorpayEnabled = body.razorpay_enabled ?? current.razorpay_enabled;
       const cashEnabled = body.cash_enabled ?? current.cash_enabled;
       const upiId = body.upi_id === undefined ? current.upi_id : body.upi_id || null;
-      const upiMobile = body.upi_mobile === undefined ? current.upi_mobile : body.upi_mobile || null;
       const upiEnabled = body.upi_enabled ?? current.upi_enabled;
       const upiPayButtons = body.upi_pay_buttons ?? current.upi_pay_buttons;
 
@@ -84,23 +74,23 @@ export function paymentSettingsRouter(db) {
       if (razorpayEnabled && !(keyId && secretEnc)) {
         throw new HttpError(400, 'VALIDATION_ERROR', 'Enter both the Razorpay Key ID and Key Secret before turning online payments on');
       }
-      if (upiEnabled && !upiId && !upiMobile) {
-        throw new HttpError(400, 'VALIDATION_ERROR', 'Enter your UPI ID or mobile number before turning UPI payments on');
+      if (upiEnabled && !upiId) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'Enter your UPI ID before turning UPI payments on');
       }
       const allowed = config.paymentMethods;
       if (!(allowed.has('razorpay') && razorpayEnabled) && !(allowed.has('cash') && cashEnabled) && !(allowed.has('upi') && upiEnabled)) {
         throw new HttpError(
           400,
           'VALIDATION_ERROR',
-          allowed.size === 1 && allowed.has('upi') ? 'Turn on UPI payments and enter your UPI ID or mobile number, so diners can pay' : 'Keep at least one payment method turned on',
+          allowed.size === 1 && allowed.has('upi') ? 'Turn on UPI payments and enter your UPI ID, so diners can pay' : 'Keep at least one payment method turned on',
         );
       }
       const { rows } = await t.query(
         `UPDATE vendor_payment_settings
             SET cash_enabled = $2, razorpay_enabled = $3, razorpay_key_id = $4, razorpay_key_secret_enc = $5,
-                upi_enabled = $6, upi_id = $7, upi_mobile = $8, upi_pay_buttons = $9, updated_at = now()
+                upi_enabled = $6, upi_id = $7, upi_pay_buttons = $8, updated_at = now()
           WHERE vendor_id = $1 RETURNING *`,
-        [req.vendorId, cashEnabled, razorpayEnabled, keyId, secretEnc, upiEnabled, upiId, upiMobile, upiPayButtons],
+        [req.vendorId, cashEnabled, razorpayEnabled, keyId, secretEnc, upiEnabled, upiId, upiPayButtons],
       );
       return rows[0];
     });

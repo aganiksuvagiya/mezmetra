@@ -136,7 +136,7 @@ export default function Dashboard() {
       {pay.data && !canTakeOrders(pay.data) && (
         <div className="mb-4 sm:mb-6">
           <Alert tone="warning">
-            <strong>Diners can&rsquo;t place orders yet.</strong> Add your UPI ID or mobile number and turn on UPI payments so they can pay.{' '}
+            <strong>Diners can&rsquo;t place orders yet.</strong> Add your UPI ID and turn on UPI payments so they can pay.{' '}
             <Link to="/payments" className="font-semibold text-brand-700 underline underline-offset-2">
               Set up payments
             </Link>

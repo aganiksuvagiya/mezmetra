@@ -60,7 +60,6 @@ export default function UpiPayment({ order, onRefresh }) {
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState(null);
   const [qr, setQr] = useState('');
-  // Without a UPI ID there is no pay link at all: the diner pays the restaurant's mobile number by hand, so show how straight away.
   // hasVpa: there is a payment link to turn into a QR code. buttons: also show the Google Pay / PhonePe / Paytm buttons, which the
   // restaurant turns on only for a business UPI ID (apps refuse such links for a personal one, so by default diners pay by hand).
   const hasVpa = Boolean(upi.vpa && upi.query);
@@ -175,7 +174,7 @@ export default function UpiPayment({ order, onRefresh }) {
           </>
         ) : (
           <>
-            Send <strong className="text-ink">{formatMoney(upi.amount)}</strong> to the restaurant{upi.mobile ? "'s mobile number" : "'s UPI ID"} from any UPI app (Google Pay, PhonePe, Paytm ...), then come back to this page.
+            Send <strong className="text-ink">{formatMoney(upi.amount)}</strong> to the restaurant&apos;s UPI ID from any UPI app (Google Pay, PhonePe, Paytm ...), then come back to this page.
           </>
         )}
       </p>
@@ -243,27 +242,15 @@ export default function UpiPayment({ order, onRefresh }) {
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-ink-soft">
           <li>
             Open Google Pay, PhonePe or any UPI app and choose{' '}
-            <strong className="text-ink">{upi.mobile ? 'Pay phone number' : 'Pay UPI ID'}</strong>
-            {upi.mobile && upi.vpa ? ' (or Pay UPI ID)' : ''}.
+            <strong className="text-ink">Pay UPI ID</strong>.
           </li>
           <li>
-            Enter {upi.mobile ? 'the mobile number' : 'the UPI ID'} below{upi.mobile && upi.vpa ? ' (or the UPI ID)' : ''} and exactly{' '}
+            Enter the UPI ID below and exactly{' '}
             <strong className="text-ink">{formatMoney(upi.amount)}</strong>.
           </li>
           <li>Come back here and tap &ldquo;I&apos;ve already paid&rdquo;.</li>
         </ol>
         <dl className="mt-3 space-y-2 border-t border-line pt-3">
-          {upi.mobile && (
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-ink-soft">Mobile number</dt>
-              <dd className="flex min-w-0 items-center gap-1.5 font-semibold tabular-nums text-ink">
-                <span className="truncate">{upi.mobile}</span>
-                <button type="button" onClick={() => copy(upi.mobile, 'Mobile number')} aria-label="Copy mobile number" className="grid size-9 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
-                  <CopyIcon className="size-4" />
-                </button>
-              </dd>
-            </div>
-          )}
           {upi.vpa && (
             <div className="flex items-center justify-between gap-2">
               <dt className="text-ink-soft">UPI ID</dt>

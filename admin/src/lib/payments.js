@@ -9,7 +9,7 @@ export function canTakeOrders(settings) {
   const avail = methodsAvailable(settings);
   return (
     (avail.has('cash') && settings.cash_enabled) ||
-    (avail.has('upi') && settings.upi_enabled && Boolean(settings.upi_id || settings.upi_mobile)) ||
+    (avail.has('upi') && settings.upi_enabled && Boolean(settings.upi_id)) ||
     (avail.has('razorpay') && settings.razorpay_enabled && settings.razorpay_configured)
   );
 }

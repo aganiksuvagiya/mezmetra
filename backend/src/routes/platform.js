@@ -43,7 +43,7 @@ const SELECT_RESTAURANTS = `
          (SELECT count(*) FROM dining_tables t WHERE t.vendor_id = v.id) AS tables,
          (SELECT count(*) FROM items i WHERE i.vendor_id = v.id) AS items,
          o.orders_total, o.orders_30d, o.revenue_total_paise, o.last_order_at,
-         COALESCE(s.upi_enabled AND (s.upi_id IS NOT NULL OR s.upi_mobile IS NOT NULL), false) AS upi_ready
+         COALESCE(s.upi_enabled AND s.upi_id IS NOT NULL, false) AS upi_ready
     FROM vendors v
     LEFT JOIN vendor_payment_settings s ON s.vendor_id = v.id
     LEFT JOIN LATERAL (

@@ -1117,7 +1117,7 @@ describe('demo data helpers (sample prices and order history)', () => {
   });
 });
 
-describe('UPI to a mobile number', () => {
+describe('UPI needs a UPI ID', () => {
   let token;
   let qr;
   let itemId;
@@ -1132,50 +1132,26 @@ describe('UPI to a mobile number', () => {
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'M1', capacity: 2 } })).body.data.qr_url.split('/').pop();
   });
 
-  it('takes a mobile number in any common format and stores 10 digits', async () => {
-    for (const [typed, stored] of [['+91 98765-43210', '9876543210'], ['09876543210', '9876543210'], ['98765 43210', '9876543210'], ['919876543210', '9876543210']]) {
-      const r = await put({ upi_mobile: typed });
-      assert.equal(r.status, 200, typed);
-      assert.equal(r.body.data.upi_mobile, stored, typed);
-    }
-    for (const bad of ['12345', '5876543210', '98765432101234', 'call me']) {
-      const r = await put({ upi_mobile: bad });
-      assert.equal(r.status, 400, bad);
-      assert.match(r.body.error.message, /10-digit mobile number/);
-    }
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_mobile, '9876543210', 'a rejected value changes nothing');
+  it('refuses to switch UPI on without a UPI ID', async () => {
+    const r = await put({ upi_enabled: true });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error.message, /UPI ID/);
   });
 
-  it('lets a restaurant take UPI with only a mobile number: no pay link, the number is shown instead', async () => {
-    const on = await put({ upi_enabled: true });
-    assert.equal(on.status, 200, 'a mobile number is enough to switch UPI on');
-    assert.equal(on.body.data.upi_id, null);
-    const menu = await api('GET', `/api/public/t/${qr}`);
-    assert.equal(menu.body.data.payment_options.upi, true);
-
+  it('has no mobile-number setting any more: it is not returned and a value sent for it is ignored', async () => {
+    const r = await put({ upi_enabled: true, upi_id: 'mobile.pay@okaxis', upi_mobile: '9876543210' });
+    assert.equal(r.status, 200);
+    assert.equal('upi_mobile' in r.body.data, false);
+    assert.equal('upi_mobile' in (await api('GET', '/api/admin/payment-settings', { token })).body.data, false);
     const o = await order();
-    assert.equal(o.upi.mobile, '9876543210');
-    assert.equal(o.upi.vpa, null);
-    assert.equal(o.upi.query, null, 'no pay link without a UPI ID');
-    assert.equal(o.upi.amount, 20);
-    const claim = await api('POST', `/api/public/orders/${o.token}/upi-claim`, { body: { reference: '412345678901' } });
-    assert.equal(claim.status, 200, 'the diner can still say they paid');
-    assert.equal(claim.body.data.payment_status, 'unpaid');
-  });
-
-  it('shows both the pay link and the number when the restaurant has both', async () => {
-    assert.equal((await put({ upi_id: 'mobile.pay@okaxis' })).status, 200);
-    const o = await order();
+    assert.equal('mobile' in o.upi, false, 'the diner is only ever shown the UPI ID');
     assert.equal(o.upi.vpa, 'mobile.pay@okaxis');
-    assert.equal(o.upi.mobile, '9876543210');
-    assert.ok(new URLSearchParams(o.upi.query).get('pa') === 'mobile.pay@okaxis');
+    assert.equal(new URLSearchParams(o.upi.query).get('pa'), 'mobile.pay@okaxis');
   });
 
-  it('needs at least one of them to keep UPI on', async () => {
-    assert.equal((await put({ upi_id: '', upi_mobile: '' })).status, 400);
-    assert.equal((await put({ upi_id: '' })).status, 200, 'the number alone is fine');
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_id, null);
-    assert.equal((await put({ upi_mobile: '' })).status, 400, 'but removing the last way of paying while UPI is on is refused');
+  it('refuses to remove the UPI ID while UPI is on', async () => {
+    assert.equal((await put({ upi_id: '' })).status, 400);
+    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_id, 'mobile.pay@okaxis', 'a refused change keeps the ID');
   });
 });
 
@@ -1211,12 +1187,10 @@ describe('UPI app buttons (off by default)', () => {
     assert.equal((await order()).upi.pay_buttons, false);
   });
 
-  it('never shows the buttons without a UPI ID, whatever the switch says', async () => {
-    assert.equal((await put({ upi_pay_buttons: true, upi_mobile: '9876543210', upi_id: '' })).status, 200);
-    const o = await order();
-    assert.equal(o.upi.pay_buttons, false);
-    assert.equal(o.upi.vpa, null);
-    assert.equal(o.upi.mobile, '9876543210');
+  it('cannot turn the buttons on for a restaurant that has no UPI ID', async () => {
+    assert.equal((await put({ upi_id: '' })).status, 400, 'UPI is on, so its ID cannot be removed');
+    assert.equal((await put({ upi_pay_buttons: true })).status, 200);
+    assert.equal((await order()).upi.vpa, 'buttons.cafe@okaxis');
   });
 });
 

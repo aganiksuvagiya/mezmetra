@@ -3,15 +3,6 @@
 // handle@bank, e.g. name@okhdfcbank, 9876543210@ybl
 export const VPA_RE = /^[a-zA-Z0-9._-]{2,64}@[a-zA-Z][a-zA-Z0-9.-]{1,48}$/;
 
-// Indian mobile number: 10 digits starting with 6-9. People type it as "98765 43210", "+91 98765-43210", "09876543210" ...
-export const MOBILE_RE = /^[6-9][0-9]{9}$/;
-export function normalizeMobile(input) {
-  let digits = String(input ?? '').replace(/\D/g, '');
-  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
-  else if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
-  return digits;
-}
-
 // UPI transaction references (UTR) are normally 12 digits; some apps show letters too.
 export const UPI_REFERENCE_RE = /^[A-Za-z0-9]{6,30}$/;
 

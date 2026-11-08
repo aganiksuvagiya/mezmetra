@@ -186,13 +186,7 @@ All take `from` and `to` (`YYYY-MM-DD`, the restaurant's own days; both default 
 - `GET /api/admin/reports/orders.csv` -> UTF-8 CSV (with BOM), one row per order placed or paid in the period; text cells that start with `= + - @` are prefixed with `'`.
 - `GET /api/admin/reports/report.pdf` -> A4 PDF with the summary, best sellers and the order list.
 
-## UPI mobile number
-
-- `upi_mobile` in `GET`/`PUT /api/admin/payment-settings`: the restaurant's mobile number for "Pay phone number" in any UPI app. Any common format is accepted (`+91 98765-43210`, `09876543210`) and stored as 10 digits; `""` clears it; anything else is 400 `VALIDATION_ERROR`.
-- UPI can be switched on with a UPI ID, a mobile number, or both. `payment_options.upi` is true when UPI is on and at least one of them is set.
-- The public order's `upi` is `{ vpa, mobile, payee_name, amount, query }`. `vpa`/`query` are `null` when only a mobile number is set: there is no pay link then, and the order page shows the number to pay by hand (the diner still taps "I've paid"; staff confirm).
-
 ## UPI app buttons
 
 - `upi_pay_buttons` (boolean, default `false`) in `GET`/`PUT /api/admin/payment-settings`: show the Google Pay / PhonePe / Paytm buttons. Turn it on only for a business (merchant) UPI ID: Google Pay and PhonePe usually refuse these pre-filled links for a personal UPI ID ("bank limit exceeded", "security reasons").
-- The public order's `upi` has `pay_buttons` (true only when the switch is on **and** there is a UPI ID). `query` is still sent whenever there is a UPI ID, because the order page uses it for the QR code. With the buttons off the page shows how to pay by typing the UPI ID or mobile number.
+- The public order's `upi` is `{ vpa, pay_buttons, payee_name, amount, query }`; `query` is always sent, because the order page uses it for the QR code. With the buttons off the page shows how to pay by typing the UPI ID.

@@ -119,11 +119,11 @@ Platform owner accounts cannot be suspended. Removing an email from `SUPER_ADMIN
 
 ## Payments: UPI only for now
 
-> **Personal UPI ID?** Google Pay and PhonePe refuse the pay-with-app buttons for an ordinary UPI ID ("bank limit exceeded", "security reasons"), so the buttons are **off by default**: diners pay by typing the UPI ID or your mobile number (a QR code is shown too). Turn on *Show UPI app buttons* in Admin -> Payments only for a business (merchant) UPI ID.
+> **Personal UPI ID?** Google Pay and PhonePe refuse the pay-with-app buttons for an ordinary UPI ID ("bank limit exceeded", "security reasons"), so the buttons are **off by default**: diners pay by typing the UPI ID (a QR code is shown too). Turn on *Show UPI app buttons* in Admin -> Payments only for a business (merchant) UPI ID.
 
 By default (`PAYMENT_METHODS=upi`) diners pay with a UPI app (Google Pay, PhonePe, Paytm ...): the order page opens the app with the
 exact amount filled in, the diner taps "I've paid", and the restaurant confirms the money arrived (**Orders -> Confirm UPI payment**).
-A restaurant has to enter its UPI ID (and/or a mobile number that diners can pay from any UPI app) in **Admin -> Payments** before diners can order; until then the Dashboard shows a reminder and the
+A restaurant has to enter its UPI ID in **Admin -> Payments** before diners can order; until then the Dashboard shows a reminder and the
 menu refuses orders with a clear message. Cash and Razorpay are hidden everywhere (admin, customer menu, API) until `PAYMENT_METHODS`
 lists them again; nothing is deleted, so switching them back on needs no migration.
 

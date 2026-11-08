@@ -72,8 +72,8 @@ export function publicRouter(db, { orderLimiter }) {
   const optionsFrom = (s) => ({
     cash: config.paymentMethods.has('cash') && (s ? s.cash_enabled : true),
     razorpay: config.paymentMethods.has('razorpay') && Boolean(s && s.razorpay_enabled && s.razorpay_key_id && s.razorpay_key_secret_enc),
-    // UPI works with a UPI ID (pay buttons and QR) and/or a mobile number (diners send money to it themselves).
-    upi: config.paymentMethods.has('upi') && Boolean(s && s.upi_enabled && (s.upi_id || s.upi_mobile)),
+    // UPI needs the restaurant's UPI ID (it is behind the QR code, the pay buttons and the "pay manually" steps).
+    upi: config.paymentMethods.has('upi') && Boolean(s && s.upi_enabled && s.upi_id),
   });
 
   const paymentOptions = async (q, vendorId) => optionsFrom(await paymentSettings(q, vendorId));
@@ -99,21 +99,17 @@ export function publicRouter(db, { orderLimiter }) {
       payment_options: options,
       upi: payable
         ? {
-            vpa: settings.upi_id ?? null,
-            mobile: settings.upi_mobile ?? null,
+            vpa: settings.upi_id,
             // Whether to show the Google Pay / PhonePe / Paytm buttons (off for a personal UPI ID: the apps refuse such links).
-            pay_buttons: Boolean(settings.upi_pay_buttons && settings.upi_id),
+            pay_buttons: Boolean(settings.upi_pay_buttons),
             payee_name: vendor.rows[0].name,
             amount: toRupees(order.total_paise),
-            // Without a UPI ID there is no pay link: the diner pays the mobile number by hand.
-            query: settings.upi_id
-              ? upiQuery({
-                  vpa: settings.upi_id,
-                  payeeName: vendor.rows[0].name,
-                  amountPaise: order.total_paise,
-                  note: `Table ${order.table_number} order`,
-                })
-              : null,
+            query: upiQuery({
+              vpa: settings.upi_id,
+              payeeName: vendor.rows[0].name,
+              amountPaise: order.total_paise,
+              note: `Table ${order.table_number} order`,
+            }),
           }
         : null,
     });

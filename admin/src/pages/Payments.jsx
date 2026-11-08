@@ -13,15 +13,6 @@ import { methodsAvailable } from '../lib/payments.js';
 
 const KEY_ID_RE = /^rzp_(test|live)_[A-Za-z0-9]{6,40}$/;
 const UPI_RE = /^[a-zA-Z0-9._-]{2,64}@[a-zA-Z][a-zA-Z0-9.-]{1,48}$/;
-const MOBILE_RE = /^[6-9][0-9]{9}$/;
-
-// "+91 98765-43210", "09876543210" ... -> "9876543210" (same rules as the API).
-const normMobile = (input) => {
-  let digits = String(input ?? '').replace(/\D/g, '');
-  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
-  else if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
-  return digits;
-};
 
 const modeOf = (keyId) => (keyId.startsWith('rzp_live_') ? 'live' : keyId.startsWith('rzp_test_') ? 'test' : null);
 
@@ -40,7 +31,6 @@ function PaymentsForm({ settings, onSaved }) {
   const [online, setOnline] = useState(settings.razorpay_enabled);
   const [upi, setUpi] = useState(settings.upi_enabled);
   const [upiId, setUpiId] = useState(settings.upi_id ?? '');
-  const [upiMobile, setUpiMobile] = useState(settings.upi_mobile ?? '');
   const [payButtons, setPayButtons] = useState(settings.upi_pay_buttons ?? false);
   const [keyId, setKeyId] = useState(settings.razorpay_key_id ?? '');
   const [secret, setSecret] = useState('');
@@ -56,7 +46,7 @@ function PaymentsForm({ settings, onSaved }) {
 
   const savedKeyId = settings.razorpay_key_id ?? '';
   const keysChanged = showRazorpay && (keyId.trim() !== savedKeyId || secret.trim() !== '');
-  const upiChanged = upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || normMobile(upiMobile) !== (settings.upi_mobile ?? '') || payButtons !== (settings.upi_pay_buttons ?? false);
+  const upiChanged = upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || payButtons !== (settings.upi_pay_buttons ?? false);
   const dirty = (showCash && cash !== settings.cash_enabled) || (showRazorpay && online !== settings.razorpay_enabled) || keysChanged || upiChanged;
   const mode = modeOf(keyId.trim() || savedKeyId);
 
@@ -77,9 +67,7 @@ function PaymentsForm({ settings, onSaved }) {
     if (sec && sec.length < 8) next.secret = 'That Key Secret looks too short.';
     const vpa = upiId.trim();
     if (vpa && !UPI_RE.test(vpa)) next.upiId = 'A UPI ID looks like name@bank, e.g. shop@okhdfcbank or 9876543210@ybl.';
-    const mobile = upiMobile.trim() ? normMobile(upiMobile) : '';
-    if (upiMobile.trim() && !MOBILE_RE.test(mobile)) next.upiMobile = 'Enter a 10-digit mobile number, like 98765 43210.';
-    if (upi && !vpa && !mobile) next.upiId = 'Enter your UPI ID or your mobile number to turn on UPI payments.';
+    if (upi && !vpa) next.upiId = 'Enter your UPI ID to turn on UPI payments.';
     if (online) {
       if (!id && !savedKeyId) next.keyId = 'Enter your Razorpay Key ID to turn on online payments.';
       if (!sec && !settings.razorpay_secret_set) next.secret = 'Enter your Razorpay Key Secret to turn on online payments.';
@@ -95,7 +83,7 @@ function PaymentsForm({ settings, onSaved }) {
       setErrors({});
       setFormError(
         upiOnly
-          ? 'Turn on UPI payments and enter your UPI ID or mobile number, or diners won’t be able to pay.'
+          ? 'Turn on UPI payments and enter your UPI ID, or diners won’t be able to pay.'
           : 'Keep at least one payment method turned on, or diners won’t be able to pay.',
       );
       return;
@@ -111,7 +99,6 @@ function PaymentsForm({ settings, onSaved }) {
     if (online !== settings.razorpay_enabled) body.razorpay_enabled = online;
     if (upi !== settings.upi_enabled) body.upi_enabled = upi;
     if (upiId.trim() !== (settings.upi_id ?? '')) body.upi_id = upiId.trim();
-    if (normMobile(upiMobile) !== (settings.upi_mobile ?? '')) body.upi_mobile = normMobile(upiMobile);
     if (payButtons !== (settings.upi_pay_buttons ?? false)) body.upi_pay_buttons = payButtons;
     if (keyId.trim() && keyId.trim() !== savedKeyId) body.razorpay_key_id = keyId.trim();
     if (secret.trim()) body.razorpay_key_secret = secret.trim();
@@ -125,8 +112,8 @@ function PaymentsForm({ settings, onSaved }) {
         toast.success('Payment settings saved.');
         onSaved(saved);
       } catch (error) {
-        const { fields, formError: message } = splitFieldErrors(error, ['razorpay_key_id', 'razorpay_key_secret', 'upi_id', 'upi_mobile']);
-        setErrors({ keyId: fields.razorpay_key_id, secret: fields.razorpay_key_secret, upiId: fields.upi_id, upiMobile: fields.upi_mobile });
+        const { fields, formError: message } = splitFieldErrors(error, ['razorpay_key_id', 'razorpay_key_secret', 'upi_id']);
+        setErrors({ keyId: fields.razorpay_key_id, secret: fields.razorpay_key_secret, upiId: fields.upi_id });
         setFormError(message);
         if (Object.keys(fields).length) focusFirstInvalid(form);
       }
@@ -198,7 +185,7 @@ function PaymentsForm({ settings, onSaved }) {
       </Card>
 
       <Card as="section" aria-labelledby="upi">
-        <CardHeader id="upi" title="UPI ID and mobile number" description="Money from UPI apps goes straight to your UPI ID or mobile number." />
+        <CardHeader id="upi" title="UPI ID" description="Money from UPI apps goes straight to your UPI ID." />
         <div className="space-y-3 p-4 sm:p-5">
           <Input
             label="Your UPI ID"
@@ -216,24 +203,9 @@ function PaymentsForm({ settings, onSaved }) {
             inputMode="email"
             hint="Find it in your UPI app under your profile. Diners see it when they pay."
           />
-          <Input
-            label="Your mobile number (optional)"
-            value={upiMobile}
-            onChange={(e) => {
-              setUpiMobile(e.target.value);
-              setErrors((p) => ({ ...p, upiMobile: undefined }));
-              clearFeedback();
-            }}
-            error={errors.upiMobile}
-            prefix="+91"
-            placeholder="98765 43210"
-            inputMode="tel"
-            autoComplete="off"
-            hint="Diners can send money to this number from any UPI app (Pay phone number). They see it on their order page. Handy when Google Pay refuses the pay button; it also works without a UPI ID."
-          />
           <SwitchField
             label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
-            description="Turn this on only if your UPI ID is a business (merchant) ID. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID or mobile number, which always works."
+            description="Turn this on only if your UPI ID is a business (merchant) ID. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID, which always works."
             checked={payButtons}
             onChange={(v) => {
               setPayButtons(v);
