@@ -168,8 +168,10 @@ The free plans are fine for demos and first restaurants; for real daily use move
 
    Environment variables for both: `VITE_API_URL=https://<your-service>.onrender.com` (no trailing slash) and `NODE_VERSION=22`.
    `public/_redirects` (single-page-app routing) and `public/_headers` (caching, basic security headers) are already in each app.
-   **Vercel instead of Cloudflare Pages:** `admin/vercel.json` and `customer/vercel.json` are ready. In Vercel choose **Import single project**
-   (not the multi-service import) for `admin` and again for `customer`, add `VITE_API_URL`, deploy. Vercel's free Hobby plan is for
+   **Vercel instead of Cloudflare Pages:** the repo-root `vercel.json` (SPA rewrite + headers) is shared by both sites. In Vercel choose
+   **Import single project** (not the multi-service import) twice, leave **Root Directory** as `./`, and set per project
+   (Settings → Build & Development): Framework **Vite**, Install `npm ci`, Build `npm run build -w admin` (or `-w customer`),
+   Output Directory `admin/dist` (or `customer/dist`). Add `VITE_API_URL`, deploy. Vercel's free Hobby plan is for
    non-commercial use only, so use Cloudflare Pages (or a paid Vercel plan) for real restaurants.
 4. **Connect them.** On Render set `CORS_ORIGINS=https://<admin>.pages.dev,https://<customer>.pages.dev` and
    `CUSTOMER_APP_URL=https://<customer>.pages.dev`; it redeploys by itself. Table QR codes use `CUSTOMER_APP_URL`, so
