@@ -26,7 +26,7 @@ export function DishCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd,
       </div>
 
       <div className="pointer-events-none flex w-[6.25rem] shrink-0 flex-col items-center">
-        <DishImage item={item} className={`size-[6.25rem] rounded-[22px] ${item.is_sold_out ? 'opacity-60 grayscale' : ''}`} iconClass="size-11" />
+        <DishImage item={item} className={`size-[6.25rem] rounded-[18px] ${item.is_sold_out ? 'opacity-60 grayscale' : ''}`} iconClass="size-11" />
         <div className="-mt-5">
           <AddControl item={item} plainQty={plainQty} totalQty={totalQty} hasOptions={hasOptions} onQuickAdd={onQuickAdd} onStep={onStep} onOpen={onOpen} />
         </div>
@@ -39,7 +39,7 @@ export function DishCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd,
 export function PickCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd, onStep }) {
   const hasOptions = (item.option_groups ?? []).length > 0;
   return (
-    <article className="relative aspect-[5/6] w-[68%] max-w-[16.5rem] shrink-0 snap-start overflow-hidden rounded-[28px] text-white shadow-soft has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-800">
+    <article className="relative aspect-[5/6] w-[68%] max-w-[16.5rem] shrink-0 snap-start overflow-hidden rounded-[22px] text-white shadow-soft has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-800">
       <DishImage item={item} variant="hero" className={`pointer-events-none absolute inset-0 size-full ${item.is_sold_out ? 'grayscale' : ''}`} iconClass="size-28" />
       <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/75 via-black/30 to-transparent" />
 

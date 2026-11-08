@@ -2,8 +2,8 @@
 
 /* MezMitra customer app - calm, appetising, premium-casual. */
 @theme {
-  /* Plus Jakarta Sans is bundled (no Google Fonts request); the system stack is the fallback while it loads. */
-  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  /* iPhone look: SF Pro on Apple devices; Inter (bundled, no Google Fonts request) everywhere else. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter Variable", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 
   /* Saffron accent for small highlights (chef's pick, offers), paired with the teal primary. */
   --color-saffron-100: #fdebd3;
@@ -24,11 +24,12 @@
   --color-brand-900: #173630;
 
   /* Warm neutrals. ink-soft is >= 5.7:1 on the page background. */
-  --color-page: color-mix(in oklab, var(--color-brand-50) 38%, #fbfbf8);
-  --color-canvas: color-mix(in oklab, var(--color-brand-100) 45%, #e9e8e2);
-  --color-ink: #1d2926;
-  --color-ink-soft: #566360;
-  --color-line: #e6e4dc;
+  /* iOS "grouped" greys: a light grey page with white cells. ink-soft stays >= 5.5:1 on white. */
+  --color-page: #f2f2f7;
+  --color-canvas: #e5e5ea;
+  --color-ink: #1c1c1e;
+  --color-ink-soft: #636366;
+  --color-line: #d9d9de;
 
   --shadow-soft: 0 1px 1px rgb(16 24 20 / 0.04), 0 14px 34px -16px rgb(16 24 20 / 0.2);
   --shadow-dock: 0 18px 44px -10px rgb(16 24 20 / 0.38), 0 2px 8px rgb(16 24 20 / 0.1);
@@ -107,7 +108,7 @@
   }
   @keyframes toast-in {
     from {
-      transform: translateY(-12px);
+      transform: translateY(12px);
       opacity: 0;
     }
     to {
@@ -119,7 +120,7 @@
 
 :root {
   /* Fixed height of the bottom tab bar, so page-level sticky bars can sit directly above it. */
-  --tabbar-h: calc(5.75rem + env(safe-area-inset-bottom));
+  --tabbar-h: calc(5rem + env(safe-area-inset-bottom));
 }
 
 @layer base {
@@ -178,28 +179,27 @@
 
 /* A white, softly lifted surface. */
 @utility surface {
-  border-radius: 1.75rem;
+  border-radius: 1.125rem;
   background: #fff;
-  box-shadow: var(--shadow-soft), 0 0 0 1px rgb(16 24 20 / 0.05);
+  box-shadow: 0 0 0 0.5px rgb(60 60 67 / 0.16), 0 1px 2px rgb(0 0 0 / 0.04);
 }
 
 /* Big, tight headings. */
 @utility display {
-  letter-spacing: -0.035em;
+  letter-spacing: -0.03em;
   text-wrap: balance;
 }
 
 /* Frosted glass: floating bars and chips over scrolling content. */
 @utility glass {
-  background: rgb(255 255 255 / 0.78);
-  -webkit-backdrop-filter: blur(22px) saturate(1.6);
-  backdrop-filter: blur(22px) saturate(1.6);
-  box-shadow: 0 0 0 1px rgb(16 24 20 / 0.06);
+  background: rgb(250 250 252 / 0.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  backdrop-filter: blur(24px) saturate(1.8);
+  box-shadow: 0 0 0 0.5px rgb(60 60 67 / 0.18);
 }
 
 /* Soft colour wash behind page headers, tinted by the restaurant's two colours. */
 @utility aurora {
-  background-image:
-    radial-gradient(70% 60% at 92% -8%, color-mix(in oklab, var(--color-brand-300) 70%, transparent), transparent 72%),
-    radial-gradient(60% 55% at -6% 12%, color-mix(in oklab, var(--color-saffron-300) 55%, transparent), transparent 70%);
+  /* iOS pages are flat grey with a large title; the restaurant's colour shows up in buttons, links and the app-icon tile. */
+  background: transparent;
 }

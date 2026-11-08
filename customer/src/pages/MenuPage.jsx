@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { DishCard, PickCard } from '../components/DishCard';
 import EmptyState from '../components/EmptyState';
 import { Button } from '../components/Button';
-import { ChevronRightIcon, CloseIcon, MenuBookIcon, SearchIcon } from '../components/Icons';
+import { CardIcon, CashIcon, ChevronRightIcon, CloseIcon, MenuBookIcon, PhoneIcon, SearchIcon } from '../components/Icons';
 import ItemSheet from '../components/ItemSheet';
+import VendorMark from '../components/VendorMark';
 import { useToast } from '../components/Toast';
 import { buildLine, lineKey, MAX_LINES, MAX_QTY } from '../lib/cart';
 import { useActiveOrder } from '../lib/useActiveOrder';
@@ -47,6 +48,13 @@ export default function MenuPage() {
   }, [cart.lines]);
 
   const picks = useMemo(() => items.filter((i) => i.is_featured), [items]);
+
+  // The ways of paying this restaurant takes, shown under its name so nobody is surprised at the cart.
+  const payChips = [
+    menu.payment_options?.upi && { key: 'upi', label: 'UPI', Icon: PhoneIcon },
+    menu.payment_options?.razorpay && { key: 'online', label: 'Card & online', Icon: CardIcon },
+    menu.payment_options?.cash && { key: 'cash', label: 'Pay at counter', Icon: CashIcon },
+  ].filter(Boolean);
 
   const sections = useMemo(() => {
     const grouped = categories
@@ -153,19 +161,34 @@ export default function MenuPage() {
 
   return (
     <main className="pb-[calc(var(--tabbar-h)+1.5rem)]">
-      <header className="aurora relative px-5 pb-4 pt-[calc(env(safe-area-inset-top)+1.25rem)]">
-        <span className="glass inline-flex items-center gap-2 rounded-full py-1.5 pl-3 pr-3.5 text-[13px] font-bold text-ink">
-          <span className="relative flex size-2.5">
-            <span aria-hidden="true" className="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 motion-safe:animate-ping" />
-            <span aria-hidden="true" className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
-          </span>
-          {`Table ${menu.table.number}`}
-        </span>
-        <h1 className="display mt-6 break-words text-[34px] font-extrabold leading-[1.02] text-ink">{menu.vendor.name}</h1>
-        <p className="mt-1.5 text-[15px] text-ink-soft">What are you craving today?</p>
+      <header className="px-5 pb-1 pt-[calc(env(safe-area-inset-top)+1.25rem)]">
+        <div className="flex items-center gap-3.5">
+          <VendorMark vendor={menu.vendor} />
+          <div className="min-w-0">
+            <h1 className="display break-words text-[30px] font-extrabold leading-[1.05] text-ink">{menu.vendor.name}</h1>
+            <p className="mt-0.5 text-[15px] text-ink-soft">What are you craving today?</p>
+          </div>
+        </div>
 
-        <div className="relative mt-5">
-          <SearchIcon className="pointer-events-none absolute left-4 top-1/2 z-10 size-5 -translate-y-1/2 text-ink-soft" />
+        <ul aria-label="Your table and ways to pay" className="mt-4 flex flex-wrap gap-2">
+          <li className="inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-2.5 pr-3 text-[13px] font-bold text-ink ring-1 ring-inset ring-black/5">
+            <span className="relative flex size-2.5">
+              <span aria-hidden="true" className="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 motion-safe:animate-ping" />
+              <span aria-hidden="true" className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+            </span>
+            {`Table ${menu.table.number}`}
+          </li>
+          {payChips.map(({ key, label, Icon }) => (
+            <li key={key} className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-2.5 py-1.5 text-xs font-semibold text-ink-soft">
+              <Icon className="size-3.5" />
+              {label}
+            </li>
+          ))}
+        </ul>
+
+        {/* iOS search field: a grey rounded well, no border. */}
+        <div className="relative mt-4">
+          <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 z-10 size-[18px] -translate-y-1/2 text-ink-soft" />
           <input
             type="search"
             value={query}
@@ -174,14 +197,14 @@ export default function MenuPage() {
             aria-label="Search the menu"
             enterKeyHint="search"
             autoComplete="off"
-            className="glass h-[52px] w-full appearance-none rounded-full border-0 pl-12 pr-12 text-ink shadow-soft placeholder:text-ink-soft [&::-webkit-search-cancel-button]:hidden"
+            className="h-11 w-full appearance-none rounded-xl border-0 bg-[rgb(118_118_128_/_0.12)] pl-10 pr-11 text-ink placeholder:text-ink-soft [&::-webkit-search-cancel-button]:hidden"
           />
           {query && (
             <button
               type="button"
               onClick={() => setQuery('')}
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full text-ink-soft hover:bg-black/5"
+              className="absolute right-1.5 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full text-ink-soft hover:bg-black/5"
             >
               <CloseIcon className="size-4" />
             </button>
@@ -190,7 +213,7 @@ export default function MenuPage() {
       </header>
 
       {activeOrder && (
-        <div className="px-4 pt-1">
+        <div className="px-4 pt-3">
           <Link
             to={`/o/${activeOrder.token}`}
             className="flex min-h-14 items-center gap-3 rounded-2xl bg-ink px-4 py-3 text-white shadow-soft transition-colors hover:bg-ink/90"
@@ -213,7 +236,7 @@ export default function MenuPage() {
       )}
 
       {!searching && chips.length > 1 && (
-        <nav aria-label="Menu categories" className="sticky top-0 z-20 mt-3 border-b border-black/5 bg-page/80 backdrop-blur-xl">
+        <nav aria-label="Menu categories" className="sticky top-0 z-20 mt-3 border-b border-black/10 bg-page/80 backdrop-blur-xl backdrop-saturate-150">
           <div ref={chipScroller} className="flex gap-2 overflow-x-auto px-4 py-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {chips.map((c) => {
               const active = activeId === c.id;
@@ -224,7 +247,7 @@ export default function MenuPage() {
                   aria-current={active ? 'true' : undefined}
                   onClick={() => jumpTo(c.id)}
                   className={`min-h-10 shrink-0 rounded-full px-4 text-sm font-bold transition-colors ${
-                    active ? 'bg-ink text-white shadow-soft' : 'bg-white text-ink ring-1 ring-inset ring-black/5 hover:bg-black/5'
+                    active ? 'bg-brand-600 text-white' : 'bg-black/[0.06] text-ink hover:bg-black/10'
                   }`}
                 >
                   {c.name}
@@ -242,9 +265,9 @@ export default function MenuPage() {
               {results.length === 0 ? 'No matches' : `${results.length} ${results.length === 1 ? 'dish' : 'dishes'} found`}
             </p>
             {results.length > 0 ? (
-              <ul className="surface mt-3 divide-y divide-black/5 overflow-hidden">
+              <ul className="surface mt-3 overflow-hidden">
                 {results.map((item) => (
-                  <li key={item.id}>
+                  <li key={item.id} className="relative before:pointer-events-none before:absolute before:left-4 before:right-0 before:top-0 before:h-px before:bg-line first:before:hidden">
                     <DishCard {...cardProps(item)} />
                   </li>
                 ))}
@@ -289,9 +312,9 @@ export default function MenuPage() {
                   <span className="text-sm font-semibold tracking-normal text-ink-soft">{section.items.length}</span>
                 </h2>
                 {section.description && <p className="mt-0.5 px-1 text-sm text-ink-soft">{section.description}</p>}
-                <ul className="surface mt-4 divide-y divide-black/5 overflow-hidden">
+                <ul className="surface mt-4 overflow-hidden">
                   {section.items.map((item) => (
-                    <li key={item.id}>
+                    <li key={item.id} className="relative before:pointer-events-none before:absolute before:left-4 before:right-0 before:top-0 before:h-px before:bg-line first:before:hidden">
                       <DishCard {...cardProps(item)} />
                     </li>
                   ))}

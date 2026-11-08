@@ -70,35 +70,45 @@ export default function Landing() {
   };
 
   return (
-    <main className="aurora flex min-h-dvh flex-col px-5 pb-[calc(2rem+env(safe-area-inset-bottom))] pt-[calc(1.75rem+env(safe-area-inset-top))]">
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-10 place-items-center rounded-xl bg-brand-600 text-white shadow-float">
-          <MenuBookIcon className="size-6" />
-        </span>
-        <span className="text-xl font-extrabold tracking-tight text-brand-800">MezMitra</span>
-      </div>
+    <main className="flex min-h-dvh flex-col">
+      <section className="relative overflow-hidden rounded-b-[2rem] bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 px-5 pb-8 pt-[calc(1.75rem+env(safe-area-inset-top))] text-white">
+        <span aria-hidden="true" className="pointer-events-none absolute -right-16 -top-20 size-64 rounded-full bg-saffron-300/30 blur-3xl" />
+        <span aria-hidden="true" className="pointer-events-none absolute -bottom-28 -left-20 size-60 rounded-full bg-brand-400/35 blur-3xl" />
+        <div className="relative">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-10 place-items-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/25">
+              <MenuBookIcon className="size-6" />
+            </span>
+            <span className="text-xl font-extrabold tracking-tight">MezMitra</span>
+          </div>
 
-      <section className="mt-8 flex items-center gap-5">
-        <div className="min-w-0 flex-1">
-          <h1 className="display text-[34px] font-extrabold leading-[1.05] text-ink">
-            Order from your table, <span className="text-brand-600">no waiting.</span>
-          </h1>
-          <p className="mt-3 text-base text-ink-soft">Scan the QR code on your table with your phone camera.</p>
-        </div>
-        <div className="relative grid size-28 shrink-0 place-items-center surface p-3">
-          <QrArt />
-          <span
-            aria-hidden="true"
-            className="absolute inset-x-3 top-3 h-0.5 rounded-full bg-brand-400 shadow-md motion-safe:animate-scan"
-          />
+          <div className="mt-8 flex items-center gap-5">
+            <div className="min-w-0 flex-1">
+              <h1 className="display text-[34px] font-extrabold leading-[1.05]">
+                Order from your table, <span className="text-saffron-300">no waiting.</span>
+              </h1>
+              <p className="mt-3 text-base text-white/80">Scan the QR code on your table with your phone camera.</p>
+            </div>
+            {/* The picture is only decoration; on the narrowest phones the headline gets the whole width instead. */}
+            <div className="relative hidden size-28 shrink-0 place-items-center rounded-[1.75rem] bg-white p-3 shadow-float min-[360px]:grid">
+              <QrArt />
+              <span aria-hidden="true" className="absolute inset-x-3 top-3 h-0.5 rounded-full bg-brand-400 shadow-md motion-safe:animate-scan" />
+            </div>
+          </div>
+
+          <button
+            ref={scanButton}
+            type="button"
+            onClick={() => setScanning(true)}
+            className="mt-7 inline-flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-white px-5 text-lg font-extrabold text-brand-800 shadow-float transition-colors hover:bg-brand-50 active:bg-brand-100"
+          >
+            <QrIcon className="size-6" />
+            Scan QR code
+          </button>
         </div>
       </section>
 
-      <Button ref={scanButton} block onClick={() => setScanning(true)} className="mt-6 min-h-14 text-lg shadow-float">
-        <QrIcon className="size-6" />
-        Scan QR code
-      </Button>
-
+      <div className="flex flex-1 flex-col px-5 pb-[calc(2rem+env(safe-area-inset-bottom))]">
       <ol className="mt-8 space-y-3">
         {STEPS.map(([title, text], i) => (
           <li key={title} className="surface flex gap-3 !rounded-3xl p-3.5">
@@ -151,6 +161,7 @@ export default function Landing() {
           <QrScanner onToken={onToken} onClose={closeScanner} />
         </Suspense>
       )}
+      </div>
     </main>
   );
 }

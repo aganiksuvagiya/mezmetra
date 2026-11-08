@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { HttpError, notFound, parse, suspended, unauthorized } from '../lib/errors.js';
 import { passwordResetEmail } from '../lib/mailer.js';
 import { vendorOut } from '../lib/serialize.js';
+import { detectImageMime, IMAGE_TYPES } from '../lib/image.js';
 import { requireActiveVendor, requireAuth, signToken } from '../middleware/auth.js';
 
 const email = z.string().trim().toLowerCase().max(200).pipe(z.email('Enter a valid email address'));
@@ -131,6 +132,8 @@ const vendorPatchSchema = z
   })
   .partial();
 
+const MAX_LOGO_BYTES = 512 * 1024;
+
 export function vendorRouter(db) {
   const router = Router();
 
@@ -160,6 +163,34 @@ export function vendorRouter(db) {
       [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null],
     );
     res.json({ data: vendorOut(rows[0]) });
+  });
+
+  // Logo upload: send the raw image bytes as the body with Content-Type image/jpeg|png|webp (the admin shrinks it first).
+  router.put('/logo', express.raw({ type: IMAGE_TYPES, limit: MAX_LOGO_BYTES }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'Send a JPEG, PNG or WebP image as the request body');
+    }
+    const mime = detectImageMime(req.body);
+    if (!mime) throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'File is not a valid JPEG, PNG or WebP image');
+    const vendor = await db.tx(async (t) => {
+      await t.query(
+        `INSERT INTO vendor_logos (vendor_id, mime, data) VALUES ($1, $2, $3)
+         ON CONFLICT (vendor_id) DO UPDATE SET mime = EXCLUDED.mime, data = EXCLUDED.data`,
+        [req.vendorId, mime, req.body],
+      );
+      const { rows } = await t.query(`UPDATE vendors SET has_logo = true, logo_version = logo_version + 1 WHERE id = $1 RETURNING *`, [req.vendorId]);
+      return rows[0];
+    });
+    res.json({ data: vendorOut(vendor) });
+  });
+
+  router.delete('/logo', async (req, res) => {
+    const vendor = await db.tx(async (t) => {
+      await t.query(`DELETE FROM vendor_logos WHERE vendor_id = $1`, [req.vendorId]);
+      const { rows } = await t.query(`UPDATE vendors SET has_logo = false, logo_version = logo_version + 1 WHERE id = $1 RETURNING *`, [req.vendorId]);
+      return rows[0];
+    });
+    res.json({ data: vendorOut(vendor) });
   });
 
   return router;

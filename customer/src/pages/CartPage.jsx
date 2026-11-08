@@ -140,18 +140,15 @@ export default function CartPage() {
 
   return (
     <main className="pb-[calc(env(safe-area-inset-bottom)+8rem)]">
-      <header className="aurora px-4 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)]">
+      <header className="px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <div className="flex items-center justify-between gap-3">
-          <Link
-            to={`/t/${token}`}
-            aria-label="Back to the menu"
-            className="glass grid size-11 place-items-center rounded-full text-ink transition-transform active:scale-95"
-          >
+          <Link to={`/t/${token}`} className="-ml-1 inline-flex min-h-11 items-center gap-0.5 rounded-xl pr-2 text-[17px] font-medium text-brand-700 active:opacity-60">
             <ArrowLeftIcon className="size-5" />
+            Menu
           </Link>
-          <span className="glass rounded-full px-3.5 py-1.5 text-[13px] font-bold text-ink">Table {menu.table.number}</span>
+          <span className="rounded-full bg-white px-3 py-1.5 text-[13px] font-bold text-ink ring-1 ring-inset ring-black/5">Table {menu.table.number}</span>
         </div>
-        <h1 className="display mt-4 text-[32px] font-extrabold leading-tight text-ink">Your cart</h1>
+        <h1 className="display mt-2 text-[34px] font-extrabold leading-tight text-ink">Your cart</h1>
         <p className="truncate text-[15px] text-ink-soft">{menu.vendor.name}</p>
       </header>
 
@@ -212,7 +209,7 @@ export default function CartPage() {
                         className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-2.5 text-sm font-bold text-rose-700 hover:bg-rose-50"
                       >
                         <TrashIcon className="size-4" />
-                        Remove
+                        <span className="hidden min-[360px]:inline">Remove</span>
                       </button>
                     </div>
                   </div>
@@ -304,13 +301,13 @@ export default function CartPage() {
       </div>
 
       {!empty && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-          <div className="glass pointer-events-auto mx-auto flex max-w-md items-center gap-3 rounded-[30px] p-2 pl-5 shadow-dock motion-safe:animate-bar-in">
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30">
+          <div className="glass pointer-events-auto mx-auto flex max-w-md items-center gap-4 rounded-t-[1.25rem] px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 motion-safe:animate-bar-in">
             <div className="shrink-0">
               <p className="text-xs font-semibold text-ink-soft">Estimated total</p>
               <p className="text-xl font-extrabold leading-tight tabular-nums text-ink">{formatPaise(totalPaise)}</p>
             </div>
-            <Button className="min-h-14 min-w-0 flex-1 !rounded-[22px] text-base" onClick={placeOrder} loading={pending} disabled={cannotPay}>
+            <Button className="min-h-12 min-w-0 flex-1" onClick={placeOrder} loading={pending} disabled={cannotPay}>
               {pending ? 'Placing order…' : 'Place order'}
             </Button>
           </div>

@@ -26,7 +26,7 @@ async function decode(file) {
 const toBlob = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 
 /** Resolves to `{ blob, width, height }` or throws an Error with a message that is safe to show. */
-export async function prepareImage(file) {
+export async function prepareImage(file, { maxSide = MAX_SIDE, maxBytes = MAX_BYTES } = {}) {
   if (!file?.type?.startsWith('image/')) throw new Error('Please choose an image (JPEG, PNG or WebP).');
 
   let source;
@@ -39,7 +39,7 @@ export async function prepareImage(file) {
   const srcH = source.naturalHeight ?? source.height;
   if (!srcW || !srcH) throw new Error('That image could not be read. Try a JPEG, PNG or WebP file.');
 
-  let scale = Math.min(1, MAX_SIDE / Math.max(srcW, srcH));
+  let scale = Math.min(1, maxSide / Math.max(srcW, srcH));
   let type = 'image/webp';
 
   try {
@@ -62,14 +62,14 @@ export async function prepareImage(file) {
           blob = await toBlob(canvas, type, quality);
         }
         if (!blob) throw new Error('This browser could not process the image.');
-        if (blob.size <= MAX_BYTES) return { blob, width, height };
+        if (blob.size <= maxBytes) return { blob, width, height };
       }
       scale *= 0.8; // still too big at the lowest quality: shrink and try again
     }
   } finally {
     source.close?.();
   }
-  throw new Error('This photo is too detailed to shrink below 400 KB. Try a simpler or smaller image.');
+  throw new Error(`This image is too detailed to shrink below ${Math.round(maxBytes / 1024)} KB. Try a simpler or smaller image.`);
 }
 
 export const formatBytes = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);

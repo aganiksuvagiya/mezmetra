@@ -1194,6 +1194,62 @@ describe('UPI app buttons (off by default)', () => {
   });
 });
 
+describe('restaurant logo', () => {
+  let token;
+  let qr;
+  let otherToken;
+  const put = (raw, type = 'image/png', tok = token) => api('PUT', '/api/admin/vendor/logo', { token: tok, raw, headers: { 'Content-Type': type } });
+
+  before(async () => {
+    const su = await api('POST', '/api/auth/signup', { body: { name: 'Logo Cafe', email: 'logo.cafe@example.test', password: 'a-long-enough-password' } });
+    token = su.body.data.token;
+    assert.equal(su.body.data.vendor.logo_url, null, 'no logo to begin with');
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'L1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    otherToken = (await api('POST', '/api/auth/signup', { body: { name: 'No Logo Cafe', email: 'no.logo@example.test', password: 'a-long-enough-password' } })).body.data.token;
+  });
+
+  it('refuses anything that is not a real image', async () => {
+    assert.equal((await put(Buffer.from('not an image'))).status, 415);
+    assert.equal((await put(PNG_1X1, 'text/plain')).status, 415, 'only image types are accepted');
+    assert.equal((await put(Buffer.alloc(600 * 1024, 1))).status, 413, 'over the size cap');
+    assert.equal((await api('GET', '/api/auth/me', { token })).body.data.logo_url, null, 'a refused upload changes nothing');
+    assert.equal((await api('PUT', '/api/admin/vendor/logo', { raw: PNG_1X1, headers: { 'Content-Type': 'image/png' } })).status, 401, 'needs a login');
+  });
+
+  it('stores the logo and serves it publicly with caching', async () => {
+    const up = await put(PNG_1X1);
+    assert.equal(up.status, 200);
+    assert.match(up.body.data.logo_url, /^\/api\/public\/vendors\/\d+\/logo\?v=1$/);
+    const logo = await api('GET', up.body.data.logo_url);
+    assert.equal(logo.status, 200);
+    assert.equal(logo.headers.get('content-type'), 'image/png');
+    assert.match(logo.headers.get('cache-control'), /immutable/);
+    assert.ok(logo.body.equals(PNG_1X1));
+    assert.equal((await api('GET', '/api/auth/me', { token })).body.data.logo_url, up.body.data.logo_url);
+  });
+
+  it('shows the logo to diners on the menu and the order page, and not on another restaurant', async () => {
+    const menu = await api('GET', `/api/public/t/${qr}`);
+    assert.match(menu.body.data.vendor.logo_url, /\/logo\?v=1$/);
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data;
+    const order = (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: item.id, quantity: 1, option_ids: [] }] } })).body.data;
+    assert.equal(order.vendor.logo_url, menu.body.data.vendor.logo_url);
+    assert.equal((await api('GET', '/api/auth/me', { token: otherToken })).body.data.logo_url, null);
+  });
+
+  it('gives a replaced logo a new URL, and removes it on request', async () => {
+    const again = await put(PNG_1X1);
+    assert.match(again.body.data.logo_url, /\?v=2$/);
+    const del = await api('DELETE', '/api/admin/vendor/logo', { token });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.data.logo_url, null);
+    assert.equal((await api('GET', again.body.data.logo_url)).status, 404, 'the stored image is gone');
+    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.vendor.logo_url, null);
+    assert.equal((await api('GET', '/api/public/vendors/abc/logo')).status, 404);
+  });
+});
+
 describe('menu colours (theme)', () => {
   it('starts with the default colours and lets the vendor change them', async () => {
     const me = await api('GET', '/api/auth/me', { token: s.token });

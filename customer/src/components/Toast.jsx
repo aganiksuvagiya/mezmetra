@@ -49,7 +49,7 @@ export function ToastProvider({ children }) {
     return (
       <div
         key={t.id}
-        className={`pointer-events-auto flex items-center gap-3 rounded-2xl py-2 pl-4 pr-2 text-sm font-medium shadow-float motion-safe:animate-toast-in ${box}`}
+        className={`pointer-events-auto flex items-center gap-3 rounded-[18px] py-2 pl-4 pr-2 text-sm font-medium shadow-float motion-safe:animate-toast-in ${box}`}
       >
         <Icon className="size-5 shrink-0" />
         <p className="min-w-0 flex-1 break-words py-1">{t.message}</p>
@@ -81,7 +81,7 @@ export function ToastProvider({ children }) {
     <ToastContext.Provider value={api}>
       {children}
       {/* Two always-mounted live regions: errors interrupt, everything else waits its turn. */}
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar-h)+0.25rem)] z-[70] px-4">
         <div className="mx-auto flex max-w-md flex-col gap-2">
           <div role="status" aria-live="polite" className="flex flex-col gap-2">
             {toasts.filter((t) => t.tone !== 'error').map(renderToast)}

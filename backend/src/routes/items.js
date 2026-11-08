@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HttpError, notFound, parse } from '../lib/errors.js';
 import { itemOut, loadOptionGroups } from '../lib/serialize.js';
 import { toPaise } from '../lib/money.js';
+import { detectImageMime } from '../lib/image.js';
 
 const optionSchema = z.object({
   name: z.string().trim().min(1, 'Option name is required').max(80),
@@ -51,13 +52,6 @@ const SELECT = `
     FROM items i JOIN categories c ON c.id = i.category_id`;
 
 const MAX_PHOTO_BYTES = 512 * 1024;
-
-function detectImageMime(buf) {
-  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
-  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (buf.length > 12 && buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
-  return null;
-}
 
 async function replaceOptionGroups(t, itemId, groups) {
   await t.query(`DELETE FROM option_groups WHERE item_id = $1`, [itemId]);

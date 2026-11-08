@@ -7,7 +7,8 @@ const STEPS = [
 ];
 
 /** Received -> Accepted -> Completed. (Cancelled orders are shown by the page itself, not as a step.) */
-export default function StatusStepper({ status }) {
+export default function StatusStepper({ status, tone = 'default' }) {
+  const light = tone === 'light'; // on a dark brand card
   const current = Math.max(0, STEPS.findIndex((s) => s.key === status));
   const stateOf = (i) => {
     if (i < current) return 'done';
@@ -25,28 +26,34 @@ export default function StatusStepper({ status }) {
             {i > 0 && (
               <span
                 aria-hidden="true"
-                className={`absolute right-1/2 top-4 h-1 w-full -translate-y-1/2 rounded-full ${reached ? 'bg-brand-600' : 'bg-line'}`}
+                className={`absolute right-1/2 top-4 h-1 w-full -translate-y-1/2 rounded-full ${reached ? (light ? 'bg-white' : 'bg-brand-600') : light ? 'bg-white/25' : 'bg-line'}`}
               />
             )}
             <span
               aria-hidden="true"
               className={`relative z-10 grid size-8 place-items-center rounded-full text-sm font-bold ${
-                state === 'done'
-                  ? 'bg-brand-600 text-white'
-                  : state === 'current'
-                    ? 'bg-white text-brand-700 ring-4 ring-brand-600'
-                    : 'bg-white text-ink-soft ring-2 ring-line'
+                light
+                  ? state === 'done'
+                    ? 'bg-white text-brand-700'
+                    : state === 'current'
+                      ? 'bg-brand-800 text-white ring-4 ring-white'
+                      : 'bg-brand-800 text-white/70 ring-2 ring-white/30'
+                  : state === 'done'
+                    ? 'bg-brand-600 text-white'
+                    : state === 'current'
+                      ? 'bg-white text-brand-700 ring-4 ring-brand-600'
+                      : 'bg-white text-ink-soft ring-2 ring-line'
               }`}
             >
               {state === 'done' ? (
                 <CheckIcon className="size-4" />
               ) : state === 'current' ? (
-                <span className="size-2.5 rounded-full bg-brand-600 motion-safe:animate-pulse" />
+                <span className={`size-2.5 rounded-full motion-safe:animate-pulse ${light ? 'bg-white' : 'bg-brand-600'}`} />
               ) : (
                 i + 1
               )}
             </span>
-            <span className={`mt-2 text-xs font-bold ${reached ? 'text-ink' : 'text-ink-soft'}`}>
+            <span className={`mt-2 text-xs font-bold ${light ? (reached ? 'text-white' : 'text-white/70') : reached ? 'text-ink' : 'text-ink-soft'}`}>
               {step.label}
               <span className="sr-only">{state === 'done' ? ' (done)' : state === 'current' ? ' (current step)' : ' (not yet)'}</span>
             </span>

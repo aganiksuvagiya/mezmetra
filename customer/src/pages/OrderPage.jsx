@@ -4,11 +4,12 @@ import Alert from '../components/Alert';
 import BillSummary from '../components/BillSummary';
 import { Button, LinkButton } from '../components/Button';
 import EmptyState from '../components/EmptyState';
-import { AlertIcon, ClockIcon, CloseIcon, QrIcon } from '../components/Icons';
+import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, MenuBookIcon, QrIcon } from '../components/Icons';
 import OrderItems from '../components/OrderItems';
 import PaymentCard from '../components/PaymentCard';
 import { OrderSkeleton } from '../components/Skeleton';
 import StatusStepper from '../components/StatusStepper';
+import VendorMark from '../components/VendorMark';
 import { errorMessage } from '../lib/api';
 import { TABLE_TOKEN_RE } from '../lib/ids';
 import { forgetLastOrder, isFinished, tableForOrder } from '../lib/orderMemory';
@@ -104,15 +105,20 @@ function OrderView({ orderToken }) {
             </span>
           )}
         </p>
-        <p className="mt-5 text-[13px] font-bold uppercase tracking-[0.16em] text-ink-soft">Your order at</p>
-        <h1 className="display mt-1 break-words text-[32px] font-extrabold leading-[1.05] text-ink">{order.vendor.name}</h1>
+        <div className="mt-5 flex items-center gap-3.5">
+          <VendorMark vendor={order.vendor} />
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-ink-soft">Your order at</p>
+            <h1 className="display mt-0.5 break-words text-[30px] font-extrabold leading-[1.05] text-ink">{order.vendor.name}</h1>
+          </div>
+        </div>
       </header>
 
       <div className="space-y-4 px-4 pt-1">
         {state.stale && <Alert tone="warning">We&apos;re having trouble refreshing. This page keeps trying automatically.</Alert>}
 
-        <section aria-label="Order status" className="surface p-4">
-          {cancelled ? (
+        {cancelled ? (
+          <section aria-label="Order status" className="surface p-4">
             <div className="flex items-start gap-3">
               <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-rose-100 text-rose-700">
                 <CloseIcon className="size-6" />
@@ -124,17 +130,25 @@ function OrderView({ orderToken }) {
                 </p>
               </div>
             </div>
-          ) : (
-            <>
-              <div aria-live="polite">
-                <h2 className="text-lg font-extrabold text-ink">{headline}</h2>
-                {sub && <p className="text-sm text-ink-soft">{sub}</p>}
+          </section>
+        ) : (
+          <section aria-label="Order status" className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 p-5 text-white shadow-soft">
+            <span aria-hidden="true" className="pointer-events-none absolute -right-12 -top-14 size-48 rounded-full bg-saffron-300/30 blur-3xl" />
+            <div className="relative flex items-start gap-3.5">
+              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-inset ring-white/25">
+                {order.status === 'completed' ? <CheckIcon className="size-6" /> : order.status === 'accepted' ? <MenuBookIcon className="size-6" /> : <ClockIcon className="size-6 motion-safe:animate-pulse" />}
+              </span>
+              <div aria-live="polite" className="min-w-0">
+                <h2 className="display text-[22px] font-extrabold leading-tight">{headline}</h2>
+                {sub && <p className="mt-1 text-sm text-white/80">{sub}</p>}
               </div>
-              <StatusStepper status={order.status} />
-              <p className="mt-4 text-xs text-ink-soft">This page updates automatically - no need to refresh.</p>
-            </>
-          )}
-        </section>
+            </div>
+            <div className="relative">
+              <StatusStepper status={order.status} tone="light" />
+              <p className="mt-4 text-xs text-white/70">This page updates automatically - no need to refresh.</p>
+            </div>
+          </section>
+        )}
 
         <section aria-labelledby="order-items" className="surface p-4">
           <h2 id="order-items" className="mb-3 font-extrabold text-ink">

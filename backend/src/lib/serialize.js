@@ -4,6 +4,9 @@ import { toRupees } from './money.js';
 /** The restaurant's menu colours, from a row that has theme_primary / theme_accent. */
 export const themeOut = (row) => ({ primary: row.theme_primary, accent: row.theme_accent });
 
+/** URL of the restaurant's logo (served publicly, versioned so a new logo is never served from cache), or null. */
+export const logoUrl = (row, vendorId = row.id) => (row.has_logo ? `/api/public/vendors/${vendorId}/logo?v=${row.logo_version}` : null);
+
 export const isSuperAdminEmail = (email) => config.superAdminEmails.has(String(email ?? '').toLowerCase());
 
 export const vendorOut = (v) => ({
@@ -14,6 +17,7 @@ export const vendorOut = (v) => ({
   timezone: v.timezone,
   tax_percent: Number(v.tax_percent),
   theme: themeOut(v),
+  logo_url: logoUrl(v),
   // Ways of paying the product offers right now ('upi', 'cash', 'razorpay'); the admin hides the rest.
   payment_methods: [...config.paymentMethods],
   // True for the platform owner's account (SUPER_ADMIN_EMAILS): the admin then shows the Platform section.

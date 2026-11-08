@@ -196,6 +196,7 @@ Found while reviewing the old deployment and fixed by design here:
 - Razorpay keys are configurable per restaurant from the admin panel, with a connection test, instead of failing with "not configured".
 - Photos and receipts live in the database / are rendered on demand, so the API has no disk to lose and works on any host.
 - One menu-items page (the old product had two), consistent ₹ and date formats, mobile-friendly admin, specific error messages.
+- **Logo per restaurant:** Admin -> Appearance -> Logo (saved straight away). It is stored in Postgres like dish photos, shrunk to 512 px in the browser, and shown on the customer menu and order pages (a coloured tile with the first letter is used when there is no logo).
 - **Menu colours per restaurant:** Admin -> Appearance has ready-made themes, your own colour pickers and a live preview. The customer app derives a full light-to-dark scale from the two chosen colours (and darkens the main colour when needed so white text stays readable) - see `shared/theme.js`.
 
 Not included: table reservations (the old product only had a "Coming soon" page).

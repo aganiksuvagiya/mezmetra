@@ -6,7 +6,7 @@ import { decryptSecret } from '../lib/crypto.js';
 import { createRazorpayOrder, verifyCheckoutSignature } from '../lib/razorpay.js';
 import { toRupees } from '../lib/money.js';
 import { UPI_REFERENCE_RE, upiQuery } from '../lib/upi.js';
-import { itemOut, loadOptionGroups, loadOrderItems, publicOrderOut, themeOut } from '../lib/serialize.js';
+import { itemOut, loadOptionGroups, loadOrderItems, logoUrl, publicOrderOut, themeOut } from '../lib/serialize.js';
 
 const QR_TOKEN = /^[a-f0-9]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,7 +50,7 @@ export function publicRouter(db, { orderLimiter }) {
   const tableByToken = async (q, token) => {
     if (!QR_TOKEN.test(token)) throw notFound('Table');
     const { rows } = await q.query(
-      `SELECT t.*, v.name AS vendor_name, v.currency, v.tax_percent, v.theme_primary, v.theme_accent, v.suspended_at
+      `SELECT t.*, v.name AS vendor_name, v.currency, v.tax_percent, v.theme_primary, v.theme_accent, v.has_logo, v.logo_version, v.suspended_at
          FROM dining_tables t JOIN vendors v ON v.id = t.vendor_id
         WHERE t.qr_token = $1`,
       [token],
@@ -88,14 +88,14 @@ export function publicRouter(db, { orderLimiter }) {
   const publicOrder = async (q, order) => {
     const [items, vendor, settings] = await Promise.all([
       loadOrderItems(q, [order.id]),
-      q.query(`SELECT name, currency, theme_primary, theme_accent FROM vendors WHERE id = $1`, [order.vendor_id]),
+      q.query(`SELECT id, name, currency, theme_primary, theme_accent, has_logo, logo_version FROM vendors WHERE id = $1`, [order.vendor_id]),
       paymentSettings(q, order.vendor_id),
     ]);
     const options = optionsFrom(settings);
     // Everything a UPI app needs to open with the amount filled in. Built here so the amount cannot be tampered with.
     const payable = options.upi && order.payment_status === 'unpaid' && order.status !== 'cancelled';
     return publicOrderOut(order, items.get(order.id) ?? [], {
-      vendor: { name: vendor.rows[0].name, currency: vendor.rows[0].currency, theme: themeOut(vendor.rows[0]) },
+      vendor: { name: vendor.rows[0].name, currency: vendor.rows[0].currency, theme: themeOut(vendor.rows[0]), logo_url: logoUrl(vendor.rows[0]) },
       payment_options: options,
       upi: payable
         ? {
@@ -141,13 +141,26 @@ export function publicRouter(db, { orderLimiter }) {
     const groups = await loadOptionGroups(db, items.rows.map((i) => i.id));
     res.json({
       data: {
-        vendor: { name: table.vendor_name, currency: table.currency, tax_percent: Number(table.tax_percent), theme: themeOut(table) },
+        vendor: { name: table.vendor_name, currency: table.currency, tax_percent: Number(table.tax_percent), theme: themeOut(table), logo_url: logoUrl(table, table.vendor_id) },
         table: { number: table.number },
         payment_options: payment,
         categories: categories.rows,
         items: items.rows.map((i) => itemOut(i, groups.get(i.id) ?? [])),
       },
     });
+  });
+
+  router.get('/vendors/:id/logo', async (req, res) => {
+    if (!/^\d{1,18}$/.test(req.params.id)) throw notFound('Logo');
+    const { rows } = await db.query(`SELECT mime, data FROM vendor_logos WHERE vendor_id = $1`, [req.params.id]);
+    if (!rows[0]) throw notFound('Logo');
+    res.set({
+      'Content-Type': rows[0].mime,
+      // The URL carries ?v=<logo_version>, so a changed logo always has a new URL.
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.send(Buffer.from(rows[0].data));
   });
 
   router.get('/items/:id/photo', async (req, res) => {

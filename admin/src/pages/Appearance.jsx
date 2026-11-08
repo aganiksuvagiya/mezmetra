@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { buildTheme, DEFAULT_THEME, HEX_RE } from '../../../shared/theme.js';
 import { Button } from '../components/Button.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import { Alert } from '../components/EmptyState.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { api } from '../lib/api.js';
+import { api, apiUrl } from '../lib/api.js';
+import { formatBytes, prepareImage } from '../lib/image.js';
+import { ImageIcon, UploadIcon } from '../components/icons.jsx';
 import { cx } from '../lib/cx.js';
 import { useAction, useDocumentTitle } from '../lib/hooks.js';
 
@@ -74,7 +76,7 @@ function ColourField({ id, label, hint, value, onChange }) {
 }
 
 /** What the customer menu will look like, drawn with the very same shades the customer app generates. */
-function PhonePreview({ theme, restaurant }) {
+function PhonePreview({ theme, restaurant, logo }) {
   const { brand, accent } = buildTheme(theme);
   return (
     <div
@@ -87,11 +89,14 @@ function PhonePreview({ theme, restaurant }) {
         style={{ background: `linear-gradient(135deg, ${brand[800]}, ${brand[700]} 55%, ${brand[600]})` }}
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: brand[100] }}>
-              Welcome to
-            </p>
-            <p className="truncate text-lg font-extrabold leading-tight">{restaurant}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            {logo && <img src={logo} alt="" className="size-10 shrink-0 rounded-xl bg-white object-contain p-1" />}
+            <div className="min-w-0">
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: brand[100] }}>
+                Welcome to
+              </p>
+              <p className="truncate text-lg font-extrabold leading-tight">{restaurant}</p>
+            </div>
           </div>
           <div className="rounded-xl px-2.5 py-1 text-center" style={{ background: 'rgb(255 255 255 / 0.15)' }}>
             <p className="text-[8px] font-bold uppercase tracking-wider" style={{ color: brand[100] }}>
@@ -165,6 +170,84 @@ function PhonePreview({ theme, restaurant }) {
   );
 }
 
+/** Upload / replace / remove the restaurant's logo. It saves straight away (no Save button), like a profile photo. */
+function LogoCard() {
+  const { vendor, updateVendor } = useAuth();
+  const toast = useToast();
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(null); // 'upload' | 'remove' | null
+  const [error, setError] = useState(null);
+  const [brokenUrl, setBrokenUrl] = useState(null);
+  const shown = vendor.logo_url && brokenUrl !== vendor.logo_url ? apiUrl(vendor.logo_url) : null;
+
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow choosing the same file again
+    if (!file) return;
+    setError(null);
+    setBusy('upload');
+    try {
+      const { blob } = await prepareImage(file, { maxSide: 512, maxBytes: 200 * 1024 });
+      const updated = await api('/api/admin/vendor/logo', { method: 'PUT', body: blob });
+      updateVendor(updated);
+      toast.success(`Logo saved (${formatBytes(blob.size)}). Diners see it on your menu now.`);
+    } catch (err) {
+      setError(err.message || 'That image could not be used.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async () => {
+    setError(null);
+    setBusy('remove');
+    try {
+      updateVendor(await api('/api/admin/vendor/logo', { method: 'DELETE' }));
+      toast.success('Logo removed.');
+    } catch (err) {
+      setError(err.message || 'Could not remove the logo.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card as="section" aria-labelledby="logo">
+      <CardHeader id="logo" title="Logo" description="Shown at the top of your customer menu and order pages." />
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
+        <div className="flex size-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-white text-slate-400">
+          {shown ? (
+            <img src={shown} alt="Your logo" className="size-full object-contain p-2" onError={() => setBrokenUrl(vendor.logo_url)} />
+          ) : (
+            <ImageIcon size={32} />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <input ref={inputRef} type="file" accept="image/*" onChange={pick} tabIndex={-1} aria-label="Choose a logo file" className="sr-only" disabled={busy !== null} />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" icon={UploadIcon} busy={busy === 'upload'} disabled={busy !== null} onClick={() => inputRef.current?.click()}>
+              {busy === 'upload' ? 'Uploading…' : shown ? 'Replace logo' : 'Upload logo'}
+            </Button>
+            {shown && (
+              <Button variant="danger-outline" size="sm" busy={busy === 'remove'} disabled={busy !== null} onClick={remove}>
+                Remove logo
+              </Button>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-slate-500" aria-live="polite">
+            JPEG, PNG or WebP. A square logo on a plain background looks best. It is resized to 512px in your browser before upload.
+          </p>
+          {error && (
+            <p role="alert" className="mt-1.5 text-xs font-medium text-red-700">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function Appearance() {
   useDocumentTitle('Appearance');
   const { vendor, updateVendor } = useAuth();
@@ -192,10 +275,12 @@ export default function Appearance() {
 
   return (
     <>
-      <PageHeader title="Appearance" description="Choose the colours diners see on your menu, cart and order pages." />
+      <PageHeader title="Appearance" description="Add your logo and choose the colours diners see on your menu, cart and order pages." />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-6">
         <div className="space-y-4 sm:space-y-6">
+          <LogoCard />
+
           <Card as="section" aria-labelledby="presets">
             <CardHeader id="presets" title="Ready-made themes" description="Pick one to start with, then fine-tune it below if you like." />
             <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 sm:p-5">
@@ -275,7 +360,7 @@ export default function Appearance() {
         <Card as="aside" aria-labelledby="preview" className="lg:sticky lg:top-20">
           <CardHeader id="preview" title="Preview" description="Updates as you choose." />
           <div className="bg-slate-50 p-5">
-            <PhonePreview theme={{ primary, accent }} restaurant={vendor.name} />
+            <PhonePreview theme={{ primary, accent }} restaurant={vendor.name} logo={vendor.logo_url ? apiUrl(vendor.logo_url) : null} />
           </div>
         </Card>
       </div>
