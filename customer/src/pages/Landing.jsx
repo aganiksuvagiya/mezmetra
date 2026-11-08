@@ -149,7 +149,7 @@ export default function Landing() {
             {error}
           </p>
         )}
-        <Button type="submit" block variant="secondary" className="focus-on-dark mt-3">
+        <Button type="submit" block variant="onDark" className="focus-on-dark mt-3">
           Open menu
         </Button>
       </form>

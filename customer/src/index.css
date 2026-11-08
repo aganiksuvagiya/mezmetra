@@ -131,6 +131,7 @@
   }
 
   body {
+    overflow-wrap: break-word;
     margin: 0;
     background: var(--color-canvas);
     color: var(--color-ink);

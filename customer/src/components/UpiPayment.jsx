@@ -191,7 +191,7 @@ export default function UpiPayment({ order, onRefresh }) {
                     key={app.id}
                     href={`${app.scheme}${upi.query}`}
                     onClick={markLaunched}
-                    className={buttonClass({ variant: 'secondary', className: 'min-h-11 px-2 text-sm' })}
+                    className={buttonClass({ variant: 'secondary', className: 'min-h-11 px-2 text-center text-sm leading-tight' })}
                   >
                     {app.label}
                   </a>
@@ -235,26 +235,27 @@ export default function UpiPayment({ order, onRefresh }) {
           </li>
           <li>Come back here and tap &ldquo;I&apos;ve already paid&rdquo;.</li>
         </ol>
-        <dl className="mt-3 space-y-2 border-t border-line pt-3">
+        <dl className="mt-3 space-y-3 border-t border-line pt-3">
           {upi.vpa && (
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-ink-soft">UPI ID</dt>
-              <dd className="flex min-w-0 items-center gap-1.5 font-semibold text-ink">
-                <span className="truncate">{upi.vpa}</span>
-                <button type="button" onClick={() => copy(upi.vpa, 'UPI ID')} aria-label="Copy UPI ID" className="grid size-9 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
-                  <CopyIcon className="size-4" />
-                </button>
-              </dd>
+              <div className="min-w-0">
+                <dt className="text-xs font-semibold text-ink-soft">UPI ID</dt>
+                {/* The whole ID is shown (it wraps) so a small screen never hides part of it. */}
+                <dd className="break-all text-[15px] font-semibold text-ink">{upi.vpa}</dd>
+              </div>
+              <button type="button" onClick={() => copy(upi.vpa, 'UPI ID')} aria-label="Copy UPI ID" className="grid size-10 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
+                <CopyIcon className="size-4" />
+              </button>
             </div>
           )}
           <div className="flex items-center justify-between gap-2">
-            <dt className="text-ink-soft">Amount</dt>
-            <dd className="flex items-center gap-1.5 font-semibold tabular-nums text-ink">
-              {formatMoney(upi.amount)}
-              <button type="button" onClick={() => copy(upi.amount.toFixed(2), 'Amount')} aria-label="Copy amount" className="grid size-9 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
-                <CopyIcon className="size-4" />
-              </button>
-            </dd>
+            <div className="min-w-0">
+              <dt className="text-xs font-semibold text-ink-soft">Amount</dt>
+              <dd className="text-[15px] font-semibold tabular-nums text-ink">{formatMoney(upi.amount)}</dd>
+            </div>
+            <button type="button" onClick={() => copy(upi.amount.toFixed(2), 'Amount')} aria-label="Copy amount" className="grid size-10 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
+              <CopyIcon className="size-4" />
+            </button>
           </div>
         </dl>
       </details>
@@ -292,7 +293,7 @@ export default function UpiPayment({ order, onRefresh }) {
               {message.text}
             </Alert>
           )}
-          <div className="mt-3 grid grid-cols-[3fr_2fr] gap-2">
+          <div className="mt-3 grid grid-cols-1 gap-2 min-[360px]:grid-cols-[3fr_2fr]">
             <Button type="submit" loading={sending}>
               <CheckIcon className="size-5" /> Yes, I&apos;ve paid
             </Button>

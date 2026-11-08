@@ -8,6 +8,7 @@ const variants = {
   primary: 'bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:bg-brand-800 disabled:hover:bg-brand-600',
   secondary: 'bg-brand-600/10 text-brand-700 hover:bg-brand-600/15 active:bg-brand-600/20',
   ghost: 'text-brand-700 hover:bg-brand-50 active:bg-brand-100',
+  onDark: 'bg-white text-brand-800 hover:bg-brand-50 active:bg-brand-100', // for buttons on a dark brand card
   danger: 'text-rose-700 hover:bg-rose-50 active:bg-rose-100',
 };
 
