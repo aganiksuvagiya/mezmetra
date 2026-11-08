@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Alert from './Alert';
 import { Button, buttonClass } from './Button';
 import { CheckIcon, ClockIcon, CopyIcon, PhoneIcon } from './Icons';
@@ -65,7 +65,6 @@ export default function UpiPayment({ order, onRefresh }) {
   const hasVpa = Boolean(upi.vpa && upi.query);
   const buttons = Boolean(upi.pay_buttons && hasVpa);
   const [manualOpen, setManualOpen] = useState(!buttons && (touch || !hasVpa));
-  const manualRef = useRef(null);
 
   const genericLink = hasVpa ? `upi://pay?${upi.query}` : null;
 
@@ -101,13 +100,6 @@ export default function UpiPayment({ order, onRefresh }) {
   }, [genericLink]);
 
   const markLaunched = () => write(launchKey(order.token), Date.now());
-
-  // Google Pay refuses pre-filled payment links to an ordinary (personal) UPI ID, with a misleading "bank limit exceeded";
-  // typing the UPI ID and amount into the app always works, so make that path one tap away.
-  const showManual = () => {
-    setManualOpen(true);
-    requestAnimationFrame(() => manualRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
-  };
 
   const copy = async (text, what) => {
     try {
@@ -207,13 +199,6 @@ export default function UpiPayment({ order, onRefresh }) {
               </div>
             </>
           )}
-          <p className="text-xs text-ink-soft">
-            Google Pay says &ldquo;limit exceeded&rdquo; or &ldquo;risky&rdquo;, or the app doesn&apos;t open?{' '}
-            <button type="button" onClick={showManual} className="font-bold text-brand-700 underline underline-offset-2">
-              Pay manually
-            </button>{' '}
-            (it takes a minute){order.payment_options?.cash === false ? ', or ask a member of staff.' : ', or pay at the counter.'}
-          </p>
         </div>
       ) : hasVpa ? (
         <div className={`mt-3 flex gap-4 ${touch ? 'flex-col items-center text-center' : 'items-center'}`}>
@@ -232,13 +217,13 @@ export default function UpiPayment({ order, onRefresh }) {
         </div>
       ) : null}
 
+      {!buttons && (
       <details
-        ref={manualRef}
         open={manualOpen}
         onToggle={(e) => setManualOpen(e.currentTarget.open)}
         className="mt-3 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-line"
       >
-        <summary className="cursor-pointer font-semibold text-ink">{buttons ? "App didn't open or showed an error? Pay manually" : 'How to pay'}</summary>
+        <summary className="cursor-pointer font-semibold text-ink">How to pay</summary>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-ink-soft">
           <li>
             Open Google Pay, PhonePe or any UPI app and choose{' '}
@@ -272,15 +257,8 @@ export default function UpiPayment({ order, onRefresh }) {
             </dd>
           </div>
         </dl>
-        {touch && buttons && qr && (
-          <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
-            <img src={qr} alt={`UPI QR code to pay ${formatMoney(upi.amount)}`} className="size-28 shrink-0 rounded-lg ring-1 ring-line" />
-            <p className="min-w-0 text-xs text-ink-soft">
-              Or take a screenshot of this QR code and choose &ldquo;Upload QR&rdquo; / &ldquo;Scan from gallery&rdquo; inside your UPI app.
-            </p>
-          </div>
-        )}
       </details>
+      )}
 
       {asking ? (
         <form onSubmit={submit} noValidate className="mt-3 rounded-2xl bg-white p-3 ring-2 ring-brand-300" aria-label="Confirm your payment">
