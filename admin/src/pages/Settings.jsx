@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { Button } from '../components/Button.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import { Alert } from '../components/EmptyState.jsx';
+import LogoCard from '../components/LogoCard.jsx';
 import { focusFirstInvalid, Input } from '../components/Field.jsx';
 import { LogoutIcon } from '../components/icons.jsx';
 import { useToast } from '../components/Toast.jsx';
@@ -102,6 +103,8 @@ export default function Settings() {
       <PageHeader title="Settings" description="Your restaurant’s details." />
 
       <div className="max-w-2xl space-y-4 sm:space-y-6">
+        <LogoCard />
+
         <Card as="section" aria-labelledby="restaurant">
           <CardHeader id="restaurant" title="Restaurant" />
           <form onSubmit={submit} noValidate className="space-y-4 p-4 sm:p-5">
