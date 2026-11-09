@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { apiBlob } from '../lib/api.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { apiBlob, apiUrl } from '../lib/api.js';
+import { buildQrCard } from '../lib/qrCard.js';
 import { CREDIT } from '../lib/brand.js';
 import { slug } from '../lib/format.js';
 import { downloadUrl, useBlobUrl } from '../lib/hooks.js';
@@ -15,6 +17,7 @@ import { useToast } from './Toast.jsx';
  */
 export default function QrCard({ table, restaurantName, onSettled }) {
   const toast = useToast();
+  const { vendor } = useAuth();
   const qr = useBlobUrl(`/api/admin/tables/${table.id}/qr.png?size=600`);
   const [downloading, setDownloading] = useState(false);
 
@@ -25,9 +28,23 @@ export default function QrCard({ table, restaurantName, onSettled }) {
   const download = async () => {
     setDownloading(true);
     try {
-      const blob = await apiBlob(`/api/admin/tables/${table.id}/qr.png?size=1024`);
-      const url = URL.createObjectURL(blob);
-      downloadUrl(url, `table-${slug(table.number)}-qr.png`);
+      // The finished printable card (restaurant, QR, table number, credit), not the bare code.
+      const qrBlob = await apiBlob(`/api/admin/tables/${table.id}/qr.png?size=860`);
+      const qrUrl = URL.createObjectURL(qrBlob);
+      let cardBlob;
+      try {
+        cardBlob = await buildQrCard({
+          qrSrc: qrUrl,
+          restaurantName: restaurantName ?? vendor?.name ?? 'Your restaurant',
+          tableNumber: table.number,
+          color: vendor?.theme?.primary,
+          logoSrc: vendor?.logo_url ? apiUrl(vendor.logo_url) : null,
+        });
+      } finally {
+        URL.revokeObjectURL(qrUrl);
+      }
+      const url = URL.createObjectURL(cardBlob);
+      downloadUrl(url, `table-${slug(table.number)}-card.png`);
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (error) {
       toast.error(error.message);
@@ -72,8 +89,8 @@ export default function QrCard({ table, restaurantName, onSettled }) {
         by <span className="font-semibold text-slate-500 print:text-slate-700">{CREDIT.by}</span>
         <span aria-hidden="true">·</span> {CREDIT.site}
       </p>
-      <Button variant="secondary" size="sm" icon={DownloadIcon} busy={downloading} onClick={download} className="mt-3 print:hidden" aria-label={`Download QR code for table ${table.number}`}>
-        Download
+      <Button variant="secondary" size="sm" icon={DownloadIcon} busy={downloading} onClick={download} className="mt-3 print:hidden" aria-label={`Download printable card for table ${table.number}`}>
+        Download card
       </Button>
     </li>
   );
