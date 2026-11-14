@@ -2,8 +2,9 @@ import { Router } from 'express';
 import QRCode from 'qrcode';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { notFound, parse } from '../lib/errors.js';
-import { tableOut } from '../lib/serialize.js';
+import { conflict, notFound, parse } from '../lib/errors.js';
+import { loadOrderItems, tableOut } from '../lib/serialize.js';
+import { toRupees } from '../lib/money.js';
 
 const fields = {
   number: z.string().trim().min(1, 'Enter a table number').max(30),
@@ -104,6 +105,67 @@ export function tablesRouter(db) {
     );
     if (!rowCount) throw notFound('Table');
     const { rows } = await db.query(`${SELECT} WHERE t.id = $1 AND t.vendor_id = $2`, [req.params.id, req.vendorId]);
+    res.json({ data: tableOut(rows[0], qrLink(rows[0].qr_token)) });
+  });
+
+  // --- The table's running bill: every order of this table that is not paid yet (and not cancelled), added up. -----------------
+  const openOrders = (q, tableId, vendorId, { lock = false } = {}) =>
+    q.query(
+      `SELECT * FROM orders WHERE table_id = $1 AND vendor_id = $2 AND payment_status = 'unpaid' AND status <> 'cancelled' ORDER BY id${lock ? ' FOR UPDATE' : ''}`,
+      [tableId, vendorId],
+    );
+
+  router.get('/:id/bill', async (req, res) => {
+    const table = await db.query(`SELECT id, number FROM dining_tables WHERE id = $1 AND vendor_id = $2`, [req.params.id, req.vendorId]);
+    if (!table.rows[0]) throw notFound('Table');
+    const { rows } = await openOrders(db, table.rows[0].id, req.vendorId);
+    const items = await loadOrderItems(db, rows.map((o) => o.id));
+    res.json({
+      data: {
+        table_number: table.rows[0].number,
+        count: rows.length,
+        total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)),
+        orders: rows.map((o) => ({
+          id: o.id,
+          status: o.status,
+          total: toRupees(o.total_paise),
+          created_at: o.created_at,
+          items: (items.get(o.id) ?? []).map((i) => ({ name: i.name, quantity: i.quantity })),
+        })),
+      },
+    });
+  });
+
+  // One payment at the table for everything ordered so far: all its unpaid orders are marked paid together (cash, or UPI that the
+  // staff have seen arrive). Orders that come in later get their own bill.
+  const settleSchema = z.object({ method: z.enum(['cash', 'upi']) });
+  router.post('/:id/settle', async (req, res) => {
+    const { method } = parse(settleSchema, req.body ?? {});
+    if (!config.paymentMethods.has(method)) {
+      throw conflict('METHOD_NOT_AVAILABLE', method === 'cash' ? "Cash payments aren't available right now." : "UPI payments aren't available right now.");
+    }
+    const result = await db.tx(async (t) => {
+      const table = await t.query(`SELECT id FROM dining_tables WHERE id = $1 AND vendor_id = $2`, [req.params.id, req.vendorId]);
+      if (!table.rows[0]) throw notFound('Table');
+      const { rows } = await openOrders(t, table.rows[0].id, req.vendorId, { lock: true });
+      if (rows.length === 0) throw conflict('NOTHING_TO_PAY', 'This table has no unpaid orders.');
+      for (const o of rows) {
+        await t.query(`INSERT INTO payments (order_id, provider, amount_paise, status, paid_at) VALUES ($1, $2, $3, 'paid', now())`, [o.id, method, o.total_paise]);
+        await t.query(`UPDATE orders SET payment_status = 'paid', payment_method = $2, paid_at = now() WHERE id = $1`, [o.id, method]);
+      }
+      return { settled: rows.length, total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)) };
+    });
+    res.json({ data: { ...result, method } });
+  });
+
+  // A new random code (for example after it has been shared): the printed card must be replaced.
+  router.post('/:id/code', async (req, res) => {
+    const { rows } = await db.query(
+      `UPDATE dining_tables SET code = lpad((floor(random() * 10000))::int::text, 4, '0'), updated_at = now()
+        WHERE id = $1 AND vendor_id = $2 RETURNING *, false AS occupied`,
+      [req.params.id, req.vendorId],
+    );
+    if (!rows[0]) throw notFound('Table');
     res.json({ data: tableOut(rows[0], qrLink(rows[0].qr_token)) });
   });
 

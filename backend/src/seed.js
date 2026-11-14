@@ -42,6 +42,7 @@ export const MENU = [
         name: 'Pepperoni Pizza',
         description: 'Mozzarella, savoury pepperoni slices and our signature tomato sauce.',
         price: 899,
+        diet: 'nonveg',
         groups: [],
       },
     ],
@@ -79,7 +80,7 @@ export const MENU = [
     description: 'Something sweet to finish.',
     items: [
       { name: 'Gulab Jamun', description: 'Two warm milk-solid dumplings soaked in rose-scented syrup.', price: 99, groups: [] },
-      { name: 'Brownie with Ice Cream', description: 'Warm chocolate brownie topped with a scoop of vanilla ice cream.', price: 179, featured: true, groups: [] },
+      { name: 'Brownie with Ice Cream', description: 'Warm chocolate brownie topped with a scoop of vanilla ice cream.', price: 179, featured: true, diet: 'egg', groups: [] },
     ],
   },
 ];
@@ -243,9 +244,10 @@ async function seedVendor(db, def, { log }) {
       ]);
       for (const item of cat.items) {
         const i = await t.query(
-          `INSERT INTO items (vendor_id, category_id, name, description, price_paise, is_featured)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-          [vendorId, c.rows[0].id, item.name, item.description, toPaise(item.price), Boolean(item.featured)],
+          `INSERT INTO items (vendor_id, category_id, name, description, price_paise, is_featured, diet)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          // The demo menus are vegetarian unless an item says otherwise (diet: 'egg' | 'nonveg' | 'jain').
+          [vendorId, c.rows[0].id, item.name, item.description, toPaise(item.price), Boolean(item.featured), item.diet ?? 'veg'],
         );
         const photo = readPhoto(def.photos?.[item.name]);
         if (photo) {

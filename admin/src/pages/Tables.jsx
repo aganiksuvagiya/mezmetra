@@ -5,7 +5,7 @@ import { Card, PageHeader } from '../components/Card.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { Alert, EmptyState, ErrorState } from '../components/EmptyState.jsx';
 import { SearchInput, Select } from '../components/Field.jsx';
-import { PencilIcon, PlusIcon, QrIcon, RefreshIcon, TableIcon, TrashIcon, UsersIcon } from '../components/icons.jsx';
+import { OrdersIcon, PencilIcon, PlusIcon, QrIcon, RefreshIcon, TableIcon, TrashIcon, UsersIcon } from '../components/icons.jsx';
 import ListSkeleton from '../components/ListSkeleton.jsx';
 import { Skeleton } from '../components/Spinner.jsx';
 import { useToast } from '../components/Toast.jsx';
@@ -14,6 +14,7 @@ import { formatNumber, plural } from '../lib/format.js';
 import { useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import QrModal from './tables/QrModal.jsx';
+import TableBillModal from './tables/TableBillModal.jsx';
 import TableFormModal from './tables/TableFormModal.jsx';
 
 const GRID = 'md:grid-cols-[minmax(0,1.3fr)_7rem_minmax(0,1.3fr)_8rem_10.5rem]';
@@ -37,6 +38,7 @@ export default function Tables() {
   const [availability, setAvailability] = useState('');
   const [editing, setEditing] = useState(null); // null | 'new' | table
   const [qrFor, setQrFor] = useState(null);
+  const [billFor, setBillFor] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
   // The whole (small, unpaginated) list is loaded once and filtered here, so the summary strip always describes every
@@ -175,6 +177,11 @@ export default function Tables() {
                     <AvailabilityBadge availability={t.availability} />
                   </span>
                   <div className="flex items-center gap-1 md:justify-end">
+                    {t.availability === 'occupied' && (
+                      <Button variant="secondary" size="sm" icon={OrdersIcon} onClick={() => setBillFor(t)} aria-label={`Show the bill for table ${t.number}`}>
+                        Bill
+                      </Button>
+                    )}
                     <Button variant="secondary" size="sm" icon={QrIcon} onClick={() => setQrFor(t)} aria-label={`Show QR code for table ${t.number}`}>
                       QR
                     </Button>
@@ -193,7 +200,8 @@ export default function Tables() {
       </Card>
 
       {editing && <TableFormModal table={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={q.reload} />}
-      {qrFor && <QrModal table={qrFor} onClose={() => setQrFor(null)} />}
+      {billFor && <TableBillModal table={billFor} onClose={() => setBillFor(null)} onChanged={q.reload} />}
+      {qrFor && <QrModal table={qrFor} onClose={() => setQrFor(null)} onChanged={q.reload} />}
 
       <ConfirmDialog
         open={Boolean(deleting)}

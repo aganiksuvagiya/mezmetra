@@ -18,6 +18,7 @@ import { useToast } from './Toast.jsx';
 export default function QrCard({ table, restaurantName, onSettled }) {
   const toast = useToast();
   const { vendor } = useAuth();
+  const codeOn = (vendor?.table_code_mode ?? 'off') !== 'off'; // the table code is printed on the card unless the restaurant has switched it off
   const qr = useBlobUrl(`/api/admin/tables/${table.id}/qr.png?size=600`);
   const [downloading, setDownloading] = useState(false);
 
@@ -37,6 +38,7 @@ export default function QrCard({ table, restaurantName, onSettled }) {
           qrSrc: qrUrl,
           restaurantName: restaurantName ?? vendor?.name ?? 'Your restaurant',
           tableNumber: table.number,
+          tableCode: codeOn ? table.code : null,
           color: vendor?.theme?.primary,
           logoSrc: vendor?.logo_url ? apiUrl(vendor.logo_url) : null,
         });
@@ -78,6 +80,9 @@ export default function QrCard({ table, restaurantName, onSettled }) {
         {table.area} · {table.capacity} seats
         {!table.is_active && <Badge tone="slate">Switched off</Badge>}
       </p>
+      {codeOn && table.code && (
+        <p className="mt-1 text-sm font-semibold text-slate-700 print:text-xl">Table code: {table.code}</p>
+      )}
       <p className="mt-2 w-full break-all text-[11px] leading-snug text-slate-400 print:text-slate-600" title={table.qr_url}>
         {table.qr_url}
       </p>

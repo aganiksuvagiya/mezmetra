@@ -135,7 +135,7 @@ export function describeDropped(dropped) {
 }
 
 /** The request body for POST /orders. No prices - the server computes them. */
-export function buildOrderBody(lines, note, payPref) {
+export function buildOrderBody(lines, note, payPref, tableCode = '') {
   return {
     items: lines.map((l) => ({
       item_id: l.itemId,
@@ -145,6 +145,7 @@ export function buildOrderBody(lines, note, payPref) {
     })),
     note: String(note ?? '').trim(),
     pay_pref: payPref,
+    ...(tableCode ? { table_code: tableCode } : {}), // only when the restaurant asks diners for the code on the table
   };
 }
 

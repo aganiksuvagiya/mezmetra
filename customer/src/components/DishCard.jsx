@@ -1,4 +1,5 @@
 import AddControl from './AddControl';
+import DietMark from './DietMark';
 import DishImage from './DishImage';
 import { SparkIcon } from './Icons';
 import { formatMoney } from '../lib/money';
@@ -14,6 +15,7 @@ export function DishCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd,
     <article className="relative flex gap-4 p-4 has-[:focus-visible]:bg-brand-50/60">
       <div className={`flex min-w-0 flex-1 flex-col ${item.is_sold_out ? 'opacity-60' : ''}`}>
         <h3 className="text-[17px] font-bold leading-snug tracking-tight text-ink">
+          <DietMark diet={item.diet} size={15} className="mr-1.5 -translate-y-px" />
           <button type="button" onClick={() => onOpen(item)} className="text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-none">
             {item.name}
           </button>
@@ -47,6 +49,11 @@ export function PickCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd,
         <SparkIcon className="size-3.5" />
         Chef&apos;s pick
       </span>
+      {item.diet && (
+        <span className="pointer-events-none absolute right-3 top-3 rounded-md bg-white p-0.5 shadow-sm">
+          <DietMark diet={item.diet} size={18} />
+        </span>
+      )}
 
       <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-4">
         <div className="min-w-0">

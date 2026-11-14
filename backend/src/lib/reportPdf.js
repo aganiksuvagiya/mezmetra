@@ -2,7 +2,7 @@ import PDFDocument from 'pdfkit';
 
 // The built-in PDF fonts have no rupee glyph, so amounts are printed as "Rs 399.00" (same as receipts).
 const money = (rupees) => `Rs ${Number(rupees).toFixed(2)}`;
-const METHOD = { upi: 'UPI', cash: 'Cash', razorpay: 'Online (Razorpay)' };
+const METHOD = { upi: 'UPI', cash: 'Cash', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)' };
 const STATUS = { pending: 'Pending', accepted: 'Accepted', completed: 'Completed', cancelled: 'Cancelled' };
 
 const when = (date, timeZone) =>

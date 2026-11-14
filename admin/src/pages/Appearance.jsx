@@ -81,7 +81,7 @@ function PhonePreview({ theme, restaurant, logo }) {
     <div
       role="img"
       aria-label="Preview of the customer menu with the chosen colours"
-      className="mx-auto w-[17.5rem] overflow-hidden rounded-[2rem] border-[7px] border-slate-900 bg-[#f6f4ee] shadow-lg"
+      className="mx-auto w-[17.5rem] max-w-full overflow-hidden rounded-[2rem] border-[7px] border-slate-900 bg-[#f6f4ee] shadow-lg"
     >
       <div
         className="rounded-b-[1.4rem] px-4 pb-9 pt-5 text-white"
@@ -198,8 +198,8 @@ export default function Appearance() {
     <>
       <PageHeader title="Appearance" description="Add your logo and choose the colours diners see on your menu, cart and order pages." />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-6">
-        <div className="space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-6">
+        <div className="min-w-0 space-y-4 sm:space-y-6">
           <LogoCard />
 
           <Card as="section" aria-labelledby="presets">

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ActiveBadge, Badge } from '../components/Badge.jsx';
+import DietMark from '../components/DietMark.jsx';
 import { Button, IconButton } from '../components/Button.jsx';
 import { Card, PageHeader } from '../components/Card.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -199,6 +200,7 @@ export default function Items() {
                     <Thumb key={item.photo_url ?? 'none'} item={item} />
                     <div className="min-w-0">
                       <p className="flex items-center gap-1.5 font-semibold text-slate-900">
+                        <DietMark diet={item.diet} />
                         <span className="truncate" title={item.name}>
                           {item.name}
                         </span>

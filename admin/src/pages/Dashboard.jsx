@@ -14,8 +14,8 @@ import { useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { canTakeOrders } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
-const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)' };
-const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500' };
+const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)' };
+const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500', cashfree: 'bg-sky-500' };
 
 function StatCard({ icon: Icon, label, value, note, to, linkLabel }) {
   return (
@@ -228,7 +228,7 @@ export default function Dashboard() {
                           <p className="text-xs text-slate-500">{fmt.dateTime(o.created_at)}</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <StatusBadge status={o.status} />
+                          <StatusBadge status={o.status} ready={Boolean(o.ready_at)} />
                           <PaymentBadge status={o.payment_status} />
                         </div>
                         <p className="ml-auto w-20 text-right font-semibold text-slate-900 tabular-nums">{fmt.money(o.total)}</p>

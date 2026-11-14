@@ -25,6 +25,8 @@ const fields = {
   is_active: z.boolean(),
   is_featured: z.boolean(),
   is_sold_out: z.boolean(),
+  // veg / egg / nonveg / jain; null means "not marked" (and clears an earlier choice).
+  diet: z.enum(['veg', 'egg', 'nonveg', 'jain']).nullable(),
   option_groups: z.array(groupSchema).max(10),
 };
 const createSchema = z.object({
@@ -35,6 +37,7 @@ const createSchema = z.object({
   is_active: fields.is_active.default(true),
   is_featured: fields.is_featured.default(false),
   is_sold_out: fields.is_sold_out.default(false),
+  diet: fields.diet.default(null),
   option_groups: fields.option_groups.default([]),
 });
 const patchSchema = z.object(fields).partial();
@@ -121,9 +124,9 @@ export function itemsRouter(db) {
     const item = await db.tx(async (t) => {
       await assertCategory(t, body.category_id, req.vendorId);
       const { rows } = await t.query(
-        `INSERT INTO items (vendor_id, category_id, name, description, price_paise, is_active, is_featured, is_sold_out)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-        [req.vendorId, body.category_id, body.name, body.description, toPaise(body.price), body.is_active, body.is_featured, body.is_sold_out],
+        `INSERT INTO items (vendor_id, category_id, name, description, price_paise, is_active, is_featured, is_sold_out, diet)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [req.vendorId, body.category_id, body.name, body.description, toPaise(body.price), body.is_active, body.is_featured, body.is_sold_out, body.diet],
       );
       await replaceOptionGroups(t, rows[0].id, body.option_groups);
       return loadOne(t, rows[0].id, req.vendorId);
@@ -154,6 +157,7 @@ export function itemsRouter(db) {
            is_active   = COALESCE($7, is_active),
            is_featured = COALESCE($8, is_featured),
            is_sold_out = COALESCE($9, is_sold_out),
+           diet        = CASE WHEN $10::boolean THEN $11::text ELSE diet END,
            updated_at  = now()
          WHERE id = $1 AND vendor_id = $2`,
         [
@@ -166,6 +170,8 @@ export function itemsRouter(db) {
           body.is_active ?? null,
           body.is_featured ?? null,
           body.is_sold_out ?? null,
+          body.diet !== undefined, // sent at all (null clears it)
+          body.diet ?? null,
         ],
       );
       if (!rowCount) throw notFound('Item');

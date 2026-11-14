@@ -1,7 +1,7 @@
 // Which ways of paying the product offers is decided by the server (PAYMENT_METHODS); the admin only shows those.
 // `settings` is the response of GET /api/admin/payment-settings.
 
-export const methodsAvailable = (settings) => new Set(settings?.methods_available ?? ['upi', 'cash', 'razorpay']);
+export const methodsAvailable = (settings) => new Set(settings?.methods_available ?? ['upi', 'cash', 'razorpay', 'cashfree']);
 
 /** True when diners have at least one way to pay, so the restaurant can take orders. */
 export function canTakeOrders(settings) {
@@ -10,6 +10,7 @@ export function canTakeOrders(settings) {
   return (
     (avail.has('cash') && settings.cash_enabled) ||
     (avail.has('upi') && settings.upi_enabled && Boolean(settings.upi_id)) ||
-    (avail.has('razorpay') && settings.razorpay_enabled && settings.razorpay_configured)
+    (avail.has('razorpay') && settings.razorpay_enabled && settings.razorpay_configured) ||
+    (avail.has('cashfree') && settings.cashfree_enabled && settings.cashfree_configured)
   );
 }

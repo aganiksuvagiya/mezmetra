@@ -167,3 +167,19 @@ export const SparkIcon = (p) => (
     <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3zM18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />
   </Svg>
 );
+
+// A bell, for "call the waiter".
+export const BellIcon = (p) => (
+  <Svg {...p}>
+    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+  </Svg>
+);
+
+// A receipt, for "ask for the bill".
+export const ReceiptIcon = (p) => (
+  <Svg {...p}>
+    <path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z" />
+    <path d="M9 8h6M9 12h6" />
+  </Svg>
+);

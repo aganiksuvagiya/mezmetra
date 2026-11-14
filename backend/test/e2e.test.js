@@ -2,7 +2,7 @@
 process.env.NODE_ENV = 'test';
 delete process.env.DATABASE_URL;
 // The product defaults to UPI only; these tests exercise every method, and the "only UPI" suite below switches it back.
-process.env.PAYMENT_METHODS = 'upi,cash,razorpay';
+process.env.PAYMENT_METHODS = 'upi,cash,razorpay,cashfree';
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +27,8 @@ let mockRazorpay;
 const sentMail = [];
 const fakeMailer = { configured: true, send: async (message) => void sentMail.push(message) };
 const razorpayCalls = [];
+const razorpayRefunds = []; // refunds the fake Razorpay was asked for
+const qrCodes = new Map(); // fake Razorpay QR code id -> { status, payments: [] }
 
 async function listen(app) {
   return new Promise((resolve) => {
@@ -68,6 +70,27 @@ before(async () => {
           if (!ok) {
             res.statusCode = 401;
             return res.end(JSON.stringify({ error: { description: 'Authentication failed' } }));
+          }
+          const path = req.url.split('?')[0];
+          if (req.method === 'POST' && path === '/v1/payments/qr_codes') {
+            const id = `qr_MOCK${String(qrCodes.size + 1).padStart(4, '0')}`;
+            qrCodes.set(id, { status: 'active', payments: [] });
+            return res.end(JSON.stringify({ id, entity: 'qr_code', status: 'active', image_url: `https://rzp.test/${id}.png`, payment_amount: JSON.parse(data).payment_amount }));
+          }
+          const refund = path.match(/^\/v1\/payments\/(pay_[A-Za-z0-9]+)\/refund$/);
+          if (req.method === 'POST' && refund) {
+            razorpayRefunds.push({ payment: refund[1], amount: JSON.parse(data).amount });
+            return res.end(JSON.stringify({ id: `rfnd_MOCK${razorpayRefunds.length}`, entity: 'refund', payment_id: refund[1], status: 'processed' }));
+          }
+          const qr = path.match(/^\/v1\/payments\/qr_codes\/(qr_[A-Za-z0-9]+)(\/payments)?$/);
+          if (qr) {
+            const found = qrCodes.get(qr[1]);
+            if (!found) {
+              res.statusCode = 404;
+              return res.end(JSON.stringify({ error: { description: 'No db records found.' } }));
+            }
+            if (qr[2]) return res.end(JSON.stringify({ entity: 'collection', count: found.payments.length, items: found.payments }));
+            return res.end(JSON.stringify({ id: qr[1], entity: 'qr_code', status: found.status, image_url: `https://rzp.test/${qr[1]}.png` }));
           }
           res.end(JSON.stringify({ id: 'order_MOCK123456', entity: 'order', items: [] }));
         });
@@ -440,6 +463,8 @@ describe('online payments (Razorpay)', () => {
     assert.equal(ok.status, 200);
     assert.equal(ok.body.data.payment_status, 'paid');
     assert.equal(ok.body.data.payment_method, 'razorpay');
+    assert.equal(ok.body.data.status, 'accepted', 'paying online accepts the order: staff need not press Accept');
+    assert.ok(ok.body.data.accepted_at, 'with a time');
 
     // Verifying again (double submit) is harmless; paying an already paid order is refused.
     assert.equal((await api('POST', `/api/public/orders/${s.secondOrderToken}/razorpay/verify`, {
@@ -517,7 +542,7 @@ describe('UPI app payments (claim + staff confirmation)', () => {
     const off = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { cash_enabled: false } });
     assert.equal(off.status, 200);
     const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: true });
+    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: true, cashfree: false });
     const items = [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [regular()] }];
     const path = `/api/public/t/${s.qrToken}/orders`;
     const counter = await api('POST', path, { body: { pay_pref: 'counter', items } });
@@ -572,7 +597,7 @@ describe('UPI app payments (claim + staff confirmation)', () => {
 });
 
 describe('only UPI (the default PAYMENT_METHODS)', () => {
-  const ALL = new Set(['upi', 'cash', 'razorpay']);
+  const ALL = new Set(['upi', 'cash', 'razorpay', 'cashfree']);
   const items = () => [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [s.pizzaItem.option_groups[0].options[0].id] }];
   const ordersPath = () => `/api/public/t/${s.qrToken}/orders`;
   let vendorId;
@@ -606,7 +631,7 @@ describe('only UPI (the default PAYMENT_METHODS)', () => {
 
   it('offers only UPI to diners even though the restaurant also switched cash and Razorpay on', async () => {
     const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: false });
+    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: false, cashfree: false });
     const me = await api('GET', '/api/auth/me', { token: s.token });
     assert.deepEqual(me.body.data.payment_methods, ['upi']);
     const settings = await api('GET', '/api/admin/payment-settings', { token: s.token });
@@ -622,7 +647,7 @@ describe('only UPI (the default PAYMENT_METHODS)', () => {
     const ok = await api('POST', ordersPath(), { body: { items: items() } });
     assert.equal(ok.status, 201);
     assert.ok(ok.body.data.upi, 'the UPI link is there');
-    assert.deepEqual(ok.body.data.payment_options, { cash: false, upi: true, razorpay: false });
+    assert.deepEqual(ok.body.data.payment_options, { cash: false, upi: true, razorpay: false, cashfree: false });
     s.upiOnlyOrder = ok.body.data;
 
     const razorpay = await api('POST', `/api/public/orders/${ok.body.data.token}/razorpay`);
@@ -640,7 +665,7 @@ describe('only UPI (the default PAYMENT_METHODS)', () => {
   });
 
   it('does not let a restaurant switch on a method the product does not offer, or switch off the last one', async () => {
-    for (const body of [{ cash_enabled: true }, { razorpay_enabled: true }]) {
+    for (const body of [{ cash_enabled: true }, { razorpay_enabled: true }, { cashfree_enabled: true }]) {
       const r = await api('PUT', '/api/admin/payment-settings', { token: s.token, body });
       assert.equal(r.status, 400, JSON.stringify(body));
     }
@@ -654,7 +679,7 @@ describe('only UPI (the default PAYMENT_METHODS)', () => {
     await db.query(`UPDATE vendor_payment_settings SET upi_enabled = false WHERE vendor_id = $1`, [vendorId]);
     try {
       const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-      assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: false, razorpay: false });
+      assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: false, razorpay: false, cashfree: false });
       const r = await api('POST', ordersPath(), { body: { items: items() } });
       assert.equal(r.status, 409);
       assert.equal(r.body.error.code, 'PAYMENTS_NOT_SET_UP');
@@ -967,7 +992,7 @@ describe('sales reports (summary, CSV, PDF)', () => {
     assert.equal(d.sales.total, dashboard.today_revenue, 'same definition of revenue as the dashboard');
     assert.ok(d.sales.orders >= 1);
     assert.equal(Math.round(d.sales.by_method.reduce((n, m) => n + m.amount, 0) * 100) / 100, d.sales.total);
-    assert.deepEqual(d.sales.by_method.map((m) => m.method), ['upi', 'cash', 'razorpay']);
+    assert.deepEqual(d.sales.by_method.map((m) => m.method), ['upi', 'cash', 'razorpay', 'cashfree']);
     assert.equal(Math.round((d.sales.subtotal + d.sales.tax) * 100) / 100, d.sales.total);
     assert.equal(d.placed.total, d.placed.completed + d.placed.cancelled + d.placed.open);
     assert.ok(d.placed.unpaid >= 1 && d.placed.unpaid_value > 0);
@@ -1090,7 +1115,7 @@ describe('demo data helpers (sample prices and order history)', () => {
 
     const dash = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
     const realPaid = (await orderRows()).filter((o) => o.payment_status === 'paid' && !o.idempotency_key?.startsWith('demo-history-')).reduce((n, o) => n + o.total_paise, 0);
-    assert.equal(Math.round(dash.weekly_revenue.reduce((n, d) => n + d.revenue, 0) * 100), r.revenue * 100 + realPaid, 'the 7-day chart counts the sample payments');
+    assert.equal(Math.round(dash.weekly_revenue.reduce((n, d) => n + d.revenue, 0) * 100), Math.round(r.revenue * 100) + realPaid, 'the 7-day chart counts the sample payments');
     assert.equal(dash.payment_methods.find((m) => m.method === 'upi').percent, 100);
     const summary = (await api('GET', `/api/admin/reports/summary?from=${new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10)}&to=${new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}`, { token })).body.data;
     assert.equal(summary.sales.orders, 4);
@@ -1191,6 +1216,746 @@ describe('UPI app buttons (off by default)', () => {
     assert.equal((await put({ upi_id: '' })).status, 400, 'UPI is on, so its ID cannot be removed');
     assert.equal((await put({ upi_pay_buttons: true })).status, 200);
     assert.equal((await order()).upi.vpa, 'buttons.cafe@okaxis');
+  });
+});
+
+describe('online payments (Cashfree)', () => {
+  const APP_ID = 'TESTAPP12345';
+  const SECRET = 'cfsk_ma_test_secret_value';
+  let token;
+  let qr;
+  let itemId;
+  let mock;
+  let savedBase;
+  const cfOrders = new Map(); // Cashfree order id -> { amount, status }
+  const cfCalls = [];
+  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
+  const place = async (pay_pref) => {
+    const r = await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref, items: [{ item_id: itemId, quantity: 2, option_ids: [] }] } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body.data;
+  };
+  const start = (order) => api('POST', `/api/public/orders/${order.token}/cashfree`);
+  const verify = (order) => api('POST', `/api/public/orders/${order.token}/cashfree/verify`);
+  const status = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+
+  before(async () => {
+    // A fake Cashfree API: it checks the keys, remembers the orders it was asked to create, and lets the test decide who "paid".
+    mock = await new Promise((resolve) => {
+      const server = http
+        .createServer((req, res) => {
+          let data = '';
+          req.on('data', (c) => (data += c));
+          req.on('end', () => {
+            cfCalls.push({ method: req.method, url: req.url, headers: req.headers, body: data ? JSON.parse(data) : null });
+            res.setHeader('Content-Type', 'application/json');
+            const send = (code, json) => {
+              res.statusCode = code;
+              res.end(JSON.stringify(json));
+            };
+            if (req.headers['x-client-id'] !== APP_ID || req.headers['x-client-secret'] !== SECRET) {
+              return send(401, { message: 'authentication Failed', code: 'request_failed', type: 'authentication_error' });
+            }
+            const path = req.url.split('?')[0];
+            if (req.method === 'POST' && path === '/orders') {
+              const body = JSON.parse(data);
+              cfOrders.set(body.order_id, { amount: body.order_amount, status: 'ACTIVE' });
+              return send(200, { order_id: body.order_id, order_status: 'ACTIVE', payment_session_id: `session_${body.order_id}` });
+            }
+            const m = path.match(/^\/orders\/([^/]+)(\/payments)?$/);
+            const found = m && cfOrders.get(decodeURIComponent(m[1]));
+            if (!found) return send(404, { message: 'order not found', code: 'order_not_found', type: 'invalid_request_error' });
+            if (m[2]) return send(200, [{ cf_payment_id: 5551234, payment_status: 'SUCCESS' }]);
+            return send(200, { order_id: decodeURIComponent(m[1]), order_amount: found.amount, order_status: found.status, payment_session_id: `session_${decodeURIComponent(m[1])}` });
+          });
+        })
+        .listen(0, '127.0.0.1', () => resolve(server));
+    });
+    savedBase = config.cashfreeApiBase;
+    config.cashfreeApiBase = `http://127.0.0.1:${mock.address().port}`;
+
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Cashfree Cafe', email: 'cashfree.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'C1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  after(async () => {
+    config.cashfreeApiBase = savedBase;
+    await new Promise((r) => mock.close(r));
+  });
+
+  it('tells the diner to pay another way while the restaurant has no Cashfree keys', async () => {
+    const order = await place(); // "online" is not offered yet, so the default (the counter) is used
+    const r = await start(order);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'CASHFREE_NOT_CONFIGURED');
+  });
+
+  it('validates and stores the keys without ever returning the secret', async () => {
+    assert.equal((await put({ cashfree_app_id: 'no spaces allowed', cashfree_secret: SECRET })).status, 400);
+    assert.equal((await put({ cashfree_enabled: true })).status, 400, 'no keys yet');
+
+    const wrong = await put({ cashfree_enabled: true, cashfree_app_id: APP_ID, cashfree_secret: 'wrong-secret-value' });
+    assert.equal(wrong.status, 200);
+    const failing = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'cashfree' } });
+    assert.equal(failing.status, 502);
+    assert.equal(failing.body.error.code, 'CASHFREE_BAD_KEYS');
+
+    const saved = await put({ cashfree_secret: SECRET });
+    assert.equal(saved.body.data.cashfree_configured, true);
+    assert.equal(saved.body.data.cashfree_mode, 'test', 'App IDs starting with TEST are Cashfree sandbox');
+    assert.equal(saved.body.data.cashfree_app_id, APP_ID);
+    assert.ok(!JSON.stringify(saved.body).includes(SECRET));
+    const stored = await db.query(`SELECT cashfree_secret_enc FROM vendor_payment_settings WHERE cashfree_app_id = $1`, [APP_ID]);
+    assert.ok(stored.rows.every((row) => !String(row.cashfree_secret_enc).includes(SECRET)), 'secret is encrypted at rest');
+    const ok = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'cashfree' } });
+    assert.equal(ok.body.data.ok, true);
+    assert.equal(ok.body.data.mode, 'test');
+
+    const menu = await api('GET', `/api/public/t/${qr}`);
+    assert.equal(menu.body.data.payment_options.cashfree, true);
+    assert.equal(menu.body.data.payment_options.razorpay, false);
+  });
+
+  it('lets a restaurant use one online gateway at a time', async () => {
+    const both = await put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
+    assert.equal(both.status, 400);
+    assert.match(both.body.error.message, /one online payment gateway/);
+    const swap = await put({ cashfree_enabled: false, razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
+    assert.equal(swap.status, 200, 'switching is one request');
+    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.payment_options.cashfree, false);
+    const back = await put({ razorpay_enabled: false, cashfree_enabled: true });
+    assert.equal(back.status, 200);
+    assert.equal(back.body.data.cashfree_secret_set, true, 'the saved secret is kept');
+  });
+
+  it('creates one Cashfree order (reused on retry) and marks the order paid only when Cashfree says PAID', async () => {
+    const order = await place('online');
+    const posts = () => cfCalls.filter((c) => c.method === 'POST' && c.url === '/orders').length;
+    const before = posts();
+
+    const a = await start(order);
+    assert.equal(a.status, 200);
+    assert.equal(a.body.data.mode, 'sandbox');
+    assert.equal(a.body.data.amount, 80);
+    assert.match(a.body.data.payment_session_id, /^session_mz_/);
+    const created = cfCalls.filter((c) => c.method === 'POST' && c.url === '/orders').at(-1);
+    assert.equal(created.body.order_amount, 80);
+    assert.equal(created.body.order_currency, 'INR');
+    assert.ok(created.body.customer_details.customer_phone, 'Cashfree needs a phone number');
+    assert.match(created.body.order_meta.return_url, new RegExp(`/o/${order.token}$`));
+
+    const b = await start(order);
+    assert.equal(b.body.data.payment_session_id, a.body.data.payment_session_id);
+    assert.equal(posts() - before, 1, 'retrying must not create a second Cashfree order');
+
+    // The diner closing the window or a made-up claim does not make the order paid: only Cashfree can.
+    const early = await verify(order);
+    assert.equal(early.status, 200);
+    assert.equal(early.body.data.payment_status, 'unpaid');
+
+    cfOrders.get(a.body.data.cashfree_order_id).status = 'PAID';
+    const paid = await verify(order);
+    assert.equal(paid.status, 200);
+    assert.equal(paid.body.data.payment_status, 'paid');
+    assert.equal(paid.body.data.payment_method, 'cashfree');
+    assert.equal(paid.body.data.status, 'accepted', 'paying online accepts the order');
+    const row = await db.query(`SELECT status, provider_payment_id FROM payments WHERE provider = 'cashfree' AND provider_order_id = $1`, [a.body.data.cashfree_order_id]);
+    assert.deepEqual(row.rows[0], { status: 'paid', provider_payment_id: '5551234' });
+
+    assert.equal((await verify(order)).status, 200, 'verifying again is harmless');
+    assert.equal((await start(order)).status, 409, 'an already paid order cannot be paid again');
+  });
+
+  it('does not mark an order paid when the amount Cashfree took is different', async () => {
+    const order = await place('online');
+    const a = await start(order);
+    const cf = cfOrders.get(a.body.data.cashfree_order_id);
+    cf.status = 'PAID';
+    cf.amount = 1;
+    const r = await verify(order);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'PAYMENT_AMOUNT_MISMATCH');
+    assert.equal((await status(order)).payment_status, 'unpaid');
+  });
+
+  it('starts a fresh Cashfree order when the earlier one has expired', async () => {
+    const order = await place('online');
+    const a = await start(order);
+    cfOrders.get(a.body.data.cashfree_order_id).status = 'EXPIRED';
+    const b = await start(order);
+    assert.equal(b.status, 200);
+    assert.notEqual(b.body.data.cashfree_order_id, a.body.data.cashfree_order_id);
+    const old = await db.query(`SELECT status FROM payments WHERE provider_order_id = $1`, [a.body.data.cashfree_order_id]);
+    assert.equal(old.rows[0].status, 'failed');
+  });
+
+  it('shows Cashfree money in the dashboard split, the sales report and the receipt', async () => {
+    const d = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
+    assert.equal(d.payment_methods.find((m) => m.method === 'cashfree').amount, 80);
+    assert.equal(d.today_revenue, 80);
+    const r = (await api('GET', '/api/admin/reports/summary', { token })).body.data;
+    assert.equal(r.sales.by_method.find((m) => m.method === 'cashfree').amount, 80);
+  });
+
+  it('refuses to switch Cashfree on when the product does not offer it', async () => {
+    config.paymentMethods = new Set(['upi', 'cash', 'razorpay']);
+    try {
+      assert.equal((await put({ cashfree_enabled: true })).status, 400);
+      assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.payment_options.cashfree, false);
+    } finally {
+      config.paymentMethods = new Set(['upi', 'cash', 'razorpay', 'cashfree']);
+    }
+  });
+});
+
+describe('online payment by scanning a QR (Razorpay)', () => {
+  let token;
+  let qr;
+  let itemId;
+  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
+  const place = async () => {
+    const r = await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: itemId, quantity: 3, option_ids: [] }] } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body.data;
+  };
+  const startQr = (order) => api('POST', `/api/public/orders/${order.token}/razorpay-qr`);
+  const verifyQr = (order) => api('POST', `/api/public/orders/${order.token}/razorpay-qr/verify`);
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'QR Cafe', email: 'qr.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'Q1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('is not offered until the restaurant has Razorpay keys', async () => {
+    const order = await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } });
+    const r = await startQr(order.body.data);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'RAZORPAY_NOT_CONFIGURED');
+    assert.equal((await put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' })).status, 200);
+  });
+
+  it('makes one QR code for the order (reused on reload) and marks it paid only when Razorpay shows the money', async () => {
+    const order = await place();
+    const a = await startQr(order);
+    assert.equal(a.status, 200);
+    assert.match(a.body.data.qr_id, /^qr_MOCK/);
+    assert.match(a.body.data.image_url, /^https:\/\/rzp\.test\/qr_MOCK\d+\.png$/);
+    assert.equal(a.body.data.amount, 60);
+    const created = razorpayCalls.filter((c) => c.method === 'POST' && c.url.endsWith('/payments/qr_codes')).at(-1);
+    assert.equal(created.body.type, 'upi_qr');
+    assert.equal(created.body.usage, 'single_use');
+    assert.equal(created.body.fixed_amount, true);
+    assert.equal(created.body.payment_amount, 6000);
+    assert.ok(created.body.close_by > Date.now() / 1000 + 3600);
+
+    const before = razorpayCalls.filter((c) => c.method === 'POST' && c.url.endsWith('/payments/qr_codes')).length;
+    const b = await startQr(order);
+    assert.equal(b.body.data.qr_id, a.body.data.qr_id, 'the same QR on a reload');
+    assert.equal(razorpayCalls.filter((c) => c.method === 'POST' && c.url.endsWith('/payments/qr_codes')).length, before, 'no second QR');
+
+    // Nobody paid yet, and a payment of another amount does not count.
+    assert.equal((await verifyQr(order)).body.data.payment_status, 'unpaid');
+    qrCodes.get(a.body.data.qr_id).payments.push({ id: 'pay_QRSHORT0001', amount: 100, status: 'captured' });
+    assert.equal((await verifyQr(order)).body.data.payment_status, 'unpaid');
+    qrCodes.get(a.body.data.qr_id).payments.push({ id: 'pay_QRFAILED001', amount: 6000, status: 'failed' });
+    assert.equal((await verifyQr(order)).body.data.payment_status, 'unpaid', 'a failed payment is not money');
+
+    qrCodes.get(a.body.data.qr_id).payments.push({ id: 'pay_QRPAID00001', amount: 6000, status: 'captured' });
+    const paid = await verifyQr(order);
+    assert.equal(paid.status, 200);
+    assert.equal(paid.body.data.payment_status, 'paid');
+    assert.equal(paid.body.data.payment_method, 'razorpay');
+    assert.equal(paid.body.data.status, 'accepted', 'paying online accepts the order');
+    const row = await db.query(`SELECT status, provider_payment_id FROM payments WHERE provider_order_id = $1`, [a.body.data.qr_id]);
+    assert.deepEqual(row.rows[0], { status: 'paid', provider_payment_id: 'pay_QRPAID00001' });
+
+    assert.equal((await verifyQr(order)).status, 200, 'checking again is harmless');
+    assert.equal((await startQr(order)).status, 409, 'an already paid order needs no QR');
+  });
+
+  it('makes a new QR when the earlier one has closed', async () => {
+    const order = await place();
+    const a = await startQr(order);
+    qrCodes.get(a.body.data.qr_id).status = 'closed';
+    const b = await startQr(order);
+    assert.equal(b.status, 200);
+    assert.notEqual(b.body.data.qr_id, a.body.data.qr_id);
+  });
+
+  it('tells the diner to use another way when Razorpay refuses (for example UPI QR is not switched on)', async () => {
+    const order = await place();
+    assert.equal((await put({ razorpay_key_id: 'rzp_test_wrongkey1234', razorpay_key_secret: 'wrong-secret-1' })).status, 200);
+    try {
+      const r = await startQr(order);
+      assert.equal(r.status, 409);
+      assert.equal(r.body.error.code, 'RAZORPAY_QR_UNAVAILABLE');
+      assert.match(r.body.error.message, /Pay online/);
+    } finally {
+      await put({ razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
+    }
+  });
+});
+
+describe('veg / non-veg marker on dishes', () => {
+  let token;
+  let categoryId;
+  let qr;
+  const post = (body) => api('POST', '/api/admin/items', { token, body: { category_id: categoryId, price: 50, ...body } });
+  const patch = (id, body) => api('PATCH', `/api/admin/items/${id}`, { token, body });
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Diet Cafe', email: 'diet.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    categoryId = (await api('POST', '/api/admin/categories', { token, body: { name: 'Mains' } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'D1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('is not marked unless the restaurant marks it (we never guess)', async () => {
+    const r = await post({ name: 'Mystery dish' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.data.diet, null);
+  });
+
+  it('stores each kind and refuses anything else', async () => {
+    for (const diet of ['veg', 'egg', 'nonveg', 'jain']) {
+      const r = await post({ name: `Dish ${diet}`, diet });
+      assert.equal(r.status, 201, diet);
+      assert.equal(r.body.data.diet, diet);
+    }
+    for (const diet of ['vegan', 'VEG', '', 7]) assert.equal((await post({ name: 'Bad', diet })).status, 400, String(diet));
+  });
+
+  it('changes and clears the marker, and leaves it alone when it is not sent', async () => {
+    const id = (await post({ name: 'Paneer', diet: 'veg' })).body.data.id;
+    assert.equal((await patch(id, { diet: 'jain' })).body.data.diet, 'jain');
+    assert.equal((await patch(id, { name: 'Paneer Tikka' })).body.data.diet, 'jain', 'an edit that does not mention it keeps it');
+    assert.equal((await patch(id, { diet: null })).body.data.diet, null, 'null clears it');
+    assert.equal((await patch(id, { diet: 'tofu' })).status, 400);
+  });
+
+  it('shows the marker to diners on the menu', async () => {
+    const menu = await api('GET', `/api/public/t/${qr}`);
+    assert.equal(menu.status, 200);
+    const byName = Object.fromEntries(menu.body.data.items.map((i) => [i.name, i.diet]));
+    assert.equal(byName['Mystery dish'], null);
+    assert.equal(byName['Dish nonveg'], 'nonveg');
+    assert.equal(byName['Dish egg'], 'egg');
+    assert.equal(byName['Dish jain'], 'jain');
+  });
+
+  it('marks the demo menus: vegetarian, apart from one egg dish and one non-veg dish', async () => {
+    const { seed } = await import('../src/seed.js');
+    const demoDb = await createDb({ pgliteDir: 'memory' });
+    try {
+      await migrate(demoDb, { log: () => {} });
+      await seed(demoDb, { log: () => {} });
+      const { rows } = await demoDb.query(`SELECT diet, count(*)::int AS n FROM items GROUP BY diet ORDER BY diet`);
+      const counts = Object.fromEntries(rows.map((r) => [r.diet ?? 'none', r.n]));
+      assert.equal(counts.none, undefined, 'every demo dish is marked');
+      assert.equal(counts.nonveg, 1);
+      assert.equal(counts.egg, 1);
+      assert.ok(counts.veg > 20);
+    } finally {
+      await demoDb.close();
+    }
+  });
+});
+
+describe('order ready (the diner is told the food is ready)', () => {
+  let token;
+  let qr;
+  let itemId;
+  const place = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+  const adminId = async (publicOrder) => (await api('GET', '/api/admin/orders?status=active', { token })).body.data.find((o) => o.total === publicOrder.total && o.status !== 'completed')?.id;
+  const ready = (id) => api('POST', `/api/admin/orders/${id}/ready`, { token });
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Ready Cafe', email: 'ready.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'R1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('only an accepted order can be marked ready', async () => {
+    const order = await place();
+    const id = await adminId(order);
+    const early = await ready(id);
+    assert.equal(early.status, 409, 'still pending');
+    assert.equal(early.body.error.code, 'INVALID_TRANSITION');
+    assert.equal((await api('POST', '/api/admin/orders/999999/ready', { token })).status, 404);
+    assert.equal((await api('POST', `/api/admin/orders/${id}/ready`)).status, 401);
+  });
+
+  it('marks it ready once, tells the diner, and keeps the order accepted', async () => {
+    const order = await place();
+    const id = await adminId(order);
+    assert.equal((await api('PATCH', `/api/admin/orders/${id}/status`, { token, body: { status: 'accepted' } })).status, 200);
+    assert.equal((await api('GET', `/api/public/orders/${order.token}`)).body.data.ready_at, null);
+
+    const r = await ready(id);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.data.ready_at);
+    assert.equal(r.body.data.status, 'accepted');
+    const diner = (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+    assert.equal(diner.status, 'accepted');
+    assert.equal(diner.ready_at, r.body.data.ready_at);
+
+    const again = await ready(id);
+    assert.equal(again.status, 200, 'pressing it twice is harmless');
+    assert.equal(again.body.data.ready_at, r.body.data.ready_at, 'the time does not move');
+  });
+
+  it("does not let one restaurant mark another's order", async () => {
+    const order = await place();
+    const id = await adminId(order);
+    await api('PATCH', `/api/admin/orders/${id}/status`, { token, body: { status: 'accepted' } });
+    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Cafe', email: 'other.ready@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    assert.equal((await api('POST', `/api/admin/orders/${id}/ready`, { token: other })).status, 404);
+  });
+});
+
+describe('table code (fake-order guard)', () => {
+  let token;
+  let table;
+  let qr;
+  let itemId;
+  const order = (body = {}) => api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }], ...body } });
+  const setMode = (mode) => api('PATCH', '/api/admin/vendor', { token, body: { table_code_mode: mode } });
+  const latest = async () => (await api('GET', '/api/admin/orders?per_page=1', { token })).body.data[0];
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Code Cafe', email: 'code.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    table = (await api('POST', '/api/admin/tables', { token, body: { number: 'K1', capacity: 2 } })).body.data;
+    qr = table.qr_url.split('/').pop();
+  });
+
+  it('gives every table its own 4-digit code, and keeps it off the diner menu', async () => {
+    assert.match(table.code, /^\d{4}$/);
+    const other = (await api('POST', '/api/admin/tables', { token, body: { number: 'K2', capacity: 2 } })).body.data;
+    assert.match(other.code, /^\d{4}$/);
+    const menu = await api('GET', `/api/public/t/${qr}`);
+    assert.equal(menu.body.data.table.code_mode, 'off');
+    assert.ok(!JSON.stringify(menu.body).includes(table.code) || table.code.length < 5, 'the menu never carries the code itself');
+    assert.equal(menu.body.data.table.code, undefined);
+  });
+
+  it('takes orders without a code while the restaurant has not switched the guard on', async () => {
+    assert.equal((await api('GET', '/api/auth/me', { token })).body.data.table_code_mode, 'off');
+    const placed = await order();
+    assert.equal(placed.status, 201);
+    assert.equal((await latest()).table_code_verified, false);
+    // A code sent while the guard is off is ignored, not checked.
+    assert.equal((await order({ table_code: '0000' })).status, 201);
+  });
+
+  it('rejects a mode that is not off, optional or required', async () => {
+    assert.equal((await setMode('sometimes')).status, 400);
+    assert.equal((await api('PATCH', '/api/admin/vendor', { token, body: { table_code_mode: true } })).status, 400);
+  });
+
+  it('optional: the code can be left out, a wrong one is refused, a right one marks the order verified', async () => {
+    const on = await setMode('optional');
+    assert.equal(on.status, 200);
+    assert.equal(on.body.data.table_code_mode, 'optional');
+    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.table.code_mode, 'optional');
+
+    const skipped = await order();
+    assert.equal(skipped.status, 201);
+    assert.equal((await latest()).table_code_verified, false, 'no code typed: not verified');
+    const blank = await order({ table_code: '' });
+    assert.equal(blank.status, 201, 'an empty box counts as no code');
+
+    const wrong = await order({ table_code: table.code === '0000' ? '1111' : '0000' });
+    assert.equal(wrong.status, 403);
+    assert.equal(wrong.body.error.code, 'TABLE_CODE_WRONG');
+    assert.match(wrong.body.error.message, /clear the box/i);
+
+    const right = await order({ table_code: table.code });
+    assert.equal(right.status, 201);
+    assert.equal((await latest()).table_code_verified, true, 'right code typed: verified');
+  });
+
+  it('refuses an order with no code or a wrong code once the guard is on', async () => {
+    const on = await setMode('required');
+    assert.equal(on.status, 200);
+    assert.equal(on.body.data.table_code_mode, 'required');
+    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.table.code_mode, 'required');
+
+    const none = await order();
+    assert.equal(none.status, 403);
+    assert.equal(none.body.error.code, 'TABLE_CODE_REQUIRED');
+    const wrong = await order({ table_code: table.code === '0000' ? '1111' : '0000' });
+    assert.equal(wrong.status, 403);
+    assert.equal(wrong.body.error.code, 'TABLE_CODE_WRONG');
+    assert.equal((await order({ table_code: 'abcd' })).status, 403);
+  });
+
+  it('takes the order with the right code', async () => {
+    const ok = await order({ table_code: table.code });
+    assert.equal(ok.status, 201);
+    assert.equal(ok.body.data.table_number, 'K1');
+    assert.equal((await latest()).table_code_verified, true, 'a required code that was accepted is verified');
+  });
+
+  it('changes the code on request, so the old one stops working', async () => {
+    const fresh = await api('POST', `/api/admin/tables/${table.id}/code`, { token });
+    assert.equal(fresh.status, 200);
+    assert.match(fresh.body.data.code, /^\d{4}$/);
+    if (fresh.body.data.code !== table.code) assert.equal((await order({ table_code: table.code })).status, 403, 'the old code');
+    assert.equal((await order({ table_code: fresh.body.data.code })).status, 201);
+    assert.equal((await api('POST', '/api/admin/tables/999999/code', { token })).status, 404);
+    assert.equal((await api('POST', `/api/admin/tables/${table.id}/code`)).status, 401);
+  });
+
+  it("does not let one restaurant read or change another's table code", async () => {
+    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Code Cafe', email: 'other.code@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    assert.equal((await api('POST', `/api/admin/tables/${table.id}/code`, { token: other })).status, 404);
+    const list = await api('GET', '/api/admin/tables', { token: other });
+    assert.ok(!JSON.stringify(list.body).includes(table.qr_url));
+    assert.equal((await setMode('off')).body.data.table_code_mode, 'off');
+    assert.equal((await order()).status, 201, 'off again: no code needed');
+  });
+});
+
+describe('call the waiter / ask for the bill', () => {
+  let token;
+  let qr;
+  let tableId;
+  const ask = (kind, tk = qr) => api('POST', `/api/public/t/${tk}/requests`, { body: { kind } });
+  const open = () => api('GET', '/api/admin/requests', { token });
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Call Cafe', email: 'call.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const t = (await api('POST', '/api/admin/tables', { token, body: { number: 'W1', capacity: 2 } })).body.data;
+    tableId = t.id;
+    qr = t.qr_url.split('/').pop();
+  });
+
+  it('has nothing open to begin with', async () => {
+    assert.deepEqual((await open()).body.data, []);
+    assert.deepEqual((await api('GET', `/api/public/t/${qr}/requests`)).body.data, { waiter: false, bill: false });
+  });
+
+  it('lets a diner call the waiter and ask for the bill, and staff see both', async () => {
+    const w = await ask('waiter');
+    assert.equal(w.status, 201);
+    assert.equal(w.body.data.already_asked, false);
+    assert.equal(w.body.data.waiter, true);
+    const b = await ask('bill');
+    assert.equal(b.status, 201);
+    assert.equal(b.body.data.bill, true);
+    const list = (await open()).body.data;
+    assert.deepEqual(list.map((r) => [r.kind, r.table_number]), [['waiter', 'W1'], ['bill', 'W1']]);
+    assert.deepEqual((await api('GET', `/api/public/t/${qr}/requests`)).body.data, { waiter: true, bill: true });
+  });
+
+  it('does not pile up when the diner taps again', async () => {
+    const again = await ask('waiter');
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.already_asked, true);
+    assert.equal((await open()).body.data.length, 2);
+  });
+
+  it('refuses anything that is not one of the two kinds, or an unknown table', async () => {
+    assert.equal((await ask('pizza')).status, 400);
+    assert.equal((await api('POST', `/api/public/t/${qr}/requests`, { body: {} })).status, 400);
+    assert.equal((await ask('waiter', 'f'.repeat(32))).status, 404);
+  });
+
+  it('lets staff mark one done (twice is fine), and the diner can ask again', async () => {
+    const [waiter] = (await open()).body.data;
+    const done = await api('POST', `/api/admin/requests/${waiter.id}/done`, { token });
+    assert.equal(done.status, 200);
+    assert.equal((await api('POST', `/api/admin/requests/${waiter.id}/done`, { token })).status, 200);
+    assert.deepEqual((await open()).body.data.map((r) => r.kind), ['bill']);
+    assert.equal((await ask('waiter')).status, 201, 'a fresh request once the old one is done');
+  });
+
+  it("keeps one restaurant's requests from another", async () => {
+    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Call Cafe', email: 'other.call@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    assert.deepEqual((await api('GET', '/api/admin/requests', { token: other })).body.data, []);
+    const [first] = (await open()).body.data;
+    assert.equal((await api('POST', `/api/admin/requests/${first.id}/done`, { token: other })).status, 404);
+    assert.equal((await api('GET', '/api/admin/requests')).status, 401);
+  });
+
+  it('disappears with the table', async () => {
+    assert.equal((await api('DELETE', `/api/admin/tables/${tableId}`, { token })).status, 204);
+    assert.deepEqual((await open()).body.data, []);
+  });
+});
+
+describe("table bill (one payment for everything a table ordered)", () => {
+  let token;
+  let table;
+  let qr;
+  let itemId;
+  const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+  const bill = () => api('GET', `/api/admin/tables/${table.id}/bill`, { token });
+  const settle = (method) => api('POST', `/api/admin/tables/${table.id}/settle`, { token, body: { method } });
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Bill Cafe', email: 'bill.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 100 } })).body.data.id;
+    table = (await api('POST', '/api/admin/tables', { token, body: { number: 'B1', capacity: 4 } })).body.data;
+    qr = table.qr_url.split('/').pop();
+  });
+
+  it('is empty before anyone orders, and refuses to settle nothing', async () => {
+    const r = await bill();
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.data.count, r.body.data.total, r.body.data.table_number], [0, 0, 'B1']);
+    const s = await settle('cash');
+    assert.equal(s.status, 409);
+    assert.equal(s.body.error.code, 'NOTHING_TO_PAY');
+  });
+
+  it('adds up every unpaid order of the table (not cancelled ones, not other tables)', async () => {
+    await order();
+    await order();
+    const third = await order();
+    const list = (await api('GET', '/api/admin/orders?status=active', { token })).body.data;
+    const thirdId = list.find((o) => o.id === Math.max(...list.map((x) => x.id))).id;
+    assert.equal((await api('PATCH', `/api/admin/orders/${thirdId}/status`, { token, body: { status: 'cancelled' } })).status, 200);
+    assert.ok(third.token);
+
+    const other = (await api('POST', '/api/admin/tables', { token, body: { number: 'B2', capacity: 2 } })).body.data;
+    await api('POST', `/api/public/t/${other.qr_url.split('/').pop()}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } });
+
+    const r = (await bill()).body.data;
+    assert.equal(r.count, 2);
+    assert.equal(r.total, 200, 'two orders of 100 (a new restaurant charges no tax); the cancelled one and the other table are left out');
+  });
+
+  it('settles them all in one go by cash, once', async () => {
+    const before = (await bill()).body.data;
+    const s = await settle('cash');
+    assert.equal(s.status, 200);
+    assert.equal(s.body.data.settled, before.count);
+    assert.equal(s.body.data.total, before.total);
+    const after = (await bill()).body.data;
+    assert.deepEqual([after.count, after.total], [0, 0]);
+    const paid = (await api('GET', '/api/admin/orders?payment=paid', { token })).body.data.filter((o) => o.table_number === 'B1');
+    assert.equal(paid.length, before.count);
+    assert.ok(paid.every((o) => o.payment_method === 'cash'));
+    assert.equal((await settle('cash')).status, 409, 'nothing left to settle');
+  });
+
+  it('can settle by UPI, and refuses a method the product does not offer', async () => {
+    await order();
+    assert.equal((await settle('bitcoin')).status, 400);
+    config.paymentMethods = new Set(['upi']);
+    try {
+      const cash = await settle('cash');
+      assert.equal(cash.status, 409);
+      assert.equal(cash.body.error.code, 'METHOD_NOT_AVAILABLE');
+    } finally {
+      config.paymentMethods = new Set(['upi', 'cash', 'razorpay', 'cashfree']);
+    }
+    const upi = await settle('upi');
+    assert.equal(upi.status, 200);
+    assert.equal(upi.body.data.method, 'upi');
+  });
+
+  it("does not let another restaurant see or settle this table's bill", async () => {
+    await order();
+    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Bill Cafe', email: 'other.bill@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    assert.equal((await api('GET', `/api/admin/tables/${table.id}/bill`, { token: other })).status, 404);
+    assert.equal((await api('POST', `/api/admin/tables/${table.id}/settle`, { token: other, body: { method: 'cash' } })).status, 404);
+    assert.equal((await api('GET', `/api/admin/tables/${table.id}/bill`)).status, 401);
+    assert.equal((await bill()).body.data.count, 1, 'untouched');
+  });
+});
+
+describe('refund of an online payment', () => {
+  let token;
+  let qr;
+  let itemId;
+  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
+  const placeOnline = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+  // The newest order of this restaurant, as the admin sees it (each test places one order right before asking).
+  const adminOrder = async () => {
+    const list = (await api('GET', '/api/admin/orders?per_page=100', { token })).body.data;
+    return list.reduce((a, b) => (b.id > a.id ? b : a));
+  };
+  const refund = (id) => api('POST', `/api/admin/orders/${id}/refund`, { token });
+  // pays an order through the QR route of the fake Razorpay, so it has a real payment id
+  const payOnline = async (diner) => {
+    const started = await api('POST', `/api/public/orders/${diner.token}/razorpay-qr`);
+    qrCodes.get(started.body.data.qr_id).payments.push({ id: `pay_REFUND${qrCodes.size}${Date.now() % 100000}`, amount: Math.round(diner.total * 100), status: 'captured' });
+    return (await api('POST', `/api/public/orders/${diner.token}/razorpay-qr/verify`)).body.data;
+  };
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Refund Cafe', email: 'refund.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'F1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    assert.equal((await put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' })).status, 200);
+  });
+
+  it('refuses to refund an order nobody paid, or a cash order', async () => {
+    const diner = await placeOnline();
+    const mine = await adminOrder();
+    const unpaid = await refund(mine.id);
+    assert.equal(unpaid.status, 409);
+    assert.equal(unpaid.body.error.code, 'NOT_PAID');
+    assert.equal((await api('POST', `/api/admin/orders/${mine.id}/cash-payment`, { token })).status, 200);
+    const cash = await refund(mine.id);
+    assert.equal(cash.status, 409);
+    assert.equal(cash.body.error.code, 'REFUND_MANUAL');
+    assert.equal((await api('POST', '/api/admin/orders/999999/refund', { token })).status, 404);
+    assert.equal((await api('POST', `/api/admin/orders/${mine.id}/refund`)).status, 401);
+  });
+
+  it('refunds a paid online order in full, cancels it, and takes it out of the money counted', async () => {
+    const diner = await placeOnline();
+    const paid = await payOnline(diner);
+    assert.equal(paid.payment_status, 'paid');
+    const mine = await adminOrder();
+    const before = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data.today_revenue;
+
+    const asked = razorpayRefunds.length;
+    const r = await refund(mine.id);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.data.payment_status, 'refunded');
+    assert.equal(r.body.data.status, 'cancelled', 'not served yet, so the order is cancelled too');
+    assert.equal(razorpayRefunds.length, asked + 1);
+    assert.equal(razorpayRefunds.at(-1).amount, Math.round(diner.total * 100), 'the whole amount');
+
+    const row = await db.query(`SELECT status, refund_id FROM payments WHERE order_id = $1 AND provider = 'razorpay'`, [mine.id]);
+    assert.equal(row.rows[0].status, 'refunded');
+    assert.match(row.rows[0].refund_id, /^rfnd_MOCK/);
+    const after = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data.today_revenue;
+    assert.equal(Math.round((before - after) * 100), Math.round(diner.total * 100), 'the refunded money is no longer revenue');
+
+    const seen = (await api('GET', `/api/public/orders/${diner.token}`)).body.data;
+    assert.equal(seen.payment_status, 'refunded');
+    assert.equal(seen.status, 'cancelled');
+  });
+
+  it('refunds only once', async () => {
+    const diner = await placeOnline();
+    await payOnline(diner);
+    const mine = await adminOrder();
+    assert.equal((await refund(mine.id)).status, 200);
+    const again = await refund(mine.id);
+    assert.equal(again.status, 409);
+    assert.equal(again.body.error.code, 'ALREADY_REFUNDED');
+  });
+
+  it("does not let another restaurant refund this restaurant's order", async () => {
+    const diner = await placeOnline();
+    await payOnline(diner);
+    const mine = await adminOrder();
+    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Refund Cafe', email: 'other.refund@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    assert.equal((await api('POST', `/api/admin/orders/${mine.id}/refund`, { token: other })).status, 404);
   });
 });
 

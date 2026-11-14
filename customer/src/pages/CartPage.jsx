@@ -13,11 +13,12 @@ import { buildOrderBody, describeDropped, lineTotalPaise, MAX_NOTE } from '../li
 import { clearIdempotencyKey, idempotencyKeyFor } from '../lib/idempotency';
 import { formatMoney, formatPaise } from '../lib/money';
 import { rememberOrder } from '../lib/orderMemory';
-import { getJSON, removeItem, setJSON } from '../lib/storage';
+import { getItem, getJSON, removeItem, setItem, setJSON } from '../lib/storage';
 import { useTable } from '../lib/tableContext';
 import { usePageTitle } from '../lib/usePageTitle';
 
 const checkoutKey = (token) => `mezmitra_checkout_${token}`;
+const codeKey = (token) => `mezmitra_tcode_${token}`; // the table code this device already typed for this table
 
 // Server codes that mean "the menu changed under your cart" - refresh and let the diner review.
 const MENU_CHANGED = new Set(['ITEM_UNAVAILABLE', 'INVALID_OPTION', 'OPTION_REQUIRED', 'OPTION_TOO_MANY', 'PAYMENT_METHOD_UNAVAILABLE']);
@@ -28,7 +29,7 @@ export default function CartPage() {
   const toast = useToast();
   usePageTitle(`Your cart - ${menu.vendor.name}`);
 
-  const canOnline = menu.payment_options?.razorpay === true;
+  const canOnline = menu.payment_options?.razorpay === true || menu.payment_options?.cashfree === true;
   const canUpi = menu.payment_options?.upi === true;
   const canCounter = menu.payment_options?.cash === true;
   const available = [canCounter && 'counter', canUpi && 'upi', canOnline && 'online'].filter(Boolean);
@@ -40,6 +41,20 @@ export default function CartPage() {
   const [note, setNote] = useState(typeof saved.note === 'string' ? saved.note.slice(0, MAX_NOTE) : '');
   const [payPref, setPayPref] = useState(['online', 'upi'].includes(saved.payPref) ? saved.payPref : 'counter');
   const pref = available.includes(payPref) ? payPref : available[0];
+
+  // Fake-order guard: a restaurant may ask for the 4-digit code printed on the table ('required'), let diners type it if they like
+  // ('optional'), or not ask at all ('off').
+  const codeMode = menu.table?.code_mode ?? 'off';
+  const showCode = codeMode !== 'off';
+  const requiresCode = codeMode === 'required';
+  const [tableCode, setTableCode] = useState(() => (/^\d{4}$/.test(getItem(codeKey(token)) ?? '') ? getItem(codeKey(token)) : ''));
+  const [codeError, setCodeError] = useState('');
+  const codeInput = useRef(null);
+  // Bring the field to the middle of the screen (the bottom bar would hide it) and put the cursor in it.
+  const focusCode = () => {
+    codeInput.current?.focus({ preventScroll: true });
+    codeInput.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+  };
 
   const [pending, setPending] = useState(false);
   const [placed, setPlaced] = useState(false);
@@ -71,16 +86,23 @@ export default function CartPage() {
     if (submitting.current) return; // synchronous guard: state updates are too slow to stop a rapid double tap
     const lines = cart.getLines();
     if (lines.length === 0 || cannotPay) return;
+    // Required: a full code is needed. Optional: empty is fine, but whatever is typed must be a full code.
+    if ((requiresCode || tableCode) && !/^\d{4}$/.test(tableCode)) {
+      setCodeError(requiresCode ? 'Enter the 4-digit code printed on your table.' : 'Enter all 4 digits of the code, or clear the box to order without it.');
+      focusCode();
+      return;
+    }
     submitting.current = true;
     setPending(true);
     setProblem(null);
 
-    const body = buildOrderBody(lines, note, pref);
+    const body = buildOrderBody(lines, note, pref, showCode ? tableCode : '');
     // Same cart -> same key (retries return the same order); changed cart -> new key.
     const key = idempotencyKeyFor(token, JSON.stringify(body.items));
 
     try {
       const order = await createOrder(token, body, key);
+      if (showCode && tableCode) setItem(codeKey(token), tableCode); // the next order from this table needs no retyping
       setPlaced(true);
       rememberOrder(token, order.token);
       clearIdempotencyKey(token);
@@ -91,6 +113,13 @@ export default function CartPage() {
       submitting.current = false;
       setPending(false);
       const code = err instanceof ApiError ? err.code : '';
+
+      if (code === 'TABLE_CODE_WRONG' || code === 'TABLE_CODE_REQUIRED') {
+        removeItem(codeKey(token));
+        setCodeError(err.message);
+        focusCode();
+        return;
+      }
 
       if (MENU_CHANGED.has(code) || code === 'TABLE_UNAVAILABLE') {
         const fresh = await refreshMenu();
@@ -243,6 +272,39 @@ export default function CartPage() {
                 {`${note.length}/${MAX_NOTE}`}
               </p>
             </section>
+
+            {showCode && (
+              <section className="surface p-4">
+                <label htmlFor="table-code" className="flex flex-wrap items-baseline justify-between gap-x-2 font-extrabold text-ink">
+                  <span>
+                    Table code{!requiresCode && <span className="font-semibold text-ink-soft"> (optional)</span>}
+                  </span>
+                  <span className="text-xs font-semibold text-ink-soft">On the card on your table</span>
+                </label>
+                <input
+                  id="table-code"
+                  ref={codeInput}
+                  value={tableCode}
+                  onChange={(e) => {
+                    setTableCode(e.target.value.replace(/\D/g, '').slice(0, 4));
+                    setCodeError('');
+                  }}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="off"
+                  maxLength={4}
+                  placeholder="4 digits"
+                  aria-invalid={codeError ? true : undefined}
+                  aria-describedby={codeError ? 'table-code-error' : undefined}
+                  className="mt-2 block h-12 w-full rounded-2xl border-0 bg-page px-3 text-center text-2xl font-extrabold tracking-[0.4em] text-ink ring-1 ring-inset ring-line placeholder:text-base placeholder:font-semibold placeholder:tracking-normal placeholder:text-ink-soft/70"
+                />
+                {codeError && (
+                  <p id="table-code-error" role="alert" className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-900">
+                    {codeError}
+                  </p>
+                )}
+              </section>
+            )}
 
             <section className="surface p-4">
               <h2 className="mb-3 font-bold tracking-tight text-ink">Bill summary</h2>

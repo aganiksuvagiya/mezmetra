@@ -1,3 +1,4 @@
+import RequestsBanner from './RequestsBanner.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -312,6 +313,7 @@ function Shell() {
         </header>
 
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8 print:max-w-none print:p-0">
+          <RequestsBanner />
           <Outlet />
         </main>
       </div>

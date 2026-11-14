@@ -129,6 +129,7 @@ const vendorPatchSchema = z
     timezone: z.string().trim().min(1).max(64),
     theme_primary: hexColour,
     theme_accent: hexColour,
+    table_code_mode: z.enum(['off', 'optional', 'required']),
   })
   .partial();
 
@@ -158,9 +159,10 @@ export function vendorRouter(db) {
          tax_percent   = COALESCE($3, tax_percent),
          timezone      = COALESCE($4, timezone),
          theme_primary = COALESCE($5, theme_primary),
-         theme_accent  = COALESCE($6, theme_accent)
+         theme_accent  = COALESCE($6, theme_accent),
+         table_code_mode = COALESCE($7, table_code_mode)
        WHERE id = $1 RETURNING *`,
-      [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null],
+      [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null, body.table_code_mode ?? null],
     );
     res.json({ data: vendorOut(rows[0]) });
   });

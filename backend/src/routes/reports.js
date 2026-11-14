@@ -19,7 +19,7 @@ const dateString = z
 
 const rangeSchema = z.object({ from: dateString.optional(), to: dateString.optional() });
 
-const METHODS = ['upi', 'cash', 'razorpay'];
+const METHODS = ['upi', 'cash', 'razorpay', 'cashfree'];
 
 export function reportsRouter(db) {
   const router = Router();

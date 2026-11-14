@@ -63,9 +63,11 @@ export const TagIcon = make(
   </>,
 );
 export const ListIcon = make(<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />);
+// A dining table from the front: a thick rounded top on three legs. Reads as "table" even at 18px.
 export const TableIcon = make(
   <>
-    <path d="M3 9h18M5 9l-1 11M19 9l1 11M3 9l1.5-4h15L21 9" />
+    <rect x="3" y="7" width="18" height="4" rx="2" />
+    <path d="M6 11v9M18 11v9M12 11v5" />
   </>,
 );
 export const QrIcon = make(

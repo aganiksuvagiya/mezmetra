@@ -9,6 +9,7 @@ import { useToast } from '../../components/Toast.jsx';
 import { api, splitFieldErrors } from '../../lib/api.js';
 import { changedFields, isMoneyString } from '../../lib/forms.js';
 import { useAction } from '../../lib/hooks.js';
+import { DIET_LABELS } from '../../components/DietMark.jsx';
 import { groupsFromApi, groupsToApi, validateGroups } from '../../lib/optionGroups.js';
 
 function initialValues(item, categories) {
@@ -19,6 +20,7 @@ function initialValues(item, categories) {
     description: item?.description ?? '',
     is_active: item?.is_active ?? true,
     is_featured: item?.is_featured ?? false,
+    diet: item?.diet ?? '',
   };
 }
 
@@ -29,6 +31,7 @@ const toPayload = (v, groups) => ({
   price: Number(v.price),
   is_active: v.is_active,
   is_featured: v.is_featured,
+  diet: v.diet || null,
   option_groups: groupsToApi(groups),
 });
 
@@ -183,6 +186,14 @@ export default function ItemFormModal({ item, categories, onClose, onSaved }) {
             ))}
           </Select>
           <Input label="Price" value={values.price} onChange={set('price')} error={errors.price} required inputMode="decimal" prefix="₹" placeholder="0" />
+          <Select label="Food type" value={values.diet} onChange={set('diet')} hint="Shown to diners as the green / red mark. Leave it unmarked if you are not sure.">
+            <option value="">Not marked</option>
+            {Object.entries(DIET_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
           <Textarea label="Description" value={values.description} onChange={set('description')} error={errors.description} hint="Optional. Ingredients, spice level, serving size…" maxLength={1000} wrapperClassName="sm:col-span-2" />
         </div>
 

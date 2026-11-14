@@ -131,6 +131,27 @@ export const claimUpiPayment = (orderToken, reference) =>
 export const startRazorpay = (orderToken) =>
   request(`/api/public/orders/${enc(orderToken)}/razorpay`, { method: 'POST' });
 
+/** Cashfree: the server creates the payment session; later it asks Cashfree whether the money arrived (nothing is sent from here). */
+export const startCashfree = (orderToken) =>
+  request(`/api/public/orders/${enc(orderToken)}/cashfree`, { method: 'POST' });
+
+export const verifyCashfree = (orderToken) =>
+  request(`/api/public/orders/${enc(orderToken)}/cashfree/verify`, { method: 'POST' });
+
+/** Which waiter / bill requests of this table are open: { waiter, bill }. */
+export const getServiceRequests = (tableToken, opts) => request(`/api/public/t/${enc(tableToken)}/requests`, opts);
+
+/** "Call the waiter" (kind 'waiter') or "Ask for the bill" (kind 'bill'). Asking again just reports the one already waiting. */
+export const askService = (tableToken, kind) =>
+  request(`/api/public/t/${enc(tableToken)}/requests`, { method: 'POST', body: { kind } });
+
+/** A Razorpay UPI QR code for this order (scan it with any UPI app). The server checks with Razorpay whether it was paid. */
+export const startRazorpayQr = (orderToken) =>
+  request(`/api/public/orders/${enc(orderToken)}/razorpay-qr`, { method: 'POST' });
+
+export const verifyRazorpayQr = (orderToken) =>
+  request(`/api/public/orders/${enc(orderToken)}/razorpay-qr/verify`, { method: 'POST' });
+
 export const verifyRazorpay = (orderToken, response) =>
   request(`/api/public/orders/${enc(orderToken)}/razorpay/verify`, {
     method: 'POST',

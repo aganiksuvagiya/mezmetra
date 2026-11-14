@@ -16,6 +16,7 @@ import { paymentSettingsRouter } from './routes/paymentSettings.js';
 import { platformRouter } from './routes/platform.js';
 import { publicRouter } from './routes/public.js';
 import { reportsRouter } from './routes/reports.js';
+import { requestsRouter } from './routes/requests.js';
 
 const limiter = ({ windowMs, limit }) =>
   rateLimit({
@@ -71,6 +72,7 @@ export function createApp({ db, rateLimits = true, mailer = createMailer() } = {
   admin.use('/dashboard', dashboardRouter(db));
   admin.use('/payment-settings', paymentSettingsRouter(db));
   admin.use('/reports', reportsRouter(db));
+  admin.use('/requests', requestsRouter(db));
   app.use('/api/admin', admin);
   app.use('/api/platform', requireAuth, requireActiveVendor(db), requireSuperAdmin, platformRouter(db));
 

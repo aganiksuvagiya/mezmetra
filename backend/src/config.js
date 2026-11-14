@@ -24,9 +24,9 @@ function proxyHops(value, fallback) {
   return bool(value, false) ? 1 : false;
 }
 
-// Which ways of paying the product offers at all. For now only UPI; set PAYMENT_METHODS=upi,cash,razorpay to bring the others
-// back (each restaurant still chooses among them in Admin -> Payments).
-const KNOWN_PAYMENT_METHODS = ['upi', 'cash', 'razorpay'];
+// Which ways of paying the product offers at all. For now only UPI; set PAYMENT_METHODS=upi,cash,razorpay,cashfree to bring the
+// others back (each restaurant still chooses among them in Admin -> Payments).
+const KNOWN_PAYMENT_METHODS = ['upi', 'cash', 'razorpay', 'cashfree'];
 function paymentMethods(value) {
   const list = (value || 'upi')
     .split(',')
@@ -81,7 +81,7 @@ export const config = {
   appSecret,
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
   allowSignup: bool(env.ALLOW_SIGNUP, true),
-  // A Set (read at request time, so tests can switch it): 'upi' | 'cash' | 'razorpay'.
+  // A Set (read at request time, so tests can switch it): 'upi' | 'cash' | 'razorpay' | 'cashfree'.
   paymentMethods: paymentMethods(env.PAYMENT_METHODS),
   // A Set of lower-case emails (read at request time, so tests can change it).
   superAdminEmails: emailList(env.SUPER_ADMIN_EMAILS),
@@ -99,5 +99,7 @@ export const config = {
   // Where the customer web app lives; this base URL is what gets encoded in table QR codes.
   customerAppUrl: (env.CUSTOMER_APP_URL || 'http://localhost:5174').replace(/\/+$/, ''),
   razorpayApiBase: env.RAZORPAY_API_BASE || 'https://api.razorpay.com/v1',
+  // Empty = Cashfree's own servers (sandbox for TEST App IDs, production otherwise). Tests point it at a fake.
+  cashfreeApiBase: (env.CASHFREE_API_BASE || '').replace(/\/+$/, ''),
   trustProxy: proxyHops(env.TRUST_PROXY, isProd),
 };

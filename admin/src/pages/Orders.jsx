@@ -49,13 +49,18 @@ function OrderRow({ order, fresh, fmt, onOpen }) {
                 New
               </Badge>
             )}
+            {order.table_code_verified && (
+              <Badge tone="green" dot={false}>
+                Code verified
+              </Badge>
+            )}
           </span>
           <span className="block text-xs text-slate-500">{fmt.dateTime(order.created_at)}</span>
         </span>
         <span className="block font-semibold text-slate-900 tabular-nums md:order-last md:text-right">{fmt.money(order.total)}</span>
         <span className="col-span-2 line-clamp-2 text-sm text-slate-600 md:col-span-1">{orderItemsSummary(order.items)}</span>
         <span className="col-span-2 flex flex-wrap items-center gap-1.5 md:col-span-1">
-          <StatusBadge status={order.status} />
+          <StatusBadge status={order.status} ready={Boolean(order.ready_at)} />
           <PaymentBadge status={order.payment_status} method={order.payment_method} claimed={Boolean(order.payment_claim)} />
         </span>
       </button>

@@ -3,16 +3,18 @@ import { CheckIcon } from './Icons';
 const STEPS = [
   { key: 'pending', label: 'Received' },
   { key: 'accepted', label: 'Accepted' },
+  { key: 'ready', label: 'Ready' },
   { key: 'completed', label: 'Completed' },
 ];
 
-/** Received -> Accepted -> Completed. (Cancelled orders are shown by the page itself, not as a step.) */
-export default function StatusStepper({ status, tone = 'default' }) {
+/** Received -> Accepted -> Ready -> Completed. `ready` is the kitchen saying an accepted order is done. (Cancelled orders are shown by the page itself.) */
+export default function StatusStepper({ status, ready = false, tone = 'default' }) {
   const light = tone === 'light'; // on a dark brand card
-  const current = Math.max(0, STEPS.findIndex((s) => s.key === status));
+  const key = status === 'accepted' && ready ? 'ready' : status;
+  const current = Math.max(0, STEPS.findIndex((s) => s.key === key));
   const stateOf = (i) => {
     if (i < current) return 'done';
-    if (i === current) return status === 'completed' ? 'done' : 'current';
+    if (i === current) return key === 'completed' ? 'done' : 'current';
     return 'upcoming';
   };
 

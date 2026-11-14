@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PaymentBadge, StatusBadge } from '../../components/Badge.jsx';
+import { Badge, PaymentBadge, StatusBadge } from '../../components/Badge.jsx';
 import { Button } from '../../components/Button.jsx';
 import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import { Alert, ErrorState } from '../../components/EmptyState.jsx';
@@ -28,12 +28,17 @@ function OrderBody({ order, fmt }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge status={order.status} />
+        <StatusBadge status={order.status} ready={Boolean(order.ready_at)} />
         <PaymentBadge status={order.payment_status} method={order.payment_method} claimed={Boolean(order.payment_claim)} />
         <span className="text-sm text-slate-600">
           Table <strong className="font-semibold text-slate-900">{order.table_number}</strong>
         </span>
         <span className="text-sm text-slate-500">· Placed {fmt.dateTime(order.created_at)}</span>
+        {order.table_code_verified && (
+          <Badge tone="green" dot={false}>
+            Code verified
+          </Badge>
+        )}
       </div>
       {order.payment_status === 'unpaid' && order.payment_claim && order.status !== 'cancelled' && (
         <Alert tone="warning">
@@ -117,7 +122,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
   const toast = useToast();
   const q = useQuery(() => api(`/api/admin/orders/${orderId}`), [orderId], { interval: 8000 });
   const [run, busy] = useAction();
-  const [pending, setPending] = useState(null); // which action is running: 'accept' | 'complete' | 'receipt'
+  const [pending, setPending] = useState(null); // which action is running: 'accept' | 'ready' | 'complete' | 'receipt'
   const [actionError, setActionError] = useState(null);
   const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'delete' | null
 
@@ -145,6 +150,21 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
       } catch (error) {
         setActionError(error.message);
         q.reload(); // the order may have changed under us (for example the customer just paid online)
+      } finally {
+        setPending(null);
+      }
+    });
+
+  // The kitchen has finished it: the diner is told on their phone. The order stays accepted until staff complete it.
+  const markReady = () =>
+    run(async () => {
+      setActionError(null);
+      setPending('ready');
+      try {
+        applyUpdate(await api(`/api/admin/orders/${orderId}/ready`, { method: 'POST' }), `Order #${orderId} is ready. The customer has been told.`);
+      } catch (error) {
+        setActionError(error.message);
+        q.reload();
       } finally {
         setPending(null);
       }
@@ -210,6 +230,16 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
               Accept order
             </Button>
           )}
+          {paid && order.payment_method === 'razorpay' && (
+            <Button variant="danger-outline" disabled={busy} onClick={() => setConfirm('refund')}>
+              Refund {fmt.money(order.total)}
+            </Button>
+          )}
+          {order.status === 'accepted' && !order.ready_at && (
+            <Button variant={paid ? 'secondary' : 'primary'} busy={pending === 'ready'} disabled={busy} onClick={markReady}>
+              Mark ready
+            </Button>
+          )}
           {order.status === 'accepted' && paid && (
             <Button busy={pending === 'complete'} disabled={busy} onClick={() => setStatus('completed', `Order #${orderId} completed.`)}>
               Complete order
@@ -258,6 +288,27 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
           setConfirm(null);
           setActionError(null);
           applyUpdate(updated, `Order #${orderId} cancelled.`);
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirm === 'refund'}
+        title={`Refund order #${orderId}?`}
+        message={
+          order
+            ? `${fmt.money(order.total)} goes back to the customer’s account through Razorpay (it can take a few days to show). ${
+                order.status === 'completed' ? '' : 'The order is cancelled too. '
+              }This can’t be undone.`
+            : ''
+        }
+        confirmLabel="Refund"
+        cancelLabel="Keep payment"
+        onCancel={() => setConfirm(null)}
+        onConfirm={async () => {
+          const updated = await api(`/api/admin/orders/${orderId}/refund`, { method: 'POST' });
+          setConfirm(null);
+          setActionError(null);
+          applyUpdate(updated, `Order #${orderId} refunded (${fmt.money(updated.total)}).`);
         }}
       />
 

@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import BottomSheet from './BottomSheet';
+import DietMark from './DietMark';
 import DishImage from './DishImage';
 import QuantityStepper from './QuantityStepper';
 import { Button } from './Button';
@@ -81,6 +82,7 @@ export default function ItemSheet({ item, onClose, onAdd }) {
         <div className="px-4 pb-4 pt-4">
           <div className="flex items-start justify-between gap-3">
             <h2 id={titleId} className="display text-[26px] font-extrabold leading-tight text-ink">
+              <DietMark diet={item.diet} size={20} className="mr-2 -translate-y-0.5" />
               {item.name}
             </h2>
             <p className="shrink-0 pt-1 text-xl font-extrabold tabular-nums text-ink">{formatMoney(item.price)}</p>

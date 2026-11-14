@@ -35,3 +35,26 @@ export const pingRazorpay = ({ keyId, keySecret }) => call('/orders?count=1', { 
 export function verifyCheckoutSignature({ keySecret, orderId, paymentId, signature }) {
   return safeEqual(hmacSha256Hex(keySecret, `${orderId}|${paymentId}`), String(signature));
 }
+
+/**
+ * A UPI QR code for one order: single use, and the amount is fixed, so the diner's UPI app cannot change it. Razorpay must have
+ * activated "UPI QR" for the merchant (it is an on-demand feature). `closeBy` is a UNIX time (at least 2 minutes from now).
+ */
+export const createRazorpayQr = ({ keyId, keySecret, amountPaise, name, description, notes, closeBy }) =>
+  call('/payments/qr_codes', {
+    keyId,
+    keySecret,
+    method: 'POST',
+    body: { type: 'upi_qr', name, usage: 'single_use', fixed_amount: true, payment_amount: amountPaise, description, close_by: closeBy, notes },
+  });
+
+/** The QR code itself (its `image_url` is the picture to show). */
+export const fetchRazorpayQr = ({ keyId, keySecret, qrId }) => call(`/payments/qr_codes/${encodeURIComponent(qrId)}`, { keyId, keySecret });
+
+/** The payments made on a QR code: `{ items: [{ id, amount, status }] }`. A `captured` item means the money arrived. */
+export const fetchRazorpayQrPayments = ({ keyId, keySecret, qrId }) =>
+  call(`/payments/qr_codes/${encodeURIComponent(qrId)}/payments`, { keyId, keySecret });
+
+/** Refunds a captured payment in full. Razorpay answers with the refund (`id`, `status` processed or pending). */
+export const refundRazorpayPayment = ({ keyId, keySecret, paymentId, amountPaise, notes }) =>
+  call(`/payments/${encodeURIComponent(paymentId)}/refund`, { keyId, keySecret, method: 'POST', body: { amount: amountPaise, speed: 'normal', notes } });

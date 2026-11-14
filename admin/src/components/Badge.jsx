@@ -33,14 +33,16 @@ const STATUS = {
   cancelled: ['slate', 'Cancelled'],
 };
 
-export function StatusBadge({ status }) {
-  const [tone, label] = STATUS[status] ?? ['slate', status];
+/** `ready`: the kitchen has finished an accepted order (it waits for staff to complete it). */
+export function StatusBadge({ status, ready = false }) {
+  const [tone, label] = status === 'accepted' && ready ? ['green', 'Ready'] : STATUS[status] ?? ['slate', status];
   return <Badge tone={tone}>{label}</Badge>;
 }
 
 export function PaymentBadge({ status, method, claimed = false }) {
+  if (status === 'refunded') return <Badge tone="slate">Refunded</Badge>;
   if (status === 'paid') {
-    const via = method === 'cash' ? ' · Cash' : method === 'razorpay' ? ' · Online' : method === 'upi' ? ' · UPI' : '';
+    const via = method === 'cash' ? ' · Cash' : method === 'razorpay' || method === 'cashfree' ? ' · Online' : method === 'upi' ? ' · UPI' : '';
     return <Badge tone="green">{`Paid${via}`}</Badge>;
   }
   // The diner says they paid by UPI; it only counts once staff confirm the money arrived.

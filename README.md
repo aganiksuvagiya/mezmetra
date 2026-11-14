@@ -1,7 +1,7 @@
 # MezMitra
 
 QR-code table ordering for restaurants. Diners scan the code on their table, browse the menu on their phone, place an
-order and pay at the counter or online (Razorpay). Staff manage the menu, tables and live orders from an admin panel.
+order and pay at the counter or online (Cashfree or Razorpay). Staff manage the menu, tables and live orders from an admin panel.
 
 ```
 backend/    Node.js + Express API (PostgreSQL: Aiven in production, PGlite locally)
@@ -41,7 +41,7 @@ Both web apps listen on your network address, so a phone on the same Wi-Fi can o
 On plain `http://` the *in-page* camera scanner is disabled by the browser (it needs `https`); use the phone's camera app or "Use a photo of the QR code". UPI app buttons work over `http`.
 
 ```bash
-npm test          # backend end-to-end tests (in-memory database, mocked Razorpay)
+npm test          # backend end-to-end tests (in-memory database, mocked Razorpay and Cashfree)
 npm run build     # production builds of both web apps (admin/dist, customer/dist)
 ```
 
@@ -83,7 +83,8 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get **Platform** in the admin sidebar: every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
 | `SMTP_URL`, `MAIL_FROM` | Email for password reset. `SMTP_URL` is any provider's SMTP address, e.g. `smtps://user:app-password@smtp.gmail.com:465` (Gmail needs an *app password*). Empty = no email is sent; in development the email is printed in the API console instead. |
 | `ADMIN_APP_URL` | Public URL of the admin site (default `http://localhost:5180`): the base of the link inside the reset email. |
-| `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay` to bring the others back. |
+| `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, `cashfree`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay,cashfree` to bring the others back. |
+| `CASHFREE_API_BASE` | Optional. Leave empty: Cashfree's own servers are used (sandbox for App IDs starting with `TEST`, production otherwise). Tests point it at a fake. |
 | `TRUST_PROXY` | How many reverse proxies sit in front of the API: `1` on Render/Fly/Heroku, `0` when none (default in production is `1`). Needed for correct per-IP rate limits. |
 
 Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin.
@@ -99,6 +100,13 @@ Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are 
 - **Reports:** *Reports* shows a day (or up to 92 days) of sales: money received (counted on the day it was paid, like the dashboard),
   split by UPI / cash / online, orders placed, unpaid orders and best sellers, with a **CSV** (one row per order, opens in Excel/Sheets) and
   a **PDF** download.
+
+## Voice for new orders
+
+With **New-order sound** on, the admin panel chimes and reads each new order out ("New order. Table 3. 2 items."). Admin -> Settings ->
+**New-order alerts** lets each device choose English or Hindi, a voice and a speed (kept on that device). It uses the browser's own
+text-to-speech, so nothing is shipped or called online; the voices come from the device, and a language the device has no voice for shows a warning.
+Table names are read as digits only ("T-03" is "Table 3"); dish names are not read.
 
 ## Demo data (sample orders and prices)
 
@@ -127,6 +135,27 @@ A restaurant has to enter its UPI ID in **Admin -> Payments** before diners can 
 menu refuses orders with a clear message. Cash and Razorpay are hidden everywhere (admin, customer menu, API) until `PAYMENT_METHODS`
 lists them again; nothing is deleted, so switching them back on needs no migration.
 
+## Online payments (Cashfree)
+
+Only used when `PAYMENT_METHODS` includes `cashfree`. Cashfree is the lower-fee online gateway (UPI apps, cards, net banking) and,
+unlike a plain UPI ID, it **tells the server when the money arrived**, so the order turns "Paid" by itself.
+
+Each restaurant brings its own Cashfree account: **Admin -> Payments** -> enter the **App ID** and **Secret Key** from the Cashfree
+dashboard (Payment Gateway -> Developers -> API Keys). The secret is stored encrypted and never sent back to the browser. App IDs starting
+with `TEST` use Cashfree's sandbox; any other App ID is a live account. A restaurant uses **one** online gateway at a time (Cashfree or
+Razorpay): turning one on turns the other off. Diners see **Pay online** on their order page.
+
+How a payment is confirmed: the API creates a Cashfree order (`POST /api/public/orders/:token/cashfree`), the browser opens Cashfree's
+payment window, and when it closes (and again whenever the diner returns to the order page) the customer app calls
+`POST /api/public/orders/:token/cashfree/verify`. That call sends nothing: the **server asks Cashfree** for the order status and only
+marks the order paid when Cashfree says `PAID` for exactly the order's amount. A payment is therefore picked up even if the diner paid
+in a UPI app and closed the tab.
+
+Not built yet: a Cashfree **webhook** (so a payment is recorded even if the diner never returns to the page). Until then staff can see an
+unrecorded payment in the Cashfree dashboard and confirm the order from Orders. Cashfree must also approve the account for production
+payments (KYC); until then use the sandbox keys. If Cashfree rejects server calls in production with an IP or domain message, add the
+API's address / the customer site address in the Cashfree dashboard (Developers settings).
+
 ## Online payments (Razorpay)
 
 Only used when `PAYMENT_METHODS` includes `razorpay`.
@@ -136,6 +165,10 @@ dashboard (use `rzp_test_...` keys first), press **Test connection**, then turn 
 and are never sent back to the browser. Diners then see **Pay online** on their order page; the API creates the Razorpay order,
 the browser opens Razorpay Checkout, and the API verifies Razorpay's HMAC signature before marking the order paid. If a
 restaurant has no keys the diner is simply told to pay at the counter, and staff can record the payment (**Orders -> Record cash payment**).
+
+Paying online also **accepts the order**: once the gateway has confirmed the money, a pending order becomes accepted by itself (staff do not press Accept; they press Complete when it is served). Cash and UPI orders still wait for staff.
+
+**Scan to pay (QR):** under *Pay online* the diner can tap *Or scan a QR code to pay*. The API makes a Razorpay **UPI QR** for that order (single use, fixed amount; `POST /api/public/orders/:token/razorpay-qr`) and the page asks `.../razorpay-qr/verify` every 3 seconds; the server asks Razorpay and marks the order paid (and accepted) when a captured payment of the exact amount shows up. Razorpay must have switched **UPI QR** on for the account (an on-demand feature, ask Razorpay support); if not, the diner is told to use *Pay online* instead. A plain UPI QR (restaurant's own UPI ID) cannot do this: only a payment gateway can tell us a payment arrived.
 
 Not built yet: a Razorpay **webhook**. Today a payment is confirmed when the diner's browser returns from Checkout; if the diner
 closes the tab right after paying, staff must reconcile it from the Razorpay dashboard. A webhook endpoint is the recommended next step before taking live payments.
@@ -180,7 +213,7 @@ The free plans are fine for demos and first restaurants; for real daily use move
 5. **Before real restaurants:** change or delete the demo accounts from `backend/src/seed.js`, set `ALLOW_SIGNUP=false` if you
    onboard restaurants yourself, and add your custom domains (Cloudflare Pages -> Custom domains; Render -> Custom domains).
 
-- If you add a Content-Security-Policy header to the customer site, allow Razorpay Checkout: `script-src https://checkout.razorpay.com`, `frame-src https://api.razorpay.com https://checkout.razorpay.com`, `connect-src https://lumberjack.razorpay.com` plus your API origin.
+- If you add a Content-Security-Policy header to the customer site, allow Cashfree (`script-src https://sdk.cashfree.com`, `frame-src https://sdk.cashfree.com https://payments.cashfree.com https://sandbox.cashfree.com`, `connect-src https://api.cashfree.com https://sandbox.cashfree.com`) and Razorpay Checkout: `script-src https://checkout.razorpay.com`, `frame-src https://api.razorpay.com https://checkout.razorpay.com`, `connect-src https://lumberjack.razorpay.com` plus your API origin.
 - Any other Node 22 host works for the API (`npm run start -w backend`, `NODE_ENV=production`, the variables above); any static host with a fallback to `index.html` works for the sites.
 - Back up regularly: `pg_dump "$DATABASE_URL" > backup.sql` (store it somewhere other than the database provider).
 

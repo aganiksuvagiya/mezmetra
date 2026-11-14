@@ -1,6 +1,8 @@
 import { useId, useMemo, useState } from 'react';
 import { Button } from '../components/Button.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
+import AlertSettingsCard from '../components/AlertSettingsCard.jsx';
+import TableCodeCard from '../components/TableCodeCard.jsx';
 import { Alert } from '../components/EmptyState.jsx';
 import LogoCard from '../components/LogoCard.jsx';
 import { focusFirstInvalid, Input } from '../components/Field.jsx';
@@ -150,6 +152,10 @@ export default function Settings() {
             </div>
           </form>
         </Card>
+
+        <TableCodeCard />
+
+        <AlertSettingsCard />
 
         <Card as="section" aria-labelledby="account">
           <CardHeader id="account" title="Account" description="You are signed in as" />

@@ -23,7 +23,7 @@ export function writeReceipt(res, { vendor, order }) {
     ['Receipt no.', `#${order.id}`],
     ['Table', order.table_number],
     ['Date', formatDate(order.paid_at ?? order.created_at, vendor.timezone)],
-    ['Payment', `${{ razorpay: 'Online (Razorpay)', upi: 'UPI' }[order.payment_method] ?? 'Cash'} - ${order.payment_status.toUpperCase()}`],
+    ['Payment', `${{ razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', upi: 'UPI' }[order.payment_method] ?? 'Cash'} - ${order.payment_status.toUpperCase()}`],
   ];
   for (const [label, value] of meta) {
     const y = doc.y;

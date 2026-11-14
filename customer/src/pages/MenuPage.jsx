@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { DIET_LABELS } from '../components/DietMark';
 import { DishCard, PickCard } from '../components/DishCard';
 import EmptyState from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { CardIcon, CashIcon, ChevronRightIcon, CloseIcon, MenuBookIcon, PhoneIcon, SearchIcon } from '../components/Icons';
 import ItemSheet from '../components/ItemSheet';
+import ServiceButtons from '../components/ServiceButtons';
 import VendorMark from '../components/VendorMark';
 import { useToast } from '../components/Toast';
 import { buildLine, lineKey, MAX_LINES, MAX_QTY } from '../lib/cart';
@@ -16,6 +18,7 @@ import { formatMoney } from '../lib/money';
 const ORDER_STATUS_TEXT = {
   pending: 'Received - waiting for the kitchen',
   accepted: 'Being prepared',
+  ready: 'Ready - on its way to your table',
   completed: 'Served - payment is still due',
 };
 
@@ -34,7 +37,20 @@ export default function MenuPage() {
   const chipScroller = useRef(null);
   usePageTitle(`Menu - ${menu.vendor.name}`);
 
-  const { categories, items } = menu;
+  const { categories } = menu;
+  const allItems = menu.items;
+
+  // Veg / Egg / Non-veg / Jain filter. Only kinds this menu really has are offered, and only when some dishes are marked at all.
+  // "Veg" also shows the Jain dishes (they are vegetarian too); a dish that is not marked never matches a filter.
+  const [diet, setDiet] = useState('');
+  const dietChips = useMemo(
+    () => ['veg', 'egg', 'nonveg', 'jain'].filter((kind) => allItems.some((i) => i.diet === kind || (kind === 'veg' && i.diet === 'jain'))),
+    [allItems],
+  );
+  const items = useMemo(
+    () => (diet ? allItems.filter((i) => i.diet === diet || (diet === 'veg' && i.diet === 'jain')) : allItems),
+    [allItems, diet],
+  );
 
   // Quantities per dish: everything in the cart, and the "plain" line (no options / notes) that an inline stepper controls.
   const { totalQty, plainQty } = useMemo(() => {
@@ -52,7 +68,7 @@ export default function MenuPage() {
   // The ways of paying this restaurant takes, shown under its name so nobody is surprised at the cart.
   const payChips = [
     menu.payment_options?.upi && { key: 'upi', label: 'UPI', Icon: PhoneIcon },
-    menu.payment_options?.razorpay && { key: 'online', label: 'Card & online', Icon: CardIcon },
+    (menu.payment_options?.razorpay || menu.payment_options?.cashfree) && { key: 'online', label: 'Card & online', Icon: CardIcon },
     menu.payment_options?.cash && { key: 'cash', label: 'Pay at counter', Icon: CashIcon },
   ].filter(Boolean);
 
@@ -186,6 +202,26 @@ export default function MenuPage() {
           ))}
         </ul>
 
+        <ServiceButtons tableToken={token} className="mt-3" />
+
+        {dietChips.length > 0 && (
+          <div role="group" aria-label="Filter by food type" className="mt-3 flex flex-wrap gap-2">
+            {[['', 'All'], ...dietChips.map((k) => [k, k === 'nonveg' ? 'Non-veg' : k === 'veg' ? 'Veg' : DIET_LABELS[k].replace('Contains egg', 'Egg')])].map(([key, label]) => (
+              <button
+                key={key || 'all'}
+                type="button"
+                aria-pressed={diet === key}
+                onClick={() => setDiet(key)}
+                className={`min-h-9 rounded-full px-3.5 text-[13px] font-bold transition-colors ${
+                  diet === key ? 'bg-brand-600 text-white' : 'bg-black/[0.06] text-ink hover:bg-black/10'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* iOS search field: a grey rounded well, no border. */}
         <div className="relative mt-4">
           <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 z-10 size-[18px] -translate-y-1/2 text-ink-soft" />
@@ -227,7 +263,7 @@ export default function MenuPage() {
                 Your order{activeOrder.order ? ` · ${formatMoney(activeOrder.order.total)}` : ''}
               </span>
               <span className="block text-xs text-white/70">
-                {activeOrder.order ? ORDER_STATUS_TEXT[activeOrder.order.status] ?? 'In progress' : 'You have an order in progress'}
+                {activeOrder.order ? ORDER_STATUS_TEXT[activeOrder.order.status === 'accepted' && activeOrder.order.ready_at ? 'ready' : activeOrder.order.status] ?? 'In progress' : 'You have an order in progress'}
               </span>
             </span>
             <ChevronRightIcon className="size-5 shrink-0 text-white/80" />
@@ -324,9 +360,23 @@ export default function MenuPage() {
           </>
         )}
 
-        {items.length === 0 && (
+        {allItems.length === 0 && (
           <EmptyState as="h2" icon={<MenuBookIcon className="size-8" />} title="The menu is empty right now">
             Nothing is available to order at the moment. Please ask a member of staff.
+          </EmptyState>
+        )}
+        {allItems.length > 0 && items.length === 0 && (
+          <EmptyState
+            as="h2"
+            icon={<MenuBookIcon className="size-8" />}
+            title="No dishes of this type"
+            action={
+              <Button variant="secondary" onClick={() => setDiet('')}>
+                Show all dishes
+              </Button>
+            }
+          >
+            Try another filter.
           </EmptyState>
         )}
       </div>

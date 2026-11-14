@@ -18,7 +18,9 @@ export const vendorOut = (v) => ({
   tax_percent: Number(v.tax_percent),
   theme: themeOut(v),
   logo_url: logoUrl(v),
-  // Ways of paying the product offers right now ('upi', 'cash', 'razorpay'); the admin hides the rest.
+  // Whether diners are asked for the code printed on their table: 'off', 'optional' (may skip it) or 'required' (stops orders from people who only have the link).
+  table_code_mode: v.table_code_mode ?? 'off',
+  // Ways of paying the product offers right now ('upi', 'cash', 'razorpay', 'cashfree'); the admin hides the rest.
   payment_methods: [...config.paymentMethods],
   // True for the platform owner's account (SUPER_ADMIN_EMAILS): the admin then shows the Platform section.
   is_super_admin: isSuperAdminEmail(v.email),
@@ -82,6 +84,7 @@ export const itemOut = (item, groups = []) => ({
   is_active: item.is_active,
   is_featured: item.is_featured,
   is_sold_out: Boolean(item.is_sold_out),
+  diet: item.diet ?? null,
   photo_url: photoUrl(item),
   option_groups: groups,
   created_at: item.created_at,
@@ -96,6 +99,7 @@ export const tableOut = (t, qrUrl) => ({
   is_active: t.is_active,
   availability: !t.is_active ? 'maintenance' : t.occupied ? 'occupied' : 'available',
   qr_url: qrUrl,
+  code: t.code, // the 4 digits printed on the table's QR card (asked for when the restaurant requires it)
   created_at: t.created_at,
   updated_at: t.updated_at,
 });
@@ -135,10 +139,13 @@ const orderBase = (o, items) => ({
   tax: toRupees(o.tax_paise),
   total: toRupees(o.total_paise),
   note: o.note,
+  // The diner typed the code printed on this table (always true when the restaurant requires the code).
+  table_code_verified: Boolean(o.table_code_verified),
   items,
   total_quantity: items.reduce((n, i) => n + i.quantity, 0),
   created_at: o.created_at,
   accepted_at: o.accepted_at,
+  ready_at: o.ready_at,
   completed_at: o.completed_at,
   paid_at: o.paid_at,
 });

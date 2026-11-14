@@ -14,7 +14,7 @@ import { downloadUrl, useAction, useDocumentTitle, useQuery } from '../lib/hooks
 import { useFmt } from '../lib/useFmt.js';
 
 const MAX_DAYS = 92;
-const METHOD_LABEL = { upi: 'UPI apps', cash: 'Cash', razorpay: 'Online (Razorpay)' };
+const METHOD_LABEL = { upi: 'UPI apps', cash: 'Cash', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)' };
 const PRESETS = [
   ['today', 'Today'],
   ['yesterday', 'Yesterday'],

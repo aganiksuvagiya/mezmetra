@@ -63,11 +63,11 @@ function wrap(ctx, text, maxWidth, maxLines) {
 }
 
 /**
- * @param {{ qrSrc: string, restaurantName: string, tableNumber: string, color?: string, logoSrc?: string|null }} p
+ * @param {{ qrSrc: string, restaurantName: string, tableNumber: string, tableCode?: string|null, color?: string, logoSrc?: string|null }} p
  *   `qrSrc` is an image URL (the blob URL of the QR PNG); `logoSrc` is optional.
  * @returns {Promise<Blob>} a PNG, CARD_W x CARD_H
  */
-export async function buildQrCard({ qrSrc, restaurantName, tableNumber, color = '#2f6f62', logoSrc = null }) {
+export async function buildQrCard({ qrSrc, restaurantName, tableNumber, tableCode = null, color = '#2f6f62', logoSrc = null }) {
   await document.fonts?.ready?.catch?.(() => {});
   const [qr, logo] = await Promise.all([loadImage(qrSrc), logoSrc ? loadLogo(logoSrc) : null]);
 
@@ -120,7 +120,7 @@ export async function buildQrCard({ qrSrc, restaurantName, tableNumber, color = 
   // QR code, drawn crisp (no smoothing). A logo and a long, two-line name take room, so the code shrinks a little to leave
   // space for the table number and the credit below it (the card itself keeps one fixed size).
   const qrTop = y;
-  const qrSize = Math.min(QR_SIZE, CARD_H - 360 - qrTop);
+  const qrSize = Math.min(QR_SIZE, CARD_H - 360 - qrTop - (tableCode ? 50 : 0)); // the table code line needs a little room too
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(qr, cx - qrSize / 2, qrTop, qrSize, qrSize);
   ctx.imageSmoothingEnabled = true;
@@ -128,7 +128,15 @@ export async function buildQrCard({ qrSrc, restaurantName, tableNumber, color = 
   // Table number.
   ctx.fillStyle = '#1c1c1e';
   fitFont(ctx, `Table ${tableNumber}`, 800, 130, CARD_W - 240, 64);
-  ctx.fillText(`Table ${tableNumber}`, cx, Math.min(CARD_H - 230, qrTop + qrSize + 150));
+  const tableBaseline = Math.min(CARD_H - 230, qrTop + qrSize + 150);
+  ctx.fillText(`Table ${tableNumber}`, cx, tableBaseline);
+
+  // Table code (fake-order guard): diners type it before ordering, so it has to be readable on the printed card.
+  if (tableCode) {
+    ctx.fillStyle = '#5b5b5f';
+    ctx.font = `700 54px ${FONT}`;
+    ctx.fillText(`Table code: ${tableCode}`, cx, tableBaseline + 74);
+  }
 
   // Credit: "Made with ♥ by Raavora · raavora.com"
   const baseline = CARD_H - 110;

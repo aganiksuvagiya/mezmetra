@@ -23,7 +23,7 @@ services:
         value: "5"
       - key: ALLOW_SIGNUP
         value: "true"
-      - key: PAYMENT_METHODS # the three ways the product offers; each restaurant picks among them in Admin -> Payments
+      - key: PAYMENT_METHODS # the ways the product offers; each restaurant picks among them in Admin -> Payments
         value: upi,cash,razorpay
       - key: DATABASE_URL # Aiven "Service URI"
         sync: false

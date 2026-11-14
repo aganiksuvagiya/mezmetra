@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import Alert from '../components/Alert';
 import BillSummary from '../components/BillSummary';
@@ -7,10 +7,12 @@ import EmptyState from '../components/EmptyState';
 import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, MenuBookIcon, QrIcon } from '../components/Icons';
 import OrderItems from '../components/OrderItems';
 import PaymentCard from '../components/PaymentCard';
+import ServiceButtons from '../components/ServiceButtons';
 import { OrderSkeleton } from '../components/Skeleton';
 import StatusStepper from '../components/StatusStepper';
 import VendorMark from '../components/VendorMark';
 import { errorMessage } from '../lib/api';
+import { alertOrderReady } from '../lib/readyAlert';
 import { TABLE_TOKEN_RE } from '../lib/ids';
 import { forgetLastOrder, isFinished, tableForOrder } from '../lib/orderMemory';
 import { applyTheme } from '../lib/theme';
@@ -21,6 +23,7 @@ import { usePageTitle } from '../lib/usePageTitle';
 const HEADLINE = {
   pending: ['Order received', 'Your order is with the kitchen. We will let you know here as soon as it is accepted.'],
   accepted: ['Your order is being prepared', 'The kitchen has accepted your order and is working on it.'],
+  ready: ['Your order is ready!', 'The kitchen has finished it. It is on its way to your table.'],
   completed: ['Order completed', 'Enjoy your meal!'],
 };
 
@@ -44,6 +47,19 @@ function OrderView({ orderToken }) {
   useEffect(() => {
     if (order?.vendor?.theme) applyTheme(order.vendor.theme);
   }, [order?.vendor?.theme?.primary, order?.vendor?.theme?.accent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The kitchen marks the order ready while this page is open: a short vibration and chime (not on the first load).
+  const readyAt = order?.ready_at ?? null;
+  const seenReady = useRef(undefined);
+  useEffect(() => {
+    if (!order) return;
+    if (seenReady.current === undefined) {
+      seenReady.current = readyAt; // what was already true when the page opened does not alert
+      return;
+    }
+    if (readyAt && !seenReady.current) alertOrderReady();
+    seenReady.current = readyAt;
+  }, [order, readyAt]);
 
   // Once the order is over (cancelled, or completed and paid) stop nagging about it on the menu.
   useEffect(() => {
@@ -91,7 +107,8 @@ function OrderView({ orderToken }) {
   }
 
   const cancelled = order.status === 'cancelled';
-  const [headline, sub] = HEADLINE[order.status] ?? ['Order update', ''];
+  const isReady = order.status === 'accepted' && Boolean(order.ready_at);
+  const [headline, sub] = HEADLINE[isReady ? 'ready' : order.status] ?? ['Order update', ''];
 
   return (
     <main className="pb-[calc(2rem+env(safe-area-inset-bottom))]">
@@ -136,7 +153,7 @@ function OrderView({ orderToken }) {
             <span aria-hidden="true" className="pointer-events-none absolute -right-12 -top-14 size-48 rounded-full bg-saffron-300/30 blur-3xl" />
             <div className="relative flex items-start gap-3.5">
               <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-inset ring-white/25">
-                {order.status === 'completed' ? <CheckIcon className="size-6" /> : order.status === 'accepted' ? <MenuBookIcon className="size-6" /> : <ClockIcon className="size-6 motion-safe:animate-pulse" />}
+                {order.status === 'completed' || isReady ? <CheckIcon className="size-6" /> : order.status === 'accepted' ? <MenuBookIcon className="size-6" /> : <ClockIcon className="size-6 motion-safe:animate-pulse" />}
               </span>
               <div aria-live="polite" className="min-w-0">
                 <h2 className="display text-[22px] font-extrabold leading-tight">{headline}</h2>
@@ -144,7 +161,7 @@ function OrderView({ orderToken }) {
               </div>
             </div>
             <div className="relative">
-              <StatusStepper status={order.status} tone="light" />
+              <StatusStepper status={order.status} ready={isReady} tone="light" />
               <p className="mt-4 text-xs text-white/70">This page updates automatically - no need to refresh.</p>
             </div>
           </section>
@@ -167,6 +184,8 @@ function OrderView({ orderToken }) {
         </section>
 
         <PaymentCard order={order} onPaid={applyOrder} onRefresh={refresh} />
+
+        {tableToken && !cancelled && <ServiceButtons tableToken={tableToken} className="justify-center" />}
 
         <div className="pt-2 text-center">
           {tableToken ? (

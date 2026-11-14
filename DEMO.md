@@ -57,7 +57,7 @@ appreciated). They are *not* Tea Post's own food, so use them for the demo only 
    Open the cart, add a note ("no sugar in one"), and **Place order**.
 4. **Pay.** Tap *Pay with UPI app* (the amount is already filled in), pay in Google Pay / PhonePe / Paytm, come back and tap *I've paid*.
 5. **Kitchen side.** On the laptop open Admin, switch **New-order sound** on in the sidebar (one click; browsers need it), then place
-   the order from the phone: the laptop chimes, the tab title shows `(1)` and Admin -> **Orders** has the order, live. **Accept**, press **Confirm UPI payment** once the money is in, **Complete**.
+   the order from the phone: the laptop chimes and reads the order out ("New order. Table 3. 2 items."; language, voice and speed are in Admin -> Settings -> New-order alerts), the tab title shows `(1)` and Admin -> **Orders** has the order, live. **Accept**, press **Confirm UPI payment** once the money is in, **Complete**.
    The customer's phone updates by itself ("Your order is being prepared", then "Order completed").
 6. **Owner's view.** **Dashboard**: today's revenue, top-selling items, payment split. **Appearance**: change the colours and
    show the menu on the phone changing. **Menu -> Items**: switch an item off, change a price.
@@ -72,6 +72,6 @@ appreciated). They are *not* Tea Post's own food, so use them for the demo only 
 
 ## Limits to be upfront about
 
-- Online payments confirm automatically only with Razorpay; plain UPI links need a staff confirmation.
+- Online payments confirm automatically only with a gateway (Cashfree or Razorpay); plain UPI links need a staff confirmation.
 - The in-page camera scanner needs `https`; on plain `http` use the phone's own camera app.
 - This is a local demo database. Production needs the Aiven database and hosting (see README).
