@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { LiveOrdersProvider, useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { cx } from '../lib/cx.js';
 import { useMediaQuery } from '../lib/hooks.js';
+import { SidePanelProvider, useSidePanelSpace } from '../context/SidePanelContext.jsx';
 import {
   BellIcon,
   BellOffIcon,
@@ -202,6 +203,7 @@ function Shell() {
   const location = useLocation();
   const hamburgerRef = useRef(null);
   const { count } = useLiveOrders();
+  const { open: panelDocked } = useSidePanelSpace();
 
   // Navigating closes the drawer (and moves focus to the new page, since the link that was clicked is now hidden);
   // so does growing the window past the breakpoint.
@@ -279,7 +281,10 @@ function Shell() {
         <Sidebar onClose={closeDrawer} showClose={!isDesktop} />
       </aside>
 
-      <div inert={drawerOpenOnMobile} className="lg:pl-64 print:pl-0">
+      <div
+        inert={drawerOpenOnMobile}
+        className={'transition-[padding] duration-200 lg:pl-64 print:pl-0' + (panelDocked ? ' lg:pr-[22rem] xl:pr-[26rem]' : '')}
+      >
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/95 px-3 backdrop-blur lg:hidden print:hidden">
           <button
             ref={hamburgerRef}
@@ -324,7 +329,9 @@ function Shell() {
 export default function AppShell() {
   return (
     <LiveOrdersProvider>
-      <Shell />
+      <SidePanelProvider>
+        <Shell />
+      </SidePanelProvider>
     </LiveOrdersProvider>
   );
 }

@@ -3,8 +3,9 @@ import { Badge, PaymentBadge, StatusBadge } from '../../components/Badge.jsx';
 import { Button } from '../../components/Button.jsx';
 import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import { Alert, ErrorState } from '../../components/EmptyState.jsx';
-import { InfoIcon, ReceiptIcon, TrashIcon } from '../../components/icons.jsx';
+import { CloseIcon, InfoIcon, ReceiptIcon } from '../../components/icons.jsx';
 import Modal from '../../components/Modal.jsx';
+import SidePanel from '../../components/SidePanel.jsx';
 import { Skeleton } from '../../components/Spinner.jsx';
 import { useToast } from '../../components/Toast.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -121,14 +122,14 @@ function OrderBody({ order, fmt }) {
  *  paid     -> cannot be cancelled, receipt available
  * Every action disables the buttons while it runs and shows the server's message if it is refused.
  */
-export default function OrderDetailModal({ orderId, onClose, onChanged }) {
+export default function OrderDetailModal({ orderId, onClose, onChanged, docked = false }) {
   const fmt = useFmt();
   const toast = useToast();
   const q = useQuery(() => api(`/api/admin/orders/${orderId}`), [orderId], { interval: 8000 });
   const [run, busy] = useAction();
   const [pending, setPending] = useState(null); // which action is running: 'accept' | 'ready' | 'complete' | 'receipt'
   const [actionError, setActionError] = useState(null);
-  const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'delete' | null
+  const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'upi' | 'refund' | null
 
   const { vendor } = useAuth();
   // Cash is only a payment method while the product offers it; with UPI only, staff confirm the UPI payment instead
@@ -201,70 +202,86 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
       }
     });
 
+  // Footer: what to do next is big and on top (two side by side when there are two), the receipt sits under it, and the one
+  // destructive action (cancel / refund) is a quiet red button at the bottom so it is never pressed by accident.
   let footer = null;
   if (order) {
-    footer = (
-      <div className="flex w-full flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="danger-outline" icon={TrashIcon} disabled={busy} onClick={() => setConfirm('delete')}>
-            Delete
-          </Button>
+    const main = [];
+    if (order.status === 'pending') {
+      main.push(
+        <Button key="accept" size="lg" busy={pending === 'accept'} disabled={busy} onClick={() => setStatus('accepted', `Order #${num} accepted.`)}>
+          Accept order
+        </Button>,
+      );
+    }
+    if (active && !paid && (order.payment_claim || !cashOffered)) {
+      main.push(
+        <Button key="upi" size="lg" variant={order.payment_claim || order.status === 'accepted' ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('upi')}>
+          Confirm UPI payment
+        </Button>,
+      );
+    }
+    if (active && !paid && cashOffered) {
+      main.push(
+        <Button key="cash" size="lg" variant={order.status === 'accepted' && !order.payment_claim ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('cash')}>
+          Record cash payment
+        </Button>,
+      );
+    }
+    if (order.status === 'accepted' && !order.ready_at) {
+      main.push(
+        <Button key="ready" size="lg" variant={paid ? 'secondary' : 'primary'} busy={pending === 'ready'} disabled={busy} onClick={markReady}>
+          Mark ready
+        </Button>,
+      );
+    }
+    if (order.status === 'accepted' && paid) {
+      main.push(
+        <Button key="complete" size="lg" busy={pending === 'complete'} disabled={busy} onClick={() => setStatus('completed', `Order #${num} completed.`)}>
+          Complete order
+        </Button>,
+      );
+    }
+    const canCancel = active && !paid;
+    const canRefund = paid && REFUNDABLE.includes(order.payment_method);
+    const waitingForPayment = order.status === 'accepted' && !paid;
+
+    if (main.length || order.receipt_url || canCancel || canRefund || waitingForPayment) {
+      footer = (
+        <div className="grid w-full gap-2.5">
+          {waitingForPayment && (
+            <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-slate-600">
+              <InfoIcon size={16} className="text-slate-400" />
+              {cashOffered ? 'Record the payment first, then complete the order' : 'Confirm the payment first, then complete the order'}
+            </p>
+          )}
+          {main.length > 0 && <div className={main.length > 1 ? 'grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 [&>button]:w-full' : '[&>button]:w-full'}>{main}</div>}
           {order.receipt_url && (
-            <Button variant="secondary" icon={ReceiptIcon} busy={pending === 'receipt'} disabled={busy} onClick={openReceipt}>
+            <Button variant="secondary" icon={ReceiptIcon} busy={pending === 'receipt'} disabled={busy} onClick={openReceipt} className="w-full">
               View receipt
             </Button>
           )}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {active && !paid && (
-            <Button variant="danger-outline" disabled={busy} onClick={() => setConfirm('cancel')}>
+          {canCancel && (
+            <Button variant="ghost" icon={CloseIcon} disabled={busy} onClick={() => setConfirm('cancel')} className="w-full !text-red-700 hover:!bg-red-50">
               Cancel order
             </Button>
           )}
-          {active && !paid && (order.payment_claim || !cashOffered) && (
-            <Button variant={order.payment_claim || order.status === 'accepted' ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('upi')}>
-              Confirm UPI payment
-            </Button>
-          )}
-          {active && !paid && cashOffered && (
-            <Button variant={order.status === 'accepted' && !order.payment_claim ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('cash')}>
-              Record cash payment
-            </Button>
-          )}
-          {order.status === 'pending' && (
-            <Button busy={pending === 'accept'} disabled={busy} onClick={() => setStatus('accepted', `Order #${num} accepted.`)}>
-              Accept order
-            </Button>
-          )}
-          {paid && REFUNDABLE.includes(order.payment_method) && (
-            <Button variant="danger-outline" disabled={busy} onClick={() => setConfirm('refund')}>
+          {canRefund && (
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirm('refund')} className="w-full !text-red-700 hover:!bg-red-50">
               Refund {fmt.money(order.total)}
             </Button>
           )}
-          {order.status === 'accepted' && !order.ready_at && (
-            <Button variant={paid ? 'secondary' : 'primary'} busy={pending === 'ready'} disabled={busy} onClick={markReady}>
-              Mark ready
-            </Button>
-          )}
-          {order.status === 'accepted' && paid && (
-            <Button busy={pending === 'complete'} disabled={busy} onClick={() => setStatus('completed', `Order #${num} completed.`)}>
-              Complete order
-            </Button>
-          )}
-          {order.status === 'accepted' && !paid && (
-            <span className="inline-flex items-center gap-1.5 px-1 text-sm font-medium text-slate-600">
-              <InfoIcon size={16} className="text-slate-400" />
-              {cashOffered ? 'Record payment first' : 'Confirm payment first'}
-            </span>
-          )}
         </div>
-      </div>
-    );
+      );
+    }
   }
+
+  // Next to the list on a wide screen (the page makes room for it), as a slide-in drawer over the page on a small one.
+  const Shell = docked ? SidePanel : Modal;
 
   return (
     <>
-      <Modal title={`Order #${num}`} size="lg" onClose={onClose} footer={footer}>
+      <Shell title={`Order #${num}`} size="xl" variant="drawer" onClose={onClose} footer={footer}>
         {q.loading && (
           <div role="status" aria-label="Loading order" className="space-y-4">
             <Skeleton className="h-6 w-2/3" />
@@ -280,7 +297,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
             <OrderBody order={order} fmt={fmt} />
           </div>
         )}
-      </Modal>
+      </Shell>
 
       <ConfirmDialog
         open={confirm === 'cancel'}
@@ -351,28 +368,6 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
           setConfirm(null);
           setActionError(null);
           applyUpdate(updated, `UPI payment confirmed for order #${num}.`);
-        }}
-      />
-
-      <ConfirmDialog
-        open={confirm === 'delete'}
-        title={`Delete order #${num}?`}
-        message={
-          <>
-            <p>This permanently removes the order{paid ? ' and its payment' : ''}.</p>
-            <p className="mt-2 font-medium text-red-700">
-              It also removes it from your revenue history, so dashboard totals{paid ? ` (including ${fmt.money(order?.total)} of paid revenue)` : ''} will change. This can&rsquo;t be undone.
-            </p>
-          </>
-        }
-        confirmLabel="Delete order"
-        onCancel={() => setConfirm(null)}
-        onConfirm={async () => {
-          await api(`/api/admin/orders/${orderId}`, { method: 'DELETE' });
-          setConfirm(null);
-          toast.success(`Order #${num} deleted.`);
-          onChanged();
-          onClose();
         }}
       />
     </>
