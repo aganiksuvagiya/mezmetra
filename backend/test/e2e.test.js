@@ -2668,3 +2668,80 @@ describe('order numbers for orders that already exist (migration backfill)', () 
     }
   });
 });
+
+describe('the diner cancels their own order', () => {
+  let token;
+  let qr;
+  let itemId;
+  const place = async (pay_pref) => {
+    const r = await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref, items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body.data;
+  };
+  const cancel = (order) => api('POST', `/api/public/orders/${order.token}/cancel`);
+  const view = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+  const adminId = async (order) => {
+    const rows = (await api('GET', '/api/admin/orders?per_page=100', { token })).body.data;
+    return rows.find((o) => o.number === order.number).id;
+  };
+
+  before(async () => {
+    token = (await api('POST', '/api/auth/signup', { body: { name: 'Cancel Cafe', email: 'cancel.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'X1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    await api('PUT', '/api/admin/payment-settings', { token, body: { upi_enabled: true, upi_id: 'cancel.cafe@okaxis' } });
+  });
+
+  it('lets the diner cancel an order nobody has touched, and shows it as cancelled to the restaurant', async () => {
+    const order = await place();
+    assert.equal(order.can_cancel, true, 'a fresh order can be cancelled');
+    const res = await cancel(order);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.data.status, 'cancelled');
+    assert.equal(res.body.data.can_cancel, false);
+    assert.equal((await view(order)).status, 'cancelled');
+    const listed = (await api('GET', '/api/admin/orders?status=cancelled', { token })).body.data;
+    assert.ok(listed.some((o) => o.number === order.number), 'the restaurant sees it under Cancelled');
+    assert.equal((await cancel(order)).status, 200, 'asking again just answers with the cancelled order');
+  });
+
+  it('refuses once the kitchen has accepted the order', async () => {
+    const order = await place();
+    const id = await adminId(order);
+    assert.equal((await api('PATCH', `/api/admin/orders/${id}/status`, { token, body: { status: 'accepted' } })).status, 200);
+    assert.equal((await view(order)).can_cancel, false);
+    const res = await cancel(order);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'CANNOT_CANCEL');
+    assert.match(res.body.error.message, /kitchen/i);
+    assert.equal((await view(order)).status, 'accepted', 'nothing changed');
+  });
+
+  it('refuses once the diner said they paid by UPI, or an online payment was started, or it is paid', async () => {
+    const claimed = await place('upi');
+    assert.equal((await api('POST', `/api/public/orders/${claimed.token}/upi-claim`, { body: {} })).status, 200);
+    const afterClaim = await cancel(claimed);
+    assert.equal(afterClaim.status, 409);
+    assert.match(afterClaim.body.error.message, /told us you paid/i);
+
+    const started = await place();
+    const startedId = await adminId(started);
+    await db.query(`INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) VALUES ($1, 'razorpay', 'order_x', 2000, 'created')`, [startedId]);
+    assert.equal((await view(started)).can_cancel, false);
+    assert.equal((await cancel(started)).status, 409);
+
+    const paid = await place();
+    const paidId = await adminId(paid);
+    assert.equal((await api('POST', `/api/admin/orders/${paidId}/cash-payment`, { token })).status, 200);
+    const afterPaid = await cancel(paid);
+    assert.equal(afterPaid.status, 409);
+    assert.match(afterPaid.body.error.message, /already paid/i);
+    assert.equal((await view(paid)).status, 'pending', 'a paid order is left alone');
+  });
+
+  it('answers 404 for an order that does not exist', async () => {
+    assert.equal((await api('POST', '/api/public/orders/00000000-0000-4000-8000-000000000000/cancel')).status, 404);
+    assert.equal((await api('POST', '/api/public/orders/not-a-token/cancel')).status, 404);
+  });
+});

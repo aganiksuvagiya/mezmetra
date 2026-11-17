@@ -101,6 +101,21 @@ export function publicRouter(db, { orderLimiter }) {
     return rows[0];
   };
 
+  /**
+   * Why a diner cannot cancel this order themselves (a sentence for them), or null when they can. It is theirs to cancel only while nothing has
+   * happened to it yet: the kitchen has not accepted it, nothing is paid, and no payment is under way (a UPI "I've paid" claim, or an online
+   * payment that was opened). Anything else needs a member of staff, who can also refund.
+   */
+  const cancelBlocker = async (q, order) => {
+    if (order.status === 'cancelled') return 'This order is already cancelled.';
+    if (order.payment_status !== 'unpaid') return 'This order is already paid. Please ask a member of staff.';
+    if (order.status !== 'pending') return 'The kitchen has already started on your order. Please ask a member of staff to cancel it.';
+    if (order.claimed_at) return 'You told us you paid for this order. Please ask a member of staff to check it and cancel it.';
+    const started = await q.query(`SELECT 1 FROM payments WHERE order_id = $1 AND status IN ('created', 'paid') LIMIT 1`, [order.id]);
+    if (started.rowCount > 0) return 'A payment for this order was started. Please ask a member of staff to cancel it.';
+    return null;
+  };
+
   const publicOrder = async (q, order) => {
     const [items, vendor, settings] = await Promise.all([
       loadOrderItems(q, [order.id]),
@@ -113,6 +128,7 @@ export function publicRouter(db, { orderLimiter }) {
     return publicOrderOut(order, items.get(order.id) ?? [], {
       vendor: { name: vendor.rows[0].name, currency: vendor.rows[0].currency, theme: themeOut(vendor.rows[0]), logo_url: logoUrl(vendor.rows[0]) },
       payment_options: options,
+      can_cancel: (await cancelBlocker(q, order)) === null,
       upi: payable
         ? {
             vpa: settings.upi_id,
@@ -349,6 +365,21 @@ export function publicRouter(db, { orderLimiter }) {
   // --- Follow an order ----------------------------------------------------------------------------------------
   router.get('/orders/:token', async (req, res) => {
     res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
+  });
+
+  // --- The diner cancels their own order ---------------------------------------------------------------------
+  // Allowed only while cancelBlocker() says nothing has happened to the order yet; asking again for an order that is already cancelled
+  // just answers with it. The kitchen sees it turn Cancelled in the admin like any other cancellation.
+  router.post('/orders/:token/cancel', orderLimiter, async (req, res) => {
+    const order = await db.tx(async (t) => {
+      const current = await orderByToken(t, req.params.token, { lock: true });
+      if (current.status === 'cancelled') return current;
+      const why = await cancelBlocker(t, current);
+      if (why) throw conflict('CANNOT_CANCEL', why);
+      const { rows } = await t.query(`UPDATE orders SET status = 'cancelled' WHERE id = $1 RETURNING *`, [current.id]);
+      return rows[0];
+    });
+    res.json({ data: await publicOrder(db, order) });
   });
 
   // --- UPI app payment: the diner says they paid, staff confirm in the admin panel ---------------------------

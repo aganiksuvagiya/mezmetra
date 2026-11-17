@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import Alert from '../components/Alert';
 import BillSummary from '../components/BillSummary';
 import { Button, LinkButton } from '../components/Button';
+import CancelOrder from '../components/CancelOrder';
 import EmptyState from '../components/EmptyState';
 import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, MenuBookIcon, QrIcon } from '../components/Icons';
 import OrderItems from '../components/OrderItems';
@@ -187,6 +188,8 @@ function OrderView({ orderToken }) {
         <PaymentCard order={order} onPaid={applyOrder} onRefresh={refresh} />
 
         {tableToken && !cancelled && <ServiceButtons tableToken={tableToken} className="justify-center" />}
+
+        {order.can_cancel && <CancelOrder order={order} onCancelled={applyOrder} onRefresh={refresh} />}
 
         <div className="pt-2 text-center">
           {tableToken ? (

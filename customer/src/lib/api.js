@@ -131,6 +131,9 @@ export const claimUpiPayment = (orderToken, reference) =>
 export const startRazorpay = (orderToken) =>
   request(`/api/public/orders/${enc(orderToken)}/razorpay`, { method: 'POST' });
 
+/** The diner cancels their own order (only while the server says nothing has happened to it: see `can_cancel` on the order). */
+export const cancelOrder = (orderToken) => request(`/api/public/orders/${enc(orderToken)}/cancel`, { method: 'POST' });
+
 /**
  * PhonePe / Paytm: the server opens the payment and says where to send the diner (a page to go to, or a form to post). Later it asks
  * the gateway whether the money arrived; nothing is sent from here.

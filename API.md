@@ -138,7 +138,7 @@ Do **not** send prices; the server prices everything. Returns 201 `public order`
 `OPTION_TOO_MANY`, `INVALID_OPTION`; 409 `ITEM_UNAVAILABLE` (a dish was switched off - ask the diner to review the cart), `TABLE_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE` (the chosen `pay_pref` is not offered; omit `pay_pref` to get the first offered one), `PAYMENTS_NOT_SET_UP` (the restaurant offers no way to pay yet, for example no UPI ID).
 
 ### `GET /api/public/orders/:orderToken` - follow an order (poll every few seconds)
-`public order` = `{ token, number, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
+`public order` = `{ token, number, can_cancel, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
 (`items[]` as in admin orders.) There is no numeric id; `number` is the restaurant's own order number, the one to show and say aloud.
 `upi` is `null` unless the order is unpaid, not cancelled and UPI is enabled; then it is `{ vpa, payee_name, amount, query }` where `query` is the ready-made, server-built query string of the payment link (exact amount included).
 
@@ -146,6 +146,7 @@ Do **not** send prices; the server prices everything. Returns 201 `public order`
 1. When `order.upi` is present, build a link by prefixing `order.upi.query`: `upi://pay?` (phone offers all UPI apps), `tez://upi/pay?` (Google Pay), `phonepe://pay?`, `paytmmp://pay?`. The amount is already inside; never compute it client side. On a computer show the `upi://pay?...` link as a QR code.
 2. A plain UPI link cannot report whether the payment succeeded. When the diner returns to the page ask "Did your payment go through?" and call
    `POST /api/public/orders/:orderToken/upi-claim` `{ reference? }` (optional UPI reference, 6-30 letters/digits) -> `public order` with `payment_claim` set. **The order is still unpaid**; staff confirm in the admin panel (`POST /api/admin/orders/:id/upi-payment`), after which polling shows `payment_status: "paid"`, `payment_method: "upi"`.
+   `POST /api/public/orders/:orderToken/cancel` (no body) -> `public order`: the diner cancels their own order. Allowed only while `can_cancel` is true on the order (the kitchen has not accepted it, nothing is paid, no UPI claim and no online payment started); otherwise 409 `CANNOT_CANCEL` with a sentence for the diner. Asking again for an already cancelled order answers with it. The restaurant sees it under Cancelled in the admin.
    409 `UPI_NOT_AVAILABLE`, `ORDER_CANCELLED`.
 
 ### Online payment by scanning a QR (Razorpay UPI QR)
