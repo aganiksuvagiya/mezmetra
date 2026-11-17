@@ -49,12 +49,12 @@ export function ordersRouter(db) {
       where.push(`o.payment_status = $${params.length}`);
     }
     if (q.q) {
-      // Matches a table number (partial) or, when the search is all digits, that exact order id.
+      // Matches a table number (partial) or, when the search is all digits, that exact order number.
       params.push(`%${q.q}%`);
       const likeParam = `$${params.length}`;
       if (/^\d{1,15}$/.test(q.q)) {
         params.push(Number(q.q));
-        where.push(`(o.table_number ILIKE ${likeParam} OR o.id = $${params.length})`);
+        where.push(`(o.table_number ILIKE ${likeParam} OR o.order_no = $${params.length})`);
       } else {
         where.push(`o.table_number ILIKE ${likeParam}`);
       }
@@ -241,7 +241,7 @@ export function ordersRouter(db) {
     const { rows } = await db.query(`SELECT name, timezone FROM vendors WHERE id = $1`, [req.vendorId]);
     res.set({
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="receipt-${order.id}.pdf"`,
+      'Content-Disposition': `inline; filename="receipt-${order.number}.pdf"`,
       'Cache-Control': 'private, no-store',
     });
     writeReceipt(res, { vendor: rows[0], order });

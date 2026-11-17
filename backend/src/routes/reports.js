@@ -37,7 +37,7 @@ export function reportsRouter(db) {
 
     const params = [vendorId, from, to, vendor.timezone];
     const { rows } = await db.query(
-      `SELECT o.id, o.table_number, o.status, o.payment_status, o.payment_method,
+      `SELECT o.id, o.order_no, o.table_number, o.status, o.payment_status, o.payment_method,
               o.subtotal_paise, o.tax_paise, o.total_paise, o.created_at, o.paid_at,
               ((o.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date) AS placed_in_range,
               (o.payment_status = 'paid' AND (o.paid_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date) AS paid_in_range,
@@ -62,6 +62,7 @@ export function reportsRouter(db) {
 
     const orders = rows.map((o) => ({
       id: Number(o.id),
+      number: Number(o.order_no),
       table_number: o.table_number,
       status: o.status,
       payment_status: o.payment_status,
@@ -119,7 +120,7 @@ export function reportsRouter(db) {
     const rows = [
       ['Order no', 'Placed at', 'Paid at', 'Table', 'Status', 'Payment status', 'Payment method', 'Dishes', 'Subtotal', 'Tax', 'Total'],
       ...orders.map((o) => [
-        o.id,
+        o.number,
         stamp(o.created_at),
         stamp(o.paid_at),
         o.table_number,

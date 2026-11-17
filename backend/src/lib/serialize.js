@@ -129,6 +129,8 @@ export async function loadOrderItems(q, orderIds) {
 }
 
 const orderBase = (o, items) => ({
+  // The restaurant's own order number (#1, #2, ...). `id`, where it is exposed, is the internal key used in URLs.
+  number: o.order_no,
   table_number: o.table_number,
   status: o.status,
   payment_status: o.payment_status,

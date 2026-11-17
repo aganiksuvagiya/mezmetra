@@ -223,7 +223,7 @@ export default function Dashboard() {
                       >
                         <div className="min-w-0 flex-1 basis-40">
                           <p className="font-semibold text-slate-900">
-                            #{o.id} <span className="font-normal text-slate-500">· Table {o.table_number}</span>
+                            #{o.number} <span className="font-normal text-slate-500">· Table {o.table_number}</span>
                           </p>
                           <p className="text-xs text-slate-500">{fmt.dateTime(o.created_at)}</p>
                         </div>

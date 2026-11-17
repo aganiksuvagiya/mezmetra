@@ -23,7 +23,7 @@ export function dashboardRouter(db) {
       ),
       db.query(`SELECT count(*) AS n FROM orders WHERE vendor_id = $1 AND status IN ('pending', 'accepted')`, [vendorId]),
       db.query(
-        `SELECT id, table_number, status, payment_status, total_paise, created_at
+        `SELECT id, order_no, table_number, status, payment_status, total_paise, created_at
            FROM orders WHERE vendor_id = $1 ORDER BY created_at DESC, id DESC LIMIT 3`,
         [vendorId],
       ),
@@ -68,6 +68,7 @@ export function dashboardRouter(db) {
         live_orders: live.rows[0].n,
         latest_orders: latest.rows.map((o) => ({
           id: o.id,
+          number: o.order_no,
           table_number: o.table_number,
           status: o.status,
           payment_status: o.payment_status,

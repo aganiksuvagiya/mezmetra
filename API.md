@@ -83,13 +83,15 @@ Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter
 - `GET /api/admin/tables/:id/qr.png?size=1024` -> image/png (needs the auth header, so fetch it, make a blob URL for `<img>`/download)
 
 ### Orders
-`order` = `{ id, table_number, status, payment_status, payment_method, pay_pref, subtotal, tax, total, note, items, total_quantity, created_at, accepted_at, completed_at, paid_at, receipt_url }`
+`order` = `{ id, number, table_number, status, payment_status, payment_method, pay_pref, subtotal, tax, total, note, items, total_quantity, created_at, accepted_at, completed_at, paid_at, receipt_url }`
+
+**Order numbers.** `number` is the restaurant's own order number (#1, #2, #3 ... counted per restaurant, never reused after a delete); show this one to people (admin lists, receipts, reports, the diner's order page). `id` is the internal key of the shared orders table: it is what the admin URLs (`/api/admin/orders/:id`, `/api/admin/tables/:id/bill`) take, and it is not meant to be shown.
 - `status`: `pending` -> `accepted` -> `completed`; `cancelled` from pending/accepted.
 - `payment_status`: `unpaid` | `paid` | `refunded`. `payment_method`: `cash` | `upi` | `razorpay` | `cashfree` | `phonepe` | `paytm` | `null`. `pay_pref`: what the diner chose (`counter` | `upi` | `online`).
 - `payment_claim`: `null`, or `{ method: "upi", reference, claimed_at }` when the diner says they paid through a UPI app. It is only a claim: the order stays `unpaid` until staff confirm.
 - `items[]` = `{ id, name, quantity, unit_price, instructions, options: [{ group, name, price }], line_total }`
 - `receipt_url` is `null` until paid, then `/api/admin/orders/:id/receipt.pdf` (needs the auth header -> fetch as blob and open).
-- `GET /api/admin/orders?status=pending|accepted|completed|cancelled|active&payment=paid|unpaid&q=&page=&per_page=` (`active` = pending + accepted; `q` matches a table number or an exact order id)
+- `GET /api/admin/orders?status=pending|accepted|completed|cancelled|active&payment=paid|unpaid&q=&page=&per_page=` (`active` = pending + accepted; `q` matches a table number or an exact order number)
 - `GET /api/admin/orders/:id`
 - `PATCH /api/admin/orders/:id/status` `{ status: "accepted"|"completed"|"cancelled" }` -> order.
   409 codes: `INVALID_TRANSITION`, `PAYMENT_REQUIRED` (complete needs payment first), `ALREADY_PAID` (cannot cancel a paid order).
@@ -136,8 +138,8 @@ Do **not** send prices; the server prices everything. Returns 201 `public order`
 `OPTION_TOO_MANY`, `INVALID_OPTION`; 409 `ITEM_UNAVAILABLE` (a dish was switched off - ask the diner to review the cart), `TABLE_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE` (the chosen `pay_pref` is not offered; omit `pay_pref` to get the first offered one), `PAYMENTS_NOT_SET_UP` (the restaurant offers no way to pay yet, for example no UPI ID).
 
 ### `GET /api/public/orders/:orderToken` - follow an order (poll every few seconds)
-`public order` = `{ token, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
-(`items[]` as in admin orders.) There is no numeric id.
+`public order` = `{ token, number, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
+(`items[]` as in admin orders.) There is no numeric id; `number` is the restaurant's own order number, the one to show and say aloud.
 `upi` is `null` unless the order is unpaid, not cancelled and UPI is enabled; then it is `{ vpa, payee_name, amount, query }` where `query` is the ready-made, server-built query string of the payment link (exact amount included).
 
 ### Pay with a UPI app (Google Pay, PhonePe, Paytm ...) - no payment gateway needed

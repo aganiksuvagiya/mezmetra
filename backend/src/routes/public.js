@@ -315,10 +315,15 @@ export function publicRouter(db, { orderLimiter }) {
         }
 
         const tax = Math.round((subtotal * Number(table.tax_percent)) / 100);
+        // The restaurant's own next order number. Updating the vendor row also queues concurrent orders of the same restaurant, so two
+        // orders can never get the same number (and a deleted order's number is never handed out again).
+        const orderNo = (
+          await t.query(`UPDATE vendors SET next_order_no = next_order_no + 1 WHERE id = $1 RETURNING next_order_no - 1 AS n`, [table.vendor_id])
+        ).rows[0].n;
         const { rows } = await t.query(
-          `INSERT INTO orders (vendor_id, table_id, table_number, idempotency_key, pay_pref, subtotal_paise, tax_paise, total_paise, note, table_code_verified)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-          [table.vendor_id, table.id, table.number, key, payPref, subtotal, tax, subtotal + tax, body.note, codeVerified],
+          `INSERT INTO orders (vendor_id, table_id, table_number, idempotency_key, pay_pref, subtotal_paise, tax_paise, total_paise, note, table_code_verified, order_no)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+          [table.vendor_id, table.id, table.number, key, payPref, subtotal, tax, subtotal + tax, body.note, codeVerified, orderNo],
         );
         for (const l of lines) {
           await t.query(
