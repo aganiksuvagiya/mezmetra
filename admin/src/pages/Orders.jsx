@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Badge, PaymentBadge, StatusBadge } from '../components/Badge.jsx';
 import { Button } from '../components/Button.jsx';
@@ -11,9 +12,11 @@ import Pagination from '../components/Pagination.jsx';
 import { panelId, tabId, Tabs } from '../components/Tabs.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
+import { useReserveSidePanelSpace } from '../context/SidePanelContext.jsx';
 import { apiPage } from '../lib/api.js';
+import { cx } from '../lib/cx.js';
 import { orderItemsSummary } from '../lib/format.js';
-import { useClampPage, useDebouncedValue, useDocumentTitle, useQuery } from '../lib/hooks.js';
+import { useClampPage, useDebouncedValue, useDocumentTitle, useMediaQuery, useQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import OrderDetailModal from './orders/OrderDetailModal.jsx';
 
@@ -30,13 +33,14 @@ const EMPTY = {
 
 const countFor = async (status) => Number((await apiPage('/api/admin/orders', { query: { status, per_page: 1 } })).meta.total);
 
-function OrderRow({ order, fresh, fmt, onOpen }) {
+function OrderRow({ order, fresh, fmt, onOpen, selected }) {
   return (
-    <li className={fresh ? 'animate-flash' : undefined}>
+    <li className={cx(fresh && 'animate-flash', selected && 'bg-brand-50/70 shadow-[inset_3px_0_0_var(--color-brand-600)]')}>
       <button
         type="button"
         onClick={() => onOpen(order.id)}
-        className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 px-4 py-3.5 text-left hover:bg-slate-50 sm:px-5 md:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_auto_6rem] md:items-center"
+        aria-current={selected ? 'true' : undefined}
+        className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 px-4 py-3.5 text-left hover:bg-slate-50 sm:px-5 @2xl:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_auto_6rem] @2xl:items-center"
       >
         <span className="block min-w-0">
           <span className="flex flex-wrap items-center gap-x-2 font-semibold text-slate-900">
@@ -57,9 +61,9 @@ function OrderRow({ order, fresh, fmt, onOpen }) {
           </span>
           <span className="block text-xs text-slate-500">{fmt.dateTime(order.created_at)}</span>
         </span>
-        <span className="block font-semibold text-slate-900 tabular-nums md:order-last md:text-right">{fmt.money(order.total)}</span>
-        <span className="col-span-2 line-clamp-2 text-sm text-slate-600 md:col-span-1">{orderItemsSummary(order.items)}</span>
-        <span className="col-span-2 flex flex-wrap items-center gap-1.5 md:col-span-1">
+        <span className="block font-semibold text-slate-900 tabular-nums @2xl:order-last @2xl:text-right">{fmt.money(order.total)}</span>
+        <span className="col-span-2 line-clamp-2 text-sm text-slate-600 @2xl:col-span-1">{orderItemsSummary(order.items)}</span>
+        <span className="col-span-2 flex flex-wrap items-center gap-1.5 @2xl:col-span-1">
           <StatusBadge status={order.status} ready={Boolean(order.ready_at)} />
           <PaymentBadge status={order.payment_status} method={order.payment_method} claimed={Boolean(order.payment_claim)} />
         </span>
@@ -73,6 +77,8 @@ export default function Orders() {
   const toast = useToast();
   const fmt = useFmt();
   const live = useLiveOrders();
+  // On a wide screen (the same width at which the sidebar appears) an open order is shown beside the list, which makes room for it.
+  const split = useMediaQuery('(min-width: 1024px)');
   const [params, setParams] = useSearchParams();
 
   const rawTab = params.get('status');
@@ -177,8 +183,25 @@ export default function Orders() {
 
   const [emptyTitle, emptyMessage] = EMPTY[tab];
 
+  const docked = Boolean(selectedId) && split;
+  useReserveSidePanelSpace(docked); // the page narrows to make room for the panel
+
+  const detail = selectedId && (
+    <OrderDetailModal
+      key={selectedId}
+      orderId={selectedId}
+      docked={docked}
+      onClose={() => setSelectedId(null)}
+      onChanged={() => {
+        q.reload();
+        counts.reload();
+        live.reload();
+      }}
+    />
+  );
+
   return (
-    <>
+    <div className="@container">
       <PageHeader
         title="Orders"
         description="Accept orders, take payment and mark them complete."
@@ -240,7 +263,7 @@ export default function Orders() {
           <>
             <ul className="divide-y divide-slate-100">
               {rows.map((order) => (
-                <OrderRow key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={setSelectedId} />
+                <OrderRow key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={setSelectedId} selected={order.id === selectedId} />
               ))}
             </ul>
             <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} />
@@ -248,17 +271,8 @@ export default function Orders() {
         )}
       </Card>
 
-      {selectedId && (
-        <OrderDetailModal
-          orderId={selectedId}
-          onClose={() => setSelectedId(null)}
-          onChanged={() => {
-            q.reload();
-            counts.reload();
-            live.reload();
-          }}
-        />
-      )}
-    </>
+      {/* On a wide screen the order opens in a panel fixed to the right edge of the screen (top to bottom); on a small one it slides in over the page. */}
+      {docked ? createPortal(<div className="fixed inset-y-0 right-0 z-30 w-[22rem] xl:w-[26rem] print:hidden">{detail}</div>, document.body) : detail}
+    </div>
   );
 }
