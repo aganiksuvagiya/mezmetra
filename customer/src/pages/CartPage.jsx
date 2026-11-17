@@ -29,7 +29,7 @@ export default function CartPage() {
   const toast = useToast();
   usePageTitle(`Your cart - ${menu.vendor.name}`);
 
-  const canOnline = menu.payment_options?.razorpay === true || menu.payment_options?.cashfree === true;
+  const canOnline = ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => menu.payment_options?.[name] === true);
   const canUpi = menu.payment_options?.upi === true;
   const canCounter = menu.payment_options?.cash === true;
   const available = [canCounter && 'counter', canUpi && 'upi', canOnline && 'online'].filter(Boolean);

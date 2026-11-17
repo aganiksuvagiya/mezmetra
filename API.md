@@ -50,7 +50,7 @@ Base URL: `/api` (the dev servers of both web apps proxy `/api` to `http://local
   "ranges": { "weekly_days": 7, "payment_days": 30, "top_days": 30 }
 }
 ```
-Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter), `upi`, `razorpay` or `cashfree` (online).
+Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter), `upi`, `razorpay`, `cashfree`, `phonepe` or `paytm` (online).
 
 ### Categories
 `category` = `{ id, name, description, is_active, sort_order, item_count, created_at, updated_at }`
@@ -85,7 +85,7 @@ Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter
 ### Orders
 `order` = `{ id, table_number, status, payment_status, payment_method, pay_pref, subtotal, tax, total, note, items, total_quantity, created_at, accepted_at, completed_at, paid_at, receipt_url }`
 - `status`: `pending` -> `accepted` -> `completed`; `cancelled` from pending/accepted.
-- `payment_status`: `unpaid` | `paid` | `refunded`. `payment_method`: `cash` | `upi` | `razorpay` | `cashfree` | `null`. `pay_pref`: what the diner chose (`counter` | `upi` | `online`).
+- `payment_status`: `unpaid` | `paid` | `refunded`. `payment_method`: `cash` | `upi` | `razorpay` | `cashfree` | `phonepe` | `paytm` | `null`. `pay_pref`: what the diner chose (`counter` | `upi` | `online`).
 - `payment_claim`: `null`, or `{ method: "upi", reference, claimed_at }` when the diner says they paid through a UPI app. It is only a claim: the order stays `unpaid` until staff confirm.
 - `items[]` = `{ id, name, quantity, unit_price, instructions, options: [{ group, name, price }], line_total }`
 - `receipt_url` is `null` until paid, then `/api/admin/orders/:id/receipt.pdf` (needs the auth header -> fetch as blob and open).
@@ -99,11 +99,11 @@ Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter
 - `GET /api/admin/orders/:id/receipt.pdf` -> application/pdf (409 `NOT_PAID` before payment)
 
 ### Payment settings
-`settings` = `{ cash_enabled, upi_enabled, upi_id, razorpay_enabled, razorpay_key_id, razorpay_secret_set, razorpay_mode: "test"|"live"|null, razorpay_configured, cashfree_enabled, cashfree_app_id, cashfree_secret_set, cashfree_mode: "test"|"live"|null, cashfree_configured }`
+`settings` = `{ cash_enabled, upi_enabled, upi_id, razorpay_enabled, razorpay_key_id, razorpay_secret_set, razorpay_mode: "test"|"live"|null, razorpay_configured, cashfree_enabled, cashfree_app_id, cashfree_secret_set, cashfree_mode: "test"|"live"|null, cashfree_configured, phonepe_enabled, phonepe_client_id, phonepe_client_version, phonepe_secret_set, phonepe_env: "sandbox"|"live", phonepe_configured, paytm_enabled, paytm_mid, paytm_key_set, paytm_website, paytm_env: "sandbox"|"live", paytm_configured }`
 - `GET /api/admin/payment-settings` -> includes `methods_available` (the ways of paying the product offers, from `PAYMENT_METHODS`, default `["upi"]`). Switching on a method that is not available is a 400. `GET /api/auth/me` returns the same list as `payment_methods`.
-- `PUT /api/admin/payment-settings` `{ cash_enabled?, upi_enabled?, upi_id? (name@bank, "" clears it), razorpay_enabled?, razorpay_key_id?, razorpay_key_secret?, cashfree_enabled?, cashfree_app_id?, cashfree_secret? }` - the secret is **write-only**
+- `PUT /api/admin/payment-settings` `{ cash_enabled?, upi_enabled?, upi_id? (name@bank, "" clears it), razorpay_enabled?, razorpay_key_id?, razorpay_key_secret?, cashfree_enabled?, cashfree_app_id?, cashfree_secret?, phonepe_enabled?, phonepe_client_id?, phonepe_client_version?, phonepe_client_secret?, phonepe_env?, paytm_enabled?, paytm_mid?, paytm_merchant_key? (exactly 16 characters), paytm_website?, paytm_env? }` - secrets are **write-only**; only one online gateway can be on (400 otherwise)
   (never returned); omit it to keep the stored one. At least one method must stay on.
-- `POST /api/admin/payment-settings/test` (body `{ provider: "cashfree" }` for Cashfree, empty for Razorpay) -> `{ ok: true, mode }`, or 502 `RAZORPAY_BAD_KEYS` / `RAZORPAY_ERROR` / `CASHFREE_BAD_KEYS` / `CASHFREE_ERROR` with a readable message.
+- `POST /api/admin/payment-settings/test` (body `{ provider: "cashfree" | "phonepe" | "paytm" }`, empty for Razorpay) -> `{ ok: true, mode }`, or 502 `RAZORPAY_BAD_KEYS` / `RAZORPAY_ERROR` / `CASHFREE_BAD_KEYS` / `CASHFREE_ERROR` / `PHONEPE_BAD_KEYS` / `PHONEPE_ERROR` / `PAYTM_BAD_KEYS` / `PAYTM_ERROR` with a readable message.
 - Only one online gateway can be on at a time: switching both on is a 400 (switch one off in the same request).
 
 ## Public (customer app; no auth)
@@ -115,13 +115,13 @@ A table's QR code opens `<customer-app>/t/<token>`. `<token>` is the 32-hex stri
 {
   "vendor": { "name": "Demo Kitchen", "currency": "INR", "tax_percent": 5, "theme": { "primary": "#2f6f62", "accent": "#e8872a" }, "logo_url": null },
   "table": { "number": "T-01" },
-  "payment_options": { "cash": false, "upi": true, "razorpay": false, "cashfree": false },
+  "payment_options": { "cash": false, "upi": true, "razorpay": false, "cashfree": false, "phonepe": false, "paytm": false },
   "categories": [{ "id": 1, "name": "Pizza", "description": "..." }],
   "items": [{ "id": 3, "category_id": 1, "category_name": "Pizza", "name": "...", "description": "...", "price": 499, "is_featured": true, "photo_url": null, "option_groups": [] }]
 }
 ```
 Only active items inside active categories are returned (featured first). 404 unknown token, 409 `TABLE_UNAVAILABLE` (table switched off).
-`payment_options` = `{ cash, upi, razorpay, cashfree }`: a method is true only when the product offers it (`PAYMENT_METHODS`, default UPI only) **and** the restaurant switched it on (`upi` also needs a UPI ID, `razorpay` and `cashfree` need keys). `razorpay` or `cashfree` true means the diner can choose `pay_pref: "online"`. When all are false the restaurant cannot take orders yet (see 409 `PAYMENTS_NOT_SET_UP` below).
+`payment_options` = `{ cash, upi, razorpay, cashfree, phonepe, paytm }`: a method is true only when the product offers it (`PAYMENT_METHODS`, default UPI only) **and** the restaurant switched it on (`upi` also needs a UPI ID, `razorpay`, `cashfree`, `phonepe` and `paytm` need keys). Any of those four true means the diner can choose `pay_pref: "online"`. When all are false the restaurant cannot take orders yet (see 409 `PAYMENTS_NOT_SET_UP` below).
 
 ### `POST /api/public/t/:token/orders` - place an order
 Header `Idempotency-Key: <8-80 chars [A-Za-z0-9_-]>` - **send one per checkout attempt** (generate when the customer taps
@@ -136,7 +136,7 @@ Do **not** send prices; the server prices everything. Returns 201 `public order`
 `OPTION_TOO_MANY`, `INVALID_OPTION`; 409 `ITEM_UNAVAILABLE` (a dish was switched off - ask the diner to review the cart), `TABLE_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE` (the chosen `pay_pref` is not offered; omit `pay_pref` to get the first offered one), `PAYMENTS_NOT_SET_UP` (the restaurant offers no way to pay yet, for example no UPI ID).
 
 ### `GET /api/public/orders/:orderToken` - follow an order (poll every few seconds)
-`public order` = `{ token, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree }, upi }`
+`public order` = `{ token, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
 (`items[]` as in admin orders.) There is no numeric id.
 `upi` is `null` unless the order is unpaid, not cancelled and UPI is enabled; then it is `{ vpa, payee_name, amount, query }` where `query` is the ready-made, server-built query string of the payment link (exact amount included).
 
@@ -210,3 +210,5 @@ All take `from` and `to` (`YYYY-MM-DD`, the restaurant's own days; both default 
 
 - `upi_pay_buttons` (boolean, default `false`) in `GET`/`PUT /api/admin/payment-settings`: show the Google Pay / PhonePe / Paytm buttons. Turn it on only for a business (merchant) UPI ID: Google Pay and PhonePe usually refuse these pre-filled links for a personal UPI ID ("bank limit exceeded", "security reasons").
 - The public order's `upi` is `{ vpa, pay_buttons, payee_name, amount, query }`; `query` is always sent, because the order page uses it for the QR code. With the buttons off the page shows how to pay by typing the UPI ID.
+
+- `POST /api/public/orders/:token/pay/:provider` and `.../verify` (`phonepe` | `paytm`): see README, "Online payments (PhonePe and Paytm)".

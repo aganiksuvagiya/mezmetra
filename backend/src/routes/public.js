@@ -1,10 +1,11 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { HttpError, conflict, notFound, parse } from '../lib/errors.js';
 import { decryptSecret } from '../lib/crypto.js';
 import { safeEqual } from '../lib/crypto.js';
 import { cashfreeMode, createCashfreeOrder, getCashfreeOrder, getCashfreePayments } from '../lib/cashfree.js';
+import { attemptId, GATEWAYS, isRedirectGateway } from '../lib/gateways.js';
 import { createRazorpayOrder, createRazorpayQr, fetchRazorpayQr, fetchRazorpayQrPayments, verifyCheckoutSignature } from '../lib/razorpay.js';
 import { toRupees } from '../lib/money.js';
 import { UPI_REFERENCE_RE, upiQuery } from '../lib/upi.js';
@@ -85,6 +86,8 @@ export function publicRouter(db, { orderLimiter }) {
     cash: config.paymentMethods.has('cash') && (s ? s.cash_enabled : true),
     razorpay: config.paymentMethods.has('razorpay') && Boolean(s && s.razorpay_enabled && s.razorpay_key_id && s.razorpay_key_secret_enc),
     cashfree: config.paymentMethods.has('cashfree') && Boolean(s && s.cashfree_enabled && s.cashfree_app_id && s.cashfree_secret_enc),
+    phonepe: config.paymentMethods.has('phonepe') && Boolean(s && GATEWAYS.phonepe.enabled(s) && GATEWAYS.phonepe.configured(s)),
+    paytm: config.paymentMethods.has('paytm') && Boolean(s && GATEWAYS.paytm.enabled(s) && GATEWAYS.paytm.configured(s)),
     // UPI needs the restaurant's UPI ID (it is behind the QR code, the pay buttons and the "pay manually" steps).
     upi: config.paymentMethods.has('upi') && Boolean(s && s.upi_enabled && s.upi_id),
   });
@@ -252,7 +255,7 @@ export function publicRouter(db, { orderLimiter }) {
 
         // Only a payment method the restaurant currently offers can be chosen (e.g. not "counter" once cash is switched off).
         const offered = optionsFrom(await paymentSettings(t, table.vendor_id));
-        const available = [offered.cash && 'counter', offered.upi && 'upi', (offered.razorpay || offered.cashfree) && 'online'].filter(Boolean);
+        const available = [offered.cash && 'counter', offered.upi && 'upi', (offered.razorpay || offered.cashfree || offered.phonepe || offered.paytm) && 'online'].filter(Boolean);
         if (available.length === 0) {
           throw conflict('PAYMENTS_NOT_SET_UP', "This restaurant hasn't finished setting up payments, so it can't take orders yet. Please ask a member of staff.");
         }
@@ -641,6 +644,107 @@ export function publicRouter(db, { orderLimiter }) {
       }
     }
     res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
+  });
+
+  // --- Online payment on the gateway's own page (PhonePe, Paytm) ------------------------------------------------
+  // The diner is sent to the gateway to pay and comes back to the order page. Whether the money arrived is always decided by the
+  // server asking the gateway (with the restaurant's own keys); nothing the browser sends can mark an order paid.
+  const gatewayFor = (name) => {
+    if (!isRedirectGateway(name)) throw notFound('Payment gateway');
+    return GATEWAYS[name];
+  };
+
+  const openAttempts = async (q, orderId, provider) =>
+    (
+      await q.query(
+        `SELECT id, provider_order_id, amount_paise FROM payments
+          WHERE order_id = $1 AND provider = $2 AND status = 'created' AND created_at > now() - interval '3 hours'
+          ORDER BY id DESC LIMIT 5`,
+        [orderId, provider],
+      )
+    ).rows;
+
+  /** Asks the gateway about every open attempt of this order; the first it reports paid marks the order paid. True when the order is paid. */
+  const settleAttempts = async (order, provider, settings) => {
+    const gateway = GATEWAYS[provider];
+    const attempts = await openAttempts(db, order.id, provider);
+    if (attempts.length === 0) return false;
+    const creds = gateway.creds(settings);
+    for (const attempt of attempts) {
+      const result = await gateway.status(creds, attempt.provider_order_id);
+      if (result.state !== 'paid') continue;
+      if (result.amountPaise !== attempt.amount_paise) {
+        throw new HttpError(409, 'PAYMENT_AMOUNT_MISMATCH', 'The amount paid does not match this order. Please show this screen to a member of staff.');
+      }
+      await db.tx(async (t) => {
+        const current = await orderByToken(t, order.public_token, { lock: true });
+        if (current.payment_status === 'paid') return; // a parallel check already recorded it
+        await t.query(`UPDATE payments SET status = 'paid', provider_payment_id = $2, paid_at = now() WHERE id = $1`, [attempt.id, result.paymentId ?? null]);
+        await t.query(PAID_ONLINE_SQL(provider), [current.id]);
+      });
+      return true;
+    }
+    return false;
+  };
+
+  router.post('/orders/:token/pay/:provider', orderLimiter, async (req, res) => {
+    const provider = req.params.provider;
+    const gateway = gatewayFor(provider);
+    const order = await orderByToken(db, req.params.token);
+    if (order.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
+    if (order.payment_status === 'paid') throw conflict('ALREADY_PAID', 'This order is already paid.');
+
+    const { rows } = await db.query(
+      `SELECT s.*, v.name AS vendor_name FROM vendor_payment_settings s JOIN vendors v ON v.id = s.vendor_id WHERE s.vendor_id = $1`,
+      [order.vendor_id],
+    );
+    const settings = rows[0];
+    if (!optionsFrom(settings)[provider]) {
+      // The message is written for the diner; the restaurant sees the real reason in Payments settings.
+      throw conflict('GATEWAY_NOT_CONFIGURED', 'Online payment is not available at this restaurant. Please pay another way.');
+    }
+    // A payment the diner already made must never be asked for twice: look at the earlier attempts first.
+    if (await settleAttempts(order, provider, settings)) throw conflict('ALREADY_PAID', 'This order is already paid.');
+    await db.query(
+      `UPDATE payments SET status = 'failed' WHERE order_id = $1 AND provider = $2 AND status = 'created' AND created_at <= now() - interval '3 hours'`,
+      [order.id, provider],
+    );
+
+    const providerOrderId = attemptId(order.id);
+    const apiBase = config.apiPublicUrl || `${req.protocol}://${req.get('host')}`;
+    const client = await gateway.start(gateway.creds(settings), {
+      providerOrderId,
+      order,
+      returnUrl: `${config.customerAppUrl}/o/${order.public_token}`,
+      callbackUrl: `${apiBase}/api/public/paytm/callback/${order.public_token}`,
+    });
+    await db.query(`INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) VALUES ($1, $2, $3, $4, 'created')`, [
+      order.id,
+      provider,
+      providerOrderId,
+      order.total_paise,
+    ]);
+    res.json({ data: { provider, client, amount: toRupees(order.total_paise), vendor_name: settings.vendor_name } });
+  });
+
+  // The order page calls this when the diner comes back from the gateway (and whenever the page is opened again), so a payment is
+  // picked up even if the browser was closed in between. It sends nothing: the server asks the gateway.
+  router.post('/orders/:token/pay/:provider/verify', orderLimiter, async (req, res) => {
+    const provider = req.params.provider;
+    const gateway = gatewayFor(provider);
+    const order = await orderByToken(db, req.params.token);
+    if (order.payment_status !== 'paid') {
+      const settings = await paymentSettings(db, order.vendor_id);
+      if (settings && gateway.configured(settings)) await settleAttempts(order, provider, settings);
+    }
+    res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
+  });
+
+  // Paytm sends the diner's browser back with a POSTed form. Nothing in it is believed; the diner is simply passed on to the order
+  // page, which then asks the server to check with Paytm.
+  router.all('/paytm/callback/:token', express.urlencoded({ extended: false, limit: '50kb' }), (req, res) => {
+    if (!UUID.test(req.params.token)) throw notFound('Order');
+    res.redirect(303, `${config.customerAppUrl}/o/${req.params.token.toLowerCase()}`);
   });
 
   return router;

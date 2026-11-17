@@ -42,7 +42,7 @@ export function StatusBadge({ status, ready = false }) {
 export function PaymentBadge({ status, method, claimed = false }) {
   if (status === 'refunded') return <Badge tone="slate">Refunded</Badge>;
   if (status === 'paid') {
-    const via = method === 'cash' ? ' · Cash' : method === 'razorpay' || method === 'cashfree' ? ' · Online' : method === 'upi' ? ' · UPI' : '';
+    const via = method === 'cash' ? ' · Cash' : ['razorpay', 'cashfree', 'phonepe', 'paytm'].includes(method) ? ' · Online' : method === 'upi' ? ' · UPI' : '';
     return <Badge tone="green">{`Paid${via}`}</Badge>;
   }
   // The diner says they paid by UPI; it only counts once staff confirm the money arrived.

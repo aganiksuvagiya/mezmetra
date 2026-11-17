@@ -14,8 +14,8 @@ import { useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { canTakeOrders } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
-const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)' };
-const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500', cashfree: 'bg-sky-500' };
+const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)' };
+const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500', cashfree: 'bg-sky-500', phonepe: 'bg-sky-500', paytm: 'bg-sky-500' };
 
 function StatCard({ icon: Icon, label, value, note, to, linkLabel }) {
   return (

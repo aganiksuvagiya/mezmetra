@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { conflict, notFound, parse } from '../lib/errors.js';
 import { decryptSecret } from '../lib/crypto.js';
+import { GATEWAYS, isRedirectGateway } from '../lib/gateways.js';
 import { refundRazorpayPayment } from '../lib/razorpay.js';
 import { adminOrderOut, loadOrderItems } from '../lib/serialize.js';
 import { writeReceipt } from '../lib/receipt.js';
@@ -119,8 +120,8 @@ export function ordersRouter(db) {
     res.json({ data: order });
   });
 
-  // Gives an online (Razorpay) payment back, in full. The order is cancelled too when the kitchen has not served it yet. Cash and UPI
-  // payments are not refunded here: the staff hand the money back themselves.
+  // Gives an online payment (Razorpay, PhonePe or Paytm) back, in full. The order is cancelled too when the kitchen has not served it
+  // yet. Cash and UPI payments are not refunded here: the staff hand the money back themselves.
   router.post('/:id/refund', async (req, res) => {
     const order = await db.tx(async (t) => {
       const { rows } = await t.query(`SELECT * FROM orders WHERE id = $1 AND vendor_id = $2 FOR UPDATE`, [req.params.id, req.vendorId]);
@@ -128,29 +129,44 @@ export function ordersRouter(db) {
       if (!current) throw notFound('Order');
       if (current.payment_status === 'refunded') throw conflict('ALREADY_REFUNDED', 'This order was already refunded.');
       if (current.payment_status !== 'paid') throw conflict('NOT_PAID', 'Only a paid order can be refunded.');
-      if (current.payment_method !== 'razorpay') {
+      const method = current.payment_method;
+      if (method !== 'razorpay' && !isRedirectGateway(method)) {
         throw conflict('REFUND_MANUAL', 'Only online payments can be refunded here. For cash or UPI, hand the money back yourself.');
       }
       const payment = (
         await t.query(
-          `SELECT id, provider_payment_id FROM payments WHERE order_id = $1 AND provider = 'razorpay' AND status = 'paid' ORDER BY id DESC LIMIT 1`,
-          [current.id],
+          `SELECT id, provider_order_id, provider_payment_id FROM payments WHERE order_id = $1 AND provider = $2 AND status = 'paid' ORDER BY id DESC LIMIT 1`,
+          [current.id, method],
         )
       ).rows[0];
-      if (!payment?.provider_payment_id) throw conflict('REFUND_MANUAL', "We can't find the online payment for this order. Refund it from your Razorpay dashboard.");
-      const settings = (await t.query(`SELECT razorpay_key_id, razorpay_key_secret_enc FROM vendor_payment_settings WHERE vendor_id = $1`, [req.vendorId])).rows[0];
-      if (!(settings?.razorpay_key_id && settings.razorpay_key_secret_enc)) {
-        throw conflict('RAZORPAY_NOT_CONFIGURED', 'Add your Razorpay keys in Payments first, or refund it from your Razorpay dashboard.');
+      if (!payment) throw conflict('REFUND_MANUAL', `We can't find the online payment for this order. Refund it from your ${method === 'razorpay' ? 'Razorpay' : GATEWAYS[method].label} dashboard.`);
+      const settings = (await t.query(`SELECT * FROM vendor_payment_settings WHERE vendor_id = $1`, [req.vendorId])).rows[0];
+
+      let refundId = null;
+      if (method === 'razorpay') {
+        if (!payment.provider_payment_id) throw conflict('REFUND_MANUAL', "We can't find the online payment for this order. Refund it from your Razorpay dashboard.");
+        if (!(settings?.razorpay_key_id && settings.razorpay_key_secret_enc)) {
+          throw conflict('RAZORPAY_NOT_CONFIGURED', 'Add your Razorpay keys in Payments first, or refund it from your Razorpay dashboard.');
+        }
+        const refund = await refundRazorpayPayment({
+          keyId: settings.razorpay_key_id,
+          keySecret: decryptSecret(settings.razorpay_key_secret_enc),
+          paymentId: payment.provider_payment_id,
+          amountPaise: current.total_paise,
+          notes: { order_id: String(current.id) },
+        });
+        refundId = refund.id ?? null;
+      } else {
+        const gateway = GATEWAYS[method];
+        if (!gateway.configured(settings)) {
+          throw conflict(`${method.toUpperCase()}_NOT_CONFIGURED`, `Add your ${gateway.label} keys in Payments first, or refund it from your ${gateway.label} dashboard.`);
+        }
+        const ourRefundId = `mzr_${current.id}_${Date.now().toString(36)}`;
+        const refund = await gateway.refund(gateway.creds(settings), { payment, refundId: ourRefundId, amountPaise: current.total_paise });
+        refundId = refund.refundId ?? ourRefundId;
       }
 
-      const refund = await refundRazorpayPayment({
-        keyId: settings.razorpay_key_id,
-        keySecret: decryptSecret(settings.razorpay_key_secret_enc),
-        paymentId: payment.provider_payment_id,
-        amountPaise: current.total_paise,
-        notes: { order_id: String(current.id) },
-      });
-      await t.query(`UPDATE payments SET status = 'refunded', refund_id = $2, refunded_at = now() WHERE id = $1`, [payment.id, refund.id ?? null]);
+      await t.query(`UPDATE payments SET status = 'refunded', refund_id = $2, refunded_at = now() WHERE id = $1`, [payment.id, refundId]);
       await t.query(
         `UPDATE orders SET payment_status = 'refunded',
            status = CASE WHEN status IN ('pending', 'accepted') THEN 'cancelled' ELSE status END

@@ -1,7 +1,7 @@
 # MezMitra
 
 QR-code table ordering for restaurants. Diners scan the code on their table, browse the menu on their phone, place an
-order and pay at the counter or online (Cashfree or Razorpay). Staff manage the menu, tables and live orders from an admin panel.
+order and pay at the counter or online (Razorpay, Cashfree, PhonePe or Paytm). Staff manage the menu, tables and live orders from an admin panel.
 
 ```
 backend/    Node.js + Express API (PostgreSQL: Aiven in production, PGlite locally)
@@ -41,7 +41,7 @@ Both web apps listen on your network address, so a phone on the same Wi-Fi can o
 On plain `http://` the *in-page* camera scanner is disabled by the browser (it needs `https`); use the phone's camera app or "Use a photo of the QR code". UPI app buttons work over `http`.
 
 ```bash
-npm test          # backend end-to-end tests (in-memory database, mocked Razorpay and Cashfree)
+npm test          # backend end-to-end tests (in-memory database, fake Razorpay, Cashfree, PhonePe and Paytm)
 npm run build     # production builds of both web apps (admin/dist, customer/dist)
 ```
 
@@ -83,7 +83,9 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get **Platform** in the admin sidebar: every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
 | `SMTP_URL`, `MAIL_FROM` | Email for password reset. `SMTP_URL` is any provider's SMTP address, e.g. `smtps://user:app-password@smtp.gmail.com:465` (Gmail needs an *app password*). Empty = no email is sent; in development the email is printed in the API console instead. |
 | `ADMIN_APP_URL` | Public URL of the admin site (default `http://localhost:5180`): the base of the link inside the reset email. |
-| `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, `cashfree`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay,cashfree` to bring the others back. |
+| `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, `cashfree`, `phonepe`, `paytm`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay,phonepe,paytm` to bring the others back. |
+| `API_PUBLIC_URL` | Optional, e.g. `https://your-api.onrender.com`. Paytm sends the diner's browser back through this API, so it needs its public address; empty = read from the request (fine behind Render's proxy). |
+| `PHONEPE_API_BASE`, `PAYTM_THEIA_BASE`, `PAYTM_STATUS_BASE` | Optional. Leave empty: PhonePe's and Paytm's own servers are used (the restaurant picks sandbox or live). Tests point them at fakes. |
 | `CASHFREE_API_BASE` | Optional. Leave empty: Cashfree's own servers are used (sandbox for App IDs starting with `TEST`, production otherwise). Tests point it at a fake. |
 | `TRUST_PROXY` | How many reverse proxies sit in front of the API: `1` on Render/Fly/Heroku, `0` when none (default in production is `1`). Needed for correct per-IP rate limits. |
 
@@ -159,6 +161,32 @@ Not built yet: a Cashfree **webhook** (so a payment is recorded even if the dine
 unrecorded payment in the Cashfree dashboard and confirm the order from Orders. Cashfree must also approve the account for production
 payments (KYC); until then use the sandbox keys. If Cashfree rejects server calls in production with an IP or domain message, add the
 API's address / the customer site address in the Cashfree dashboard (Developers settings).
+
+## Online payments (PhonePe and Paytm)
+
+Only used when `PAYMENT_METHODS` includes `phonepe` and/or `paytm`. Both are official payment-gateway integrations (PhonePe **Standard
+Checkout v2**, Paytm **PG**): the diner is sent to the gateway's own page to pay by UPI, card or net banking, and comes back to the order
+page. The money goes through the gateway to the restaurant's own merchant account; MezMitra never holds it.
+
+Each restaurant brings its own merchant account: **Admin -> Payments** -> turn on *Online payments (PhonePe)* or *(Paytm)* and enter
+- PhonePe: **Client ID**, **Client Version** (usually `1`), **Client Secret** (PhonePe Business dashboard -> Developer Settings),
+- Paytm: **Merchant ID** and the 16-character **Merchant Key** (Paytm dashboard -> Developers -> API keys),
+
+and say whether they are the **sandbox/staging** keys or the **live/production** ones (neither gateway can tell from the key). Secrets are
+stored encrypted and never shown again; *Test connection* proves the keys. A restaurant uses **one** online gateway at a time
+(Razorpay, Cashfree, PhonePe or Paytm).
+
+How a payment is confirmed: `POST /api/public/orders/:token/pay/:provider` opens a payment at the gateway and returns where to send the diner
+(a link for PhonePe, a form post for Paytm). Coming back, the order page calls `.../pay/:provider/verify`, which sends nothing: the **server
+asks the gateway** (PhonePe order status; Paytm transaction status, whose reply must carry Paytm's own valid signature) and only marks the
+order paid for exactly the right amount. A payment made on an earlier attempt is found before a new one is opened. Refunds (admin -> order ->
+*Refund*) work for both. Paytm posts the browser back to `/api/public/paytm/callback/:token`, which only passes the diner on to the order page.
+
+Not built yet: the gateways' **webhooks** (a payment is recorded when the diner returns to the page, or opens it again; if they never do, staff
+can reconcile from the gateway dashboard). **Not yet tried against real PhonePe/Paytm accounts**: the code follows their published docs and
+is tested against fakes, so do a first run with sandbox/staging keys and use *Test connection*. For Paytm *live* the docs print no production
+hosts, so two candidates are tried (`secure.paytmpayments.com` / `securegw.paytmpayments.in`, then `securegw.paytm.in`); set `PAYTM_THEIA_BASE`
+and `PAYTM_STATUS_BASE` if Paytm tells you otherwise.
 
 ## Online payments (Razorpay)
 

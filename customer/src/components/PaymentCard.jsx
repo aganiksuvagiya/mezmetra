@@ -4,7 +4,7 @@ import { Button } from './Button';
 import { CardIcon, CashIcon, CheckIcon, ClockIcon } from './Icons';
 import { useToast } from './Toast';
 import UpiPayment from './UpiPayment';
-import { ApiError, errorMessage, startCashfree, startRazorpay, startRazorpayQr, verifyCashfree, verifyRazorpay, verifyRazorpayQr } from '../lib/api';
+import { ApiError, errorMessage, startCashfree, startGatewayPayment, startRazorpay, startRazorpayQr, verifyCashfree, verifyGatewayPayment, verifyRazorpay, verifyRazorpayQr } from '../lib/api';
 import { loadCashfree } from '../lib/cashfree';
 import { formatMoney } from '../lib/money';
 import { loadRazorpay, PaymentScriptError } from '../lib/razorpay';
@@ -15,7 +15,42 @@ import { formatTime } from '../lib/time';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const retriable = (err) => err instanceof ApiError && (err.status === 0 || err.status >= 500 || err.status === 429);
 
-const methodLabel = { cash: 'Cash at counter', razorpay: 'Online', cashfree: 'Online', upi: 'UPI' };
+const methodLabel = { cash: 'Cash at counter', razorpay: 'Online', cashfree: 'Online', phonepe: 'Online', paytm: 'Online', upi: 'UPI' };
+
+// PhonePe and Paytm take the diner to the gateway's own page and bring them back to this page, which then asks the server to check.
+const REDIRECT_GATEWAYS = ['phonepe', 'paytm'];
+
+/** Sends the browser to the gateway's page: a plain link (PhonePe) or a form post (Paytm). Only https addresses are followed. */
+function goToGateway(client) {
+  const safe = (url) => {
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:' || (import.meta.env.DEV && u.protocol === 'http:'); // plain http only on the local dev server
+    } catch {
+      return false;
+    }
+  };
+  if (client?.type === 'redirect' && safe(client.url)) {
+    window.location.assign(client.url);
+    return;
+  }
+  if (client?.type === 'form' && safe(client.action)) {
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = client.action;
+    for (const [name, value] of Object.entries(client.fields ?? {})) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = String(value);
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    return;
+  }
+  throw new ApiError({ status: 0, code: 'BAD_PAYMENT_PAGE', message: 'The payment page could not be opened. Please try again or pay another way.' });
+}
 
 // Cashfree: remember (on this device) that the diner opened the payment window, so coming back to the page after a UPI app or a
 // closed tab asks the server whether the money arrived.
@@ -41,15 +76,18 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
   const [qrLoading, setQrLoading] = useState(false);
   const unverified = useRef(null); // Razorpay response we still have to confirm with the server
 
-  const provider = order.payment_options?.cashfree === true ? 'cashfree' : 'razorpay';
-  const online = order.payment_options?.razorpay === true || order.payment_options?.cashfree === true;
+  const provider = ['phonepe', 'paytm', 'cashfree'].find((name) => order.payment_options?.[name] === true) ?? 'razorpay';
+  const online = ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => order.payment_options?.[name] === true);
+  const redirectGateway = REDIRECT_GATEWAYS.includes(provider);
+  // Cashfree and the gateway pages are all checked the same way afterwards: the server asks the gateway.
+  const verifyOnline = (token) => (redirectGateway ? verifyGatewayPayment(token, provider) : verifyCashfree(token));
   const unpaid = order.payment_status !== 'paid';
   const cancelled = order.status === 'cancelled';
 
   // Warm up the Checkout script so tapping "Pay online" opens it straight away. Failures surface on tap.
   useEffect(() => {
-    if (online && unpaid && !cancelled) (provider === 'cashfree' ? loadCashfree : loadRazorpay)().catch(() => {});
-  }, [online, provider, unpaid, cancelled]);
+    if (online && unpaid && !cancelled && !redirectGateway) (provider === 'cashfree' ? loadCashfree : loadRazorpay)().catch(() => {});
+  }, [online, provider, redirectGateway, unpaid, cancelled]);
 
   // While the scan-to-pay QR is on screen, ask the server every few seconds whether the money arrived (it asks Razorpay). Stops after
   // 20 minutes, and while the page is in the background.
@@ -79,16 +117,23 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
   // Cashfree: the diner may have been sent to a UPI app (or closed the tab) in the middle of paying. When they come back, ask the
   // server whether the money arrived. The server asks Cashfree, so this can never mark an order paid by itself.
   useEffect(() => {
-    if (!(online && provider === 'cashfree' && unpaid && !cancelled)) return undefined;
+    if (!(online && provider !== 'razorpay' && unpaid && !cancelled)) return undefined;
     let stopped = false;
     const recheck = async () => {
       if (document.visibilityState !== 'visible' || busy.current || !cfAttempted(order.token)) return;
       try {
-        const updated = await verifyCashfree(order.token);
+        const updated = await verifyOnline(order.token);
         if (!stopped && updated.payment_status === 'paid') {
           removeItem(cfKey(order.token));
           onPaid(updated);
           toast.success('Payment received. Thank you!');
+        } else if (!stopped && redirectGateway) {
+          // Back from the gateway's page without a confirmed payment: say so, and let the diner check again or pay again.
+          setPhase('cf_pending');
+          setMessage({
+            tone: 'info',
+            text: "We haven't received your payment yet. If you already paid, give your bank a moment and tap “Check payment”. Otherwise you can pay again.",
+          });
         }
       } catch {
         /* the next visit tries again */
@@ -100,7 +145,18 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
       stopped = true;
       document.removeEventListener('visibilitychange', recheck);
     };
-  }, [online, provider, unpaid, cancelled, order.token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [online, provider, redirectGateway, unpaid, cancelled, order.token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Coming back to this page with the browser's Back button restores it as it was left ("opening the payment page"): reset it.
+  useEffect(() => {
+    const restored = (event) => {
+      if (!event.persisted) return;
+      busy.current = false;
+      setPhase('idle');
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
 
   if (order.payment_status === 'refunded') {
     return (
@@ -189,14 +245,14 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
     });
   };
 
-  // Cashfree: ask the server whether Cashfree has the money (the window has closed, or the diner says they paid).
+  // Cashfree / PhonePe / Paytm: ask the server whether the gateway has the money (the window has closed, or the diner says they paid).
   const checkCashfree = async (failure) => {
     busy.current = true;
     setPhase('verifying');
     setMessage(null);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const updated = await verifyCashfree(order.token);
+        const updated = await verifyOnline(order.token);
         if (updated.payment_status === 'paid') {
           removeItem(cfKey(order.token));
           busy.current = false;
@@ -243,6 +299,14 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
     await checkCashfree(result?.error?.message ?? null);
   };
 
+  // PhonePe / Paytm: the server opens the payment, then this browser leaves for the gateway's own page and comes back to this order page.
+  const payViaGatewayPage = async () => {
+    const session = await startGatewayPayment(order.token, provider);
+    setItem(cfKey(order.token), String(Date.now()));
+    setPhase('checkout');
+    goToGateway(session.client);
+  };
+
   const showQr = async () => {
     if (qrLoading) return;
     setQrLoading(true);
@@ -263,6 +327,10 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
     setMessage(null);
     setPhase('starting');
     try {
+      if (redirectGateway) {
+        await payViaGatewayPage();
+        return;
+      }
       if (provider === 'cashfree') {
         await payWithCashfree();
         return;
@@ -342,7 +410,7 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
 
       {online && phase !== 'confirm_failed' && (
         <Button block className="mt-4" onClick={payOnline} loading={phase === 'starting'} disabled={working}>
-          {phase === 'verifying' ? 'Confirming payment…' : phase === 'checkout' ? 'Payment window open' : `Pay online - ${formatMoney(order.total)}`}
+          {phase === 'verifying' ? 'Confirming payment…' : phase === 'checkout' ? (redirectGateway ? 'Opening payment page…' : 'Payment window open') : `Pay online - ${formatMoney(order.total)}`}
         </Button>
       )}
 

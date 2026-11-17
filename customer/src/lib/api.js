@@ -131,6 +131,16 @@ export const claimUpiPayment = (orderToken, reference) =>
 export const startRazorpay = (orderToken) =>
   request(`/api/public/orders/${enc(orderToken)}/razorpay`, { method: 'POST' });
 
+/**
+ * PhonePe / Paytm: the server opens the payment and says where to send the diner (a page to go to, or a form to post). Later it asks
+ * the gateway whether the money arrived; nothing is sent from here.
+ */
+export const startGatewayPayment = (orderToken, provider) =>
+  request(`/api/public/orders/${enc(orderToken)}/pay/${enc(provider)}`, { method: 'POST' });
+
+export const verifyGatewayPayment = (orderToken, provider) =>
+  request(`/api/public/orders/${enc(orderToken)}/pay/${enc(provider)}/verify`, { method: 'POST' });
+
 /** Cashfree: the server creates the payment session; later it asks Cashfree whether the money arrived (nothing is sent from here). */
 export const startCashfree = (orderToken) =>
   request(`/api/public/orders/${enc(orderToken)}/cashfree`, { method: 'POST' });

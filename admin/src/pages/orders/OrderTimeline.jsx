@@ -1,7 +1,7 @@
 import { cx } from '../../lib/cx.js';
 import { CheckIcon, CloseIcon } from '../../components/icons.jsx';
 
-const METHOD = { cash: 'Cash at counter', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', upi: 'UPI' };
+const METHOD = { cash: 'Cash at counter', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)', upi: 'UPI' };
 
 /** Placed -> Accepted -> Paid -> Completed, each with its time in the vendor's time zone (or "Waiting"). */
 export default function OrderTimeline({ order, fmt }) {

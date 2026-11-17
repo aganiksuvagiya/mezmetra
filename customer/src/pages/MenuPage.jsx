@@ -68,7 +68,7 @@ export default function MenuPage() {
   // The ways of paying this restaurant takes, shown under its name so nobody is surprised at the cart.
   const payChips = [
     menu.payment_options?.upi && { key: 'upi', label: 'UPI', Icon: PhoneIcon },
-    (menu.payment_options?.razorpay || menu.payment_options?.cashfree) && { key: 'online', label: 'Card & online', Icon: CardIcon },
+    ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => menu.payment_options?.[name]) && { key: 'online', label: 'Card & online', Icon: CardIcon },
     menu.payment_options?.cash && { key: 'cash', label: 'Pay at counter', Icon: CashIcon },
   ].filter(Boolean);
 

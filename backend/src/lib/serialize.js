@@ -20,7 +20,7 @@ export const vendorOut = (v) => ({
   logo_url: logoUrl(v),
   // Whether diners are asked for the code printed on their table: 'off', 'optional' (may skip it) or 'required' (stops orders from people who only have the link).
   table_code_mode: v.table_code_mode ?? 'off',
-  // Ways of paying the product offers right now ('upi', 'cash', 'razorpay', 'cashfree'); the admin hides the rest.
+  // Ways of paying the product offers right now ('upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm'); the admin hides the rest.
   payment_methods: [...config.paymentMethods],
   // True for the platform owner's account (SUPER_ADMIN_EMAILS): the admin then shows the Platform section.
   is_super_admin: isSuperAdminEmail(v.email),

@@ -13,6 +13,10 @@ import { downloadUrl, useAction, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
 import OrderTimeline from './OrderTimeline.jsx';
 
+// Online payments the admin can give back from the order screen (cash and UPI are handed back by staff).
+const REFUNDABLE = ['razorpay', 'phonepe', 'paytm'];
+const GATEWAY_NAME = { razorpay: 'Razorpay', phonepe: 'PhonePe', paytm: 'Paytm' };
+
 const PAY_PREF = { counter: 'at the counter', online: 'online', upi: 'with a UPI app' };
 
 function Section({ title, children }) {
@@ -230,7 +234,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
               Accept order
             </Button>
           )}
-          {paid && order.payment_method === 'razorpay' && (
+          {paid && REFUNDABLE.includes(order.payment_method) && (
             <Button variant="danger-outline" disabled={busy} onClick={() => setConfirm('refund')}>
               Refund {fmt.money(order.total)}
             </Button>
@@ -296,7 +300,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
         title={`Refund order #${orderId}?`}
         message={
           order
-            ? `${fmt.money(order.total)} goes back to the customer’s account through Razorpay (it can take a few days to show). ${
+            ? `${fmt.money(order.total)} goes back to the customer’s account through ${GATEWAY_NAME[order.payment_method] ?? 'the payment gateway'} (it can take a few days to show). ${
                 order.status === 'completed' ? '' : 'The order is cancelled too. '
               }This can’t be undone.`
             : ''
