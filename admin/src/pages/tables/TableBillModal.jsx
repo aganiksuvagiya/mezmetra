@@ -90,7 +90,7 @@ export default function TableBillModal({ table, onClose, onChanged }) {
                   <li key={o.id} className="flex items-start justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-900">
-                        Order #{o.id} <span className="font-normal text-slate-500">· {STATUS[o.status] ?? o.status}</span>
+                        Order #{o.number} <span className="font-normal text-slate-500">· {STATUS[o.status] ?? o.status}</span>
                       </p>
                       <p className="mt-0.5 break-words text-xs text-slate-500">{o.items.map((i) => `${i.quantity}× ${i.name}`).join(', ')}</p>
                     </div>

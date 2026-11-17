@@ -181,19 +181,23 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
   const ts = (v) => (v ? `${v.replace('T', ' ')}` : null);
   await db.tx(async (t) => {
     await t.query(`DELETE FROM orders WHERE vendor_id = $1 AND idempotency_key LIKE $2`, [vendorId, `${MARK}%`]);
+    // Sample orders take their numbers from the restaurant's own counter, like real ones.
+    const firstNo = (
+      await t.query(`UPDATE vendors SET next_order_no = next_order_no + $2 WHERE id = $1 RETURNING next_order_no - $2 AS first`, [vendorId, orders.length])
+    ).rows[0].first;
     for (let start = 0; start < orders.length; start += 60) {
       const chunk = orders.slice(start, start + 60);
       const params = [tz];
-      const rows = chunk.map((o) => {
+      const rows = chunk.map((o, index) => {
         const base = params.length;
-        params.push(vendorId, o.table.id, o.table.number, o.key, o.status, o.paid ? 'paid' : 'unpaid', o.paid ? 'upi' : null, o.subtotal, o.tax, o.total, o.note, ts(o.placed), ts(o.accepted), ts(o.completed), ts(o.paid), o.ref, ts(o.claimedAt));
+        params.push(vendorId, o.table.id, o.table.number, o.key, o.status, o.paid ? 'paid' : 'unpaid', o.paid ? 'upi' : null, o.subtotal, o.tax, o.total, o.note, ts(o.placed), ts(o.accepted), ts(o.completed), ts(o.paid), o.ref, ts(o.claimedAt), firstNo + start + index);
         const p = (i) => `$${base + i}`;
         const at = (i) => `(${p(i)}::timestamp AT TIME ZONE $1)`;
-        return `(${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, 'upi', ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${at(12)}, ${at(13)}, ${at(14)}, ${at(15)}, ${p(16)}, ${at(17)})`;
+        return `(${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, 'upi', ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${at(12)}, ${at(13)}, ${at(14)}, ${at(15)}, ${p(16)}, ${at(17)}, ${p(18)})`;
       });
       const inserted = await t.query(
         `INSERT INTO orders (vendor_id, table_id, table_number, idempotency_key, status, payment_status, payment_method, pay_pref,
-                             subtotal_paise, tax_paise, total_paise, note, created_at, accepted_at, completed_at, paid_at, claim_reference, claimed_at)
+                             subtotal_paise, tax_paise, total_paise, note, created_at, accepted_at, completed_at, paid_at, claim_reference, claimed_at, order_no)
          VALUES ${rows.join(', ')} RETURNING id, idempotency_key`,
         params,
       );

@@ -115,6 +115,7 @@ function OrderView({ orderToken }) {
       <header className="aurora px-5 pb-4 pt-[calc(env(safe-area-inset-top)+1.25rem)]">
         <p className="flex flex-wrap items-center gap-2 text-[13px] font-bold">
           <span className="glass rounded-full px-3.5 py-1.5 text-ink">{`Table ${order.table_number}`}</span>
+          {order.number != null && <span className="text-ink-soft">{`Order #${order.number}`}</span>}
           {order.created_at && (
             <span className="inline-flex items-center gap-1.5 text-ink-soft">
               <ClockIcon className="size-4" />

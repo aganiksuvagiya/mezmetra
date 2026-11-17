@@ -88,7 +88,7 @@ export function writeReportPdf(res, report) {
       }
       const y = doc.y;
       const cells = [
-        `#${o.id}`,
+        `#${o.number}`,
         when(o.created_at, vendor.timezone),
         when(o.paid_at, vendor.timezone),
         String(o.table_number).slice(0, 8),

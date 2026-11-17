@@ -127,6 +127,7 @@ export function tablesRouter(db) {
         total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)),
         orders: rows.map((o) => ({
           id: o.id,
+          number: o.order_no,
           status: o.status,
           total: toRupees(o.total_paise),
           created_at: o.created_at,

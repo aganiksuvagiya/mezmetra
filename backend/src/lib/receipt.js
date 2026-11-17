@@ -12,7 +12,7 @@ function formatDate(date, timeZone) {
  * `order` is the admin serialisation (see serialize.adminOrderOut).
  */
 export function writeReceipt(res, { vendor, order }) {
-  const doc = new PDFDocument({ size: 'A5', margin: 36, info: { Title: `Receipt #${order.id}` } });
+  const doc = new PDFDocument({ size: 'A5', margin: 36, info: { Title: `Receipt #${order.number}` } });
   doc.pipe(res);
 
   doc.font('Helvetica-Bold').fontSize(18).text(vendor.name, { align: 'center' });
@@ -20,7 +20,7 @@ export function writeReceipt(res, { vendor, order }) {
   doc.moveDown(0.8).fillColor('#000').fontSize(10);
 
   const meta = [
-    ['Receipt no.', `#${order.id}`],
+    ['Receipt no.', `#${order.number}`],
     ['Table', order.table_number],
     ['Date', formatDate(order.paid_at ?? order.created_at, vendor.timezone)],
     ['Payment', `${{ razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', upi: 'UPI' }[order.payment_method] ?? 'Cash'} - ${order.payment_status.toUpperCase()}`],

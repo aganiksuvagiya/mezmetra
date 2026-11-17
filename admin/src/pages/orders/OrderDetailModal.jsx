@@ -132,6 +132,8 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
   const cashOffered = vendor?.payment_methods?.includes('cash') ?? true;
 
   const order = q.data;
+  // What people see and say is the restaurant's own number; `orderId` is only the internal key used in the URLs.
+  const num = order?.number ?? orderId;
   const paid = order?.payment_status === 'paid';
   const active = order && (order.status === 'pending' || order.status === 'accepted');
 
@@ -161,7 +163,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
       setActionError(null);
       setPending('ready');
       try {
-        applyUpdate(await api(`/api/admin/orders/${orderId}/ready`, { method: 'POST' }), `Order #${orderId} is ready. The customer has been told.`);
+        applyUpdate(await api(`/api/admin/orders/${orderId}/ready`, { method: 'POST' }), `Order #${num} is ready. The customer has been told.`);
       } catch (error) {
         setActionError(error.message);
         q.reload();
@@ -178,14 +180,14 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
       const tab = window.open('', '_blank');
       if (tab) {
         tab.opener = null;
-        tab.document.title = `Receipt #${orderId}`;
+        tab.document.title = `Receipt #${num}`;
         tab.document.body.textContent = 'Preparing receipt…';
       }
       try {
         const blob = await apiBlob(`/api/admin/orders/${orderId}/receipt.pdf`);
         const url = URL.createObjectURL(blob);
         if (tab) tab.location.href = url;
-        else downloadUrl(url, `receipt-${orderId}.pdf`);
+        else downloadUrl(url, `receipt-${num}.pdf`);
         setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
       } catch (error) {
         tab?.close();
@@ -226,7 +228,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
             </Button>
           )}
           {order.status === 'pending' && (
-            <Button busy={pending === 'accept'} disabled={busy} onClick={() => setStatus('accepted', `Order #${orderId} accepted.`)}>
+            <Button busy={pending === 'accept'} disabled={busy} onClick={() => setStatus('accepted', `Order #${num} accepted.`)}>
               Accept order
             </Button>
           )}
@@ -241,7 +243,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
             </Button>
           )}
           {order.status === 'accepted' && paid && (
-            <Button busy={pending === 'complete'} disabled={busy} onClick={() => setStatus('completed', `Order #${orderId} completed.`)}>
+            <Button busy={pending === 'complete'} disabled={busy} onClick={() => setStatus('completed', `Order #${num} completed.`)}>
               Complete order
             </Button>
           )}
@@ -258,7 +260,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
 
   return (
     <>
-      <Modal title={`Order #${orderId}`} size="lg" onClose={onClose} footer={footer}>
+      <Modal title={`Order #${num}`} size="lg" onClose={onClose} footer={footer}>
         {q.loading && (
           <div role="status" aria-label="Loading order" className="space-y-4">
             <Skeleton className="h-6 w-2/3" />
@@ -278,7 +280,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
 
       <ConfirmDialog
         open={confirm === 'cancel'}
-        title={`Cancel order #${orderId}?`}
+        title={`Cancel order #${num}?`}
         message="The order will be marked cancelled and the table will see it as cancelled. This can’t be undone."
         confirmLabel="Cancel order"
         cancelLabel="Keep order"
@@ -287,13 +289,13 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
           const updated = await api(`/api/admin/orders/${orderId}/status`, { method: 'PATCH', body: { status: 'cancelled' } });
           setConfirm(null);
           setActionError(null);
-          applyUpdate(updated, `Order #${orderId} cancelled.`);
+          applyUpdate(updated, `Order #${num} cancelled.`);
         }}
       />
 
       <ConfirmDialog
         open={confirm === 'refund'}
-        title={`Refund order #${orderId}?`}
+        title={`Refund order #${num}?`}
         message={
           order
             ? `${fmt.money(order.total)} goes back to the customer’s account through Razorpay (it can take a few days to show). ${
@@ -308,7 +310,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
           const updated = await api(`/api/admin/orders/${orderId}/refund`, { method: 'POST' });
           setConfirm(null);
           setActionError(null);
-          applyUpdate(updated, `Order #${orderId} refunded (${fmt.money(updated.total)}).`);
+          applyUpdate(updated, `Order #${num} refunded (${fmt.money(updated.total)}).`);
         }}
       />
 
@@ -316,14 +318,14 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
         open={confirm === 'cash'}
         tone="primary"
         title="Record cash payment?"
-        message={order ? `Mark order #${orderId} as paid in cash (${fmt.money(order.total)}). This counts towards today’s revenue and can’t be undone.` : ''}
+        message={order ? `Mark order #${num} as paid in cash (${fmt.money(order.total)}). This counts towards today’s revenue and can’t be undone.` : ''}
         confirmLabel="Record payment"
         onCancel={() => setConfirm(null)}
         onConfirm={async () => {
           const updated = await api(`/api/admin/orders/${orderId}/cash-payment`, { method: 'POST' });
           setConfirm(null);
           setActionError(null);
-          applyUpdate(updated, `Cash payment recorded for order #${orderId}.`);
+          applyUpdate(updated, `Cash payment recorded for order #${num}.`);
         }}
       />
 
@@ -333,7 +335,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
         title="Confirm UPI payment?"
         message={
           order
-            ? `Confirm that ${fmt.money(order.total)} for order #${orderId} arrived in your bank or UPI account${
+            ? `Confirm that ${fmt.money(order.total)} for order #${num} arrived in your bank or UPI account${
                 order.payment_claim?.reference ? ` (reference ${order.payment_claim.reference})` : ''
               }. This counts towards today’s revenue and can’t be undone.`
             : ''
@@ -344,13 +346,13 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
           const updated = await api(`/api/admin/orders/${orderId}/upi-payment`, { method: 'POST', body: {} });
           setConfirm(null);
           setActionError(null);
-          applyUpdate(updated, `UPI payment confirmed for order #${orderId}.`);
+          applyUpdate(updated, `UPI payment confirmed for order #${num}.`);
         }}
       />
 
       <ConfirmDialog
         open={confirm === 'delete'}
-        title={`Delete order #${orderId}?`}
+        title={`Delete order #${num}?`}
         message={
           <>
             <p>This permanently removes the order{paid ? ' and its payment' : ''}.</p>
@@ -364,7 +366,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged }) {
         onConfirm={async () => {
           await api(`/api/admin/orders/${orderId}`, { method: 'DELETE' });
           setConfirm(null);
-          toast.success(`Order #${orderId} deleted.`);
+          toast.success(`Order #${num} deleted.`);
           onChanged();
           onClose();
         }}

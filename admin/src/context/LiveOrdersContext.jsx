@@ -72,7 +72,7 @@ export function LiveOrdersProvider({ children }) {
     setArrivals((n) => n + fresh.length);
     const text =
       fresh.length === 1
-        ? `New order #${fresh[0].id} from table ${fresh[0].table_number} (${formatMoney(fresh[0].total)})`
+        ? `New order #${fresh[0].number} from table ${fresh[0].table_number} (${formatMoney(fresh[0].total)})`
         : `${fresh.length} new orders`;
     if (latest.current.soundOn) {
       if (voiceActive()) {

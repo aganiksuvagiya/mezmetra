@@ -41,7 +41,7 @@ function OrderRow({ order, fresh, fmt, onOpen }) {
         <span className="block min-w-0">
           <span className="flex flex-wrap items-center gap-x-2 font-semibold text-slate-900">
             <span>
-              <span className="sr-only">Order </span>#{order.id}
+              <span className="sr-only">Order </span>#{order.number}
             </span>
             <span className="font-normal text-slate-500">Table {order.table_number}</span>
             {fresh && (
@@ -146,7 +146,7 @@ export default function Orders() {
         const addedIds = added.map((o) => o.id);
         setFresh((prev) => new Set([...prev, ...addedIds]));
         if (tab === 'active' || tab === 'all') {
-          toast.info(added.length === 1 ? `New order #${added[0].id} from table ${added[0].table_number}.` : `${added.length} new orders.`);
+          toast.info(added.length === 1 ? `New order #${added[0].number} from table ${added[0].table_number}.` : `${added.length} new orders.`);
         }
         setTimeout(
           () =>

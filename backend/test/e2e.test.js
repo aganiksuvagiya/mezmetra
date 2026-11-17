@@ -2113,3 +2113,120 @@ describe('cleanup rules', () => {
     assert.equal((await api('GET', `/api/admin/orders/${s.orderId}`, { token: s.token })).body.data.table_number, 'T-01');
   });
 });
+
+describe("each restaurant's own order numbers", () => {
+  const mk = async (name, email) => {
+    const token = (await api('POST', '/api/auth/signup', { body: { name, email, password: 'a-long-enough-password' } })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    const table = (await api('POST', '/api/admin/tables', { token, body: { number: 'N1', capacity: 2 } })).body.data;
+    return { token, itemId, qr: table.qr_url.split('/').pop() };
+  };
+  const order = async (r) => {
+    const res = await api('POST', `/api/public/t/${r.qr}/orders`, { body: { items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.data;
+  };
+  const list = async (r, query = '') => (await api('GET', `/api/admin/orders?per_page=50${query}`, { token: r.token })).body.data;
+  let a;
+  let b;
+
+  before(async () => {
+    a = await mk('Numbers A', 'numbers.a@example.test');
+    b = await mk('Numbers B', 'numbers.b@example.test');
+  });
+
+  it("starts every restaurant at #1 and counts its own orders, whatever the others do", async () => {
+    const a1 = await order(a);
+    const b1 = await order(b);
+    const a2 = await order(a);
+    const b2 = await order(b);
+    const a3 = await order(a);
+    assert.deepEqual([a1.number, a2.number, a3.number], [1, 2, 3]);
+    assert.deepEqual([b1.number, b2.number], [1, 2]);
+
+    const mine = await list(a);
+    assert.deepEqual(mine.map((o) => o.number).sort(), [1, 2, 3]);
+    assert.ok(mine.every((o) => Number.isInteger(o.id)), 'the internal id is still there for the admin URLs');
+    const detail = (await api('GET', `/api/admin/orders/${mine[0].id}`, { token: a.token })).body.data;
+    assert.equal(detail.number, mine[0].number);
+    assert.equal((await api('GET', `/api/public/orders/${a2.token}`)).body.data.number, 2, 'the diner sees the same number');
+  });
+
+  it('finds an order by the number people see, and only in its own restaurant', async () => {
+    const hit = await list(a, '&q=2');
+    assert.deepEqual(hit.map((o) => o.number), [2]);
+    const other = await list(b, '&q=3');
+    assert.deepEqual(other, [], 'restaurant B has no order #3');
+  });
+
+  it('never hands out the number of a deleted order again', async () => {
+    const latest = (await list(a))[0];
+    assert.equal(latest.number, 3);
+    assert.equal((await api('DELETE', `/api/admin/orders/${latest.id}`, { token: a.token })).status, 204);
+    assert.equal((await order(a)).number, 4);
+  });
+
+  it('numbers the receipt, the table bill and the report with the restaurant number', async () => {
+    const o = (await list(a)).find((x) => x.number === 2);
+    await api('POST', `/api/admin/orders/${o.id}/cash-payment`, { token: a.token });
+    const pdf = await api('GET', `/api/admin/orders/${o.id}/receipt.pdf`, { token: a.token });
+    assert.equal(pdf.status, 200);
+    assert.match(pdf.headers.get('content-disposition'), /receipt-2\.pdf/);
+
+    const tables = (await api('GET', '/api/admin/tables', { token: a.token })).body.data;
+    const bill = (await api('GET', `/api/admin/tables/${tables[0].id}/bill`, { token: a.token })).body.data;
+    assert.ok(bill.orders.every((x) => Number.isInteger(x.number)));
+    assert.deepEqual(bill.orders.map((x) => x.number).sort(), [1, 4]);
+
+    const dash = (await api('GET', '/api/admin/dashboard/overview', { token: a.token })).body.data;
+    assert.ok(dash.latest_orders.every((x) => Number.isInteger(x.number)));
+    const today = new Date().toISOString().slice(0, 10);
+    const csv = await api('GET', `/api/admin/reports/orders.csv?from=${today}&to=${today}`, { token: a.token });
+    assert.equal(csv.status, 200);
+    const lines = Buffer.from(csv.body).toString('utf8').split(/\r?\n/);
+    assert.deepEqual(
+      lines.slice(1).filter(Boolean).map((l) => l.split(',')[0]).sort(),
+      ['1', '2', '4'],
+      'the CSV lists the restaurant order numbers, not the shared ids',
+    );
+  });
+});
+
+describe('order numbers for orders that already exist (migration backfill)', () => {
+  it('numbers old orders per restaurant in the order they were placed, and continues from there', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const dir = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'migrations');
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    const before = files.filter((f) => f < '018');
+    const old = await createDb({ pgliteDir: 'memory' });
+    try {
+      for (const f of before) await old.exec(fs.readFileSync(path.join(dir, f), 'utf8'));
+      const vendor = async (name) => (await old.query(`INSERT INTO vendors (name, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`, [name, `${name}@backfill.test`])).rows[0].id;
+      const v1 = await vendor('one');
+      const v2 = await vendor('two');
+      const table = async (v) => (await old.query(`INSERT INTO dining_tables (vendor_id, number, capacity) VALUES ($1, 'B1', 2) RETURNING id`, [v])).rows[0].id;
+      const [t1, t2] = [await table(v1), await table(v2)];
+      const put = (v, t, at) => old.query(`INSERT INTO orders (vendor_id, table_id, table_number, subtotal_paise, tax_paise, total_paise, created_at) VALUES ($1, $2, 'B1', 100, 0, 100, $3)`, [v, t, at]);
+      // Interleaved, and placed out of id order on purpose: the number follows when it was placed.
+      await put(v1, t1, '2026-01-01 10:00:00+00');
+      await put(v2, t2, '2026-01-01 10:01:00+00');
+      await put(v1, t1, '2026-01-01 09:00:00+00');
+      await put(v1, t1, '2026-01-01 11:00:00+00');
+      await put(v2, t2, '2026-01-01 10:02:00+00');
+
+      await old.exec(fs.readFileSync(path.join(dir, '018_order_number.sql'), 'utf8'));
+      const rows = (await old.query(`SELECT vendor_id, order_no, created_at FROM orders ORDER BY vendor_id, order_no`)).rows;
+      assert.deepEqual(rows.filter((r) => r.vendor_id === v1).map((r) => r.order_no), [1, 2, 3]);
+      assert.deepEqual(rows.filter((r) => r.vendor_id === v2).map((r) => r.order_no), [1, 2]);
+      const first = rows.find((r) => r.vendor_id === v1 && r.order_no === 1);
+      assert.equal(new Date(first.created_at).toISOString(), '2026-01-01T09:00:00.000Z', 'the earliest order is #1');
+      const next = (await old.query(`SELECT id, next_order_no FROM vendors ORDER BY id`)).rows;
+      assert.deepEqual(next.map((r) => r.next_order_no), [4, 3]);
+      await assert.rejects(() => old.query(`INSERT INTO orders (vendor_id, table_id, table_number, subtotal_paise, tax_paise, total_paise, order_no) VALUES ($1, $2, 'B1', 1, 0, 1, 1)`, [v1, t1]), 'the same number twice in one restaurant is refused');
+    } finally {
+      await old.close();
+    }
+  });
+});
