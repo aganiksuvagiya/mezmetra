@@ -31,6 +31,11 @@ const resetSchema = z.object({
   password: z.string().min(8, 'Use at least 8 characters').max(200),
 });
 
+const changePasswordSchema = z.object({
+  current_password: z.string().min(1, 'Enter your current password').max(200),
+  new_password: z.string().min(8, 'Use at least 8 characters').max(200),
+});
+
 // Only the hash of a reset token is stored.
 const hashToken = (token) => createHash('sha256').update(token).digest('hex');
 
@@ -111,6 +116,30 @@ export function authRouter(db, { loginLimiter }, mailer) {
     const { rows } = await db.query(`SELECT * FROM vendors WHERE id = $1`, [req.vendorId]);
     if (!rows[0]) throw unauthorized('Account no longer exists');
     res.json({ data: vendorOut(rows[0]) });
+  });
+
+  // A signed-in restaurant changes its own password. Every older session is signed out by the change, so the answer carries a fresh token.
+  router.post('/change-password', loginLimiter, requireAuth, requireActiveVendor(db), async (req, res) => {
+    const body = parse(changePasswordSchema, req.body);
+    const { rows } = await db.query(`SELECT * FROM vendors WHERE id = $1`, [req.vendorId]);
+    const vendor = rows[0];
+    if (!vendor) throw unauthorized('Account no longer exists');
+    // Not a 401: the session itself is fine, and a 401 would sign the person out of the admin.
+    if (!(await bcrypt.compare(body.current_password, vendor.password_hash))) {
+      throw new HttpError(400, 'WRONG_PASSWORD', 'Your current password is not right.');
+    }
+    if (body.new_password === body.current_password) {
+      throw new HttpError(400, 'SAME_PASSWORD', 'Choose a password that is different from your current one.');
+    }
+    const hash = await bcrypt.hash(body.new_password, 10);
+    // This server's clock on both sides (not the database's), so the token signed below can never look older than the change.
+    const changedAt = new Date();
+    const updated = await db.tx(async (t) => {
+      const r = await t.query(`UPDATE vendors SET password_hash = $2, password_changed_at = $3 WHERE id = $1 RETURNING *`, [vendor.id, hash, changedAt]);
+      await t.query(`UPDATE password_resets SET used_at = now() WHERE vendor_id = $1 AND used_at IS NULL`, [vendor.id]);
+      return r.rows[0];
+    });
+    res.json({ data: { token: signToken(updated.id), vendor: vendorOut(updated) } });
   });
 
   return router;

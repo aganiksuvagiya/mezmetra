@@ -94,6 +94,10 @@ Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are 
 - **Forgot password:** *Sign in -> Forgot password?* emails a one-time link (valid 60 minutes, newest link only, at most one email a minute
   per account). The answer is the same whether or not the email has an account. Choosing a new password signs out sessions started
   before it. Needs `SMTP_URL` / `MAIL_FROM` / `ADMIN_APP_URL`; without SMTP the link is printed in the API console (development only).
+- **Change password:** *Settings -> Password* (current password, new password twice, with a strength hint). Other devices are signed out; this one continues.
+- **Locked out (no email set up):** passwords are stored as one-way bcrypt hashes, so an old one can never be read back. Set a new one
+  on the database `backend/.env` points to (Aiven when `DATABASE_URL` is set): `NEW_PASSWORD='a-new-password' npm run reset-password -w backend -- you@example.com`.
+  It prints which database it is talking to, needs at least 8 characters, signs out the account's old sessions, and never prints the password.
 - **Sold out:** *Menu -> Items -> Mark sold out* is one tap. The dish stays on the menu, greyed out and labelled "Sold out", and cannot
   be ordered; carts drop it. **All back in stock** clears every sold-out dish at once (end of the day). This is separate from the
   *Available* switch, which hides a dish completely.

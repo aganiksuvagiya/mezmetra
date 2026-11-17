@@ -815,6 +815,54 @@ describe('platform owner (super admin)', () => {
   });
 });
 
+describe('changing your own password', () => {
+  const EMAIL = 'changer@example.test';
+  const OLD = 'the-old-password-1';
+  const NEW = 'a-brand-new-password-2';
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const change = (token, body) => api('POST', '/api/auth/change-password', { token, body });
+  let oldSession;
+
+  before(async () => {
+    oldSession = (await api('POST', '/api/auth/signup', { body: { name: 'Changer Cafe', email: EMAIL, password: OLD } })).body.data.token;
+  });
+
+  it('needs a signed-in session', async () => {
+    assert.equal((await api('POST', '/api/auth/change-password', { body: { current_password: OLD, new_password: NEW } })).status, 401);
+  });
+
+  it('refuses a wrong current password without signing the person out', async () => {
+    const res = await change(oldSession, { current_password: 'not-my-password', new_password: NEW });
+    assert.equal(res.status, 400, 'a 400, not a 401, so the admin does not log itself out');
+    assert.equal(res.body.error.code, 'WRONG_PASSWORD');
+    assert.equal((await api('GET', '/api/auth/me', { token: oldSession })).status, 200);
+  });
+
+  it('refuses a short or unchanged new password', async () => {
+    const short = await change(oldSession, { current_password: OLD, new_password: 'short' });
+    assert.equal(short.status, 400);
+    assert.equal(short.body.error.code, 'VALIDATION_ERROR');
+    const same = await change(oldSession, { current_password: OLD, new_password: OLD });
+    assert.equal(same.status, 400);
+    assert.equal(same.body.error.code, 'SAME_PASSWORD');
+    assert.equal((await change(oldSession, { new_password: NEW })).status, 400, 'the current password is required');
+  });
+
+  it('changes it, hands back a working session, and signs out the older ones', async () => {
+    await wait(1100); // token times are whole seconds: make sure the old session is clearly older than the change
+    const res = await change(oldSession, { current_password: OLD, new_password: NEW });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.data.token);
+    assert.equal(res.body.data.vendor.email, EMAIL);
+    assert.equal(res.body.data.vendor.password_hash, undefined, 'the hash never leaves the server');
+
+    assert.equal((await api('GET', '/api/auth/me', { token: res.body.data.token })).status, 200, 'the fresh session works at once');
+    assert.equal((await api('GET', '/api/auth/me', { token: oldSession })).status, 401, 'the old session is signed out');
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: EMAIL, password: OLD } })).status, 401);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: EMAIL, password: NEW } })).status, 200);
+  });
+});
+
 describe('password reset by email', () => {
   const EMAIL = 'forgetful@example.test';
   const OLD = 'the-old-password-1';

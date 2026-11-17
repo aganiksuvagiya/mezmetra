@@ -184,6 +184,7 @@ A suspended restaurant: `POST /api/auth/login` and every `/api/admin/*` call ret
 
 - `POST /api/auth/forgot-password` `{ email }` -> always `200 { data: { ok: true } }` (an unknown email is not revealed). Emails a link `<ADMIN_APP_URL>/reset-password?token=...`; at most one email a minute per account; none for suspended accounts.
 - `POST /api/auth/reset-password` `{ token, password (8-200 chars) }` -> `200 { data: { ok: true } }`. 400 `INVALID_RESET_TOKEN` when the link is wrong, used or expired (60 minutes; only the newest link works). Signs out every session started before the change (401 "Your password was changed").
+- `POST /api/auth/change-password` (signed in) `{ current_password, new_password (8-200 chars) }` -> `200 { data: { token, vendor } }`. The change signs out every older session, so use the new `token`. 400 `WRONG_PASSWORD` (deliberately not a 401, so the admin does not log itself out) and 400 `SAME_PASSWORD`; rate-limited like login.
 
 ## Sold-out dishes
 
