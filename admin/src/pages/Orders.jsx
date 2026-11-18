@@ -12,7 +12,7 @@ import Pagination from '../components/Pagination.jsx';
 import { panelId, tabId, Tabs } from '../components/Tabs.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
-import { useReserveSidePanelSpace } from '../context/SidePanelContext.jsx';
+import { useReserveSidePanelSpace, useSidePanelSpace } from '../context/SidePanelContext.jsx';
 import { apiPage } from '../lib/api.js';
 import { cx } from '../lib/cx.js';
 import { orderItemsSummary } from '../lib/format.js';
@@ -93,6 +93,15 @@ export default function Orders() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState(() => Number(params.get('order')) || null);
+  // The notification panel takes the same place at the right edge: opening it closes the open order, and opening an order closes it.
+  const { notificationsOpen, setNotificationsOpen } = useSidePanelSpace();
+  useEffect(() => {
+    if (notificationsOpen) setSelectedId(null);
+  }, [notificationsOpen]);
+  const openOrder = (id) => {
+    setNotificationsOpen(false);
+    setSelectedId(id);
+  };
   const [fresh, setFresh] = useState(() => new Set());
   const term = useDebouncedValue(search.trim());
 
@@ -101,7 +110,7 @@ export default function Orders() {
   const orderParam = params.get('order');
   useEffect(() => {
     if (!orderParam) return;
-    setSelectedId(Number(orderParam) || null);
+    openOrder(Number(orderParam) || null);
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -273,7 +282,7 @@ export default function Orders() {
           <>
             <ul className="divide-y divide-slate-100">
               {rows.map((order) => (
-                <OrderRow key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={setSelectedId} selected={order.id === selectedId} />
+                <OrderRow key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={openOrder} selected={order.id === selectedId} />
               ))}
             </ul>
             <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} />

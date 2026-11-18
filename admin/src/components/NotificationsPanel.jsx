@@ -8,30 +8,18 @@ import { orderItemsSummary, timeAgo } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import { Button } from './Button.jsx';
-import { BellIcon, CardIcon, CheckCircleIcon, OrdersIcon, ReceiptIcon } from './icons.jsx';
+import { BellIcon, CardIcon, CheckCircleIcon, CheckIcon, OrdersIcon, ReceiptIcon } from './icons.jsx';
 import Modal from './Modal.jsx';
 import SidePanel from './SidePanel.jsx';
 import { useToast } from './Toast.jsx';
 
-// How each kind of notification looks: its picture, its colour, and what the one button on it says.
+// How each kind of notification looks: its picture, its colours (picture tile, small label, left edge) and its one button.
 const KINDS = {
-  waiter: { icon: BellIcon, tile: 'bg-amber-100 text-amber-700', action: 'Done' },
-  bill: { icon: ReceiptIcon, tile: 'bg-amber-100 text-amber-700', action: 'Done' },
-  order: { icon: OrdersIcon, tile: 'bg-brand-50 text-brand-700', action: 'View' },
-  claim: { icon: CardIcon, tile: 'bg-emerald-100 text-emerald-700', action: 'View' },
+  waiter: { icon: BellIcon, tile: 'bg-amber-100 text-amber-700', text: 'text-amber-700', edge: 'shadow-[inset_3px_0_0_var(--color-amber-400)]', action: 'Mark done' },
+  bill: { icon: ReceiptIcon, tile: 'bg-amber-100 text-amber-700', text: 'text-amber-700', edge: 'shadow-[inset_3px_0_0_var(--color-amber-400)]', action: 'Mark done' },
+  order: { icon: OrdersIcon, tile: 'bg-brand-50 text-brand-700', text: 'text-brand-700', edge: 'shadow-[inset_3px_0_0_var(--color-brand-500)]', action: 'View order' },
+  claim: { icon: CardIcon, tile: 'bg-emerald-100 text-emerald-700', text: 'text-emerald-700', edge: 'shadow-[inset_3px_0_0_var(--color-emerald-500)]', action: 'View order' },
 };
-
-// "Table T-04" must not break at its hyphen ("Table T-" / "04"), so the table part of a line stays together.
-const keepTableTogether = (text) =>
-  text.split(/(Table \S+)/).map((part, i) =>
-    /^Table \S+$/.test(part) ? (
-      <span key={i} className="whitespace-nowrap">
-        {part}
-      </span>
-    ) : (
-      part
-    ),
-  );
 
 /**
  * The notification list that opens when the bell is pressed: everything waiting for staff right now (customers calling the waiter
@@ -72,20 +60,23 @@ export default function NotificationsPanel({ onClose }) {
     navigate(`/orders?order=${n.order.id}`);
   };
 
+  // Each card reads: a small coloured label (what it is), the table as the headline, then one line of detail.
   const describe = (n) => {
     switch (n.type) {
       case 'waiter':
-        return { title: `Table ${n.table} is calling the waiter`, detail: '' };
+        return { label: 'Waiter call', title: `Table ${n.table}`, detail: 'Is calling the waiter.' };
       case 'bill':
-        return { title: `Table ${n.table} wants the bill`, detail: '' };
+        return { label: 'Bill request', title: `Table ${n.table}`, detail: 'Would like the bill.' };
       case 'claim':
         return {
-          title: `Confirm payment for order #${n.order.number}`,
-          detail: `Table ${n.order.table_number} says they paid ${fmt.money(n.order.total)} by UPI`,
+          label: `Payment to confirm · #${n.order.number}`,
+          title: `Table ${n.order.table_number}`,
+          detail: `Says they paid ${fmt.money(n.order.total)} by UPI.`,
         };
       default:
         return {
-          title: `New order #${n.order.number} · Table ${n.order.table_number}`,
+          label: `New order · #${n.order.number}`,
+          title: `Table ${n.order.table_number}`,
           detail: `${orderItemsSummary(n.order.items, 2)} · ${fmt.money(n.order.total)}`,
         };
     }
@@ -106,42 +97,50 @@ export default function NotificationsPanel({ onClose }) {
         <ul className="space-y-2.5" aria-label="What needs you now">
           {notifications.map((n) => {
             const kind = KINDS[n.type];
-            const { title, detail } = describe(n);
+            const { label, title, detail } = describe(n);
             const Icon = kind.icon;
             const isRequest = n.type === 'waiter' || n.type === 'bill';
             return (
               <li
                 key={n.key}
                 className={cx(
-                  'flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-xs transition-colors',
+                  'overflow-hidden rounded-xl border border-slate-200 bg-white p-3.5 transition-colors', // (no drop shadow: the coloured left edge is a box-shadow too)
+                  kind.edge,
                   !isRequest && 'cursor-pointer hover:border-brand-200 hover:bg-brand-50/40',
                 )}
-                // An order or payment entry opens that order wherever on it you press; the buttons keep working on their own.
+                // An order or payment card opens that order wherever on it you press; its button keeps working on its own.
                 onClick={isRequest ? undefined : () => view(n)}
               >
-                <span className={cx('grid size-10 shrink-0 place-items-center rounded-lg', kind.tile)}>
-                  <Icon size={20} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="break-words text-sm font-semibold text-slate-900">{keepTableTogether(title)}</p>
-                  {detail && <p className="mt-0.5 break-words text-[13px] text-slate-600">{keepTableTogether(detail)}</p>}
-                  <p className="mt-0.5 text-xs text-slate-400">{timeAgo(n.at, now)}</p>
+                <div className="flex items-start gap-3">
+                  <span className={cx('grid size-10 shrink-0 place-items-center rounded-lg', kind.tile)}>
+                    <Icon size={20} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className={cx('min-w-0 truncate text-[11px] font-bold uppercase tracking-wide', kind.text)}>{label}</p>
+                      <p className="shrink-0 text-xs text-slate-400">{timeAgo(n.at, now)}</p>
+                    </div>
+                    <p className="mt-0.5 break-words text-base font-semibold leading-snug text-slate-900">{title}</p>
+                    {detail && <p className="mt-0.5 break-words text-[13px] text-slate-600">{detail}</p>}
+                  </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant={isRequest ? 'secondary' : 'primary'}
-                  busy={busyKey === n.key}
-                  disabled={busyKey !== null}
-                  onClick={(e) => {
-                    e.stopPropagation(); // the entry itself opens the order too; do not open it twice
-                    if (isRequest) done(n);
-                    else view(n);
-                  }}
-                  aria-label={isRequest ? `${title}: mark done` : `${title}: view order`}
-                  className="shrink-0"
-                >
-                  {kind.action}
-                </Button>
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant={isRequest ? 'secondary' : 'primary'}
+                    icon={isRequest ? CheckIcon : undefined}
+                    busy={busyKey === n.key}
+                    disabled={busyKey !== null}
+                    onClick={(e) => {
+                      e.stopPropagation(); // the card itself opens the order too; do not open it twice
+                      if (isRequest) done(n);
+                      else view(n);
+                    }}
+                    aria-label={`${label}, ${title}: ${isRequest ? 'mark done' : 'view order'}`}
+                  >
+                    {kind.action}
+                  </Button>
+                </div>
               </li>
             );
           })}
