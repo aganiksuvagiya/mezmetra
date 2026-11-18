@@ -10,6 +10,7 @@ import { SidePanelProvider, useSidePanelSpace } from '../context/SidePanelContex
 import {
   BellIcon,
   CardIcon,
+  ChevronRightIcon,
   CloseIcon,
   DashboardIcon,
   ListIcon,
@@ -114,7 +115,7 @@ function SoundToggle({ pill = false }) {
       aria-pressed={sound.on}
       title={label}
       className={cx(
-        'inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ring-1 ring-inset transition-colors',
+        'inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-xs font-semibold ring-1 ring-inset transition-colors',
         waiting
           ? 'bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100'
           : sound.on
@@ -198,12 +199,6 @@ function Sidebar({ onClose, showClose }) {
             <NavItem key={entry.to} {...entry} />
           ),
         )}
-        {vendor?.is_super_admin && (
-          <div className="pt-3">
-            <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Platform</p>
-            <NavItem to="/platform" label="All restaurants" icon={ShieldIcon} />
-          </div>
-        )}
       </nav>
 
       <div className="shrink-0 border-t border-slate-200 p-3">
@@ -220,6 +215,16 @@ function Sidebar({ onClose, showClose }) {
             </p>
           </div>
         </div>
+        {vendor?.is_super_admin && (
+          <Link
+            to="/owner"
+            className="mb-1 flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          >
+            <ShieldIcon size={18} className="text-slate-400" />
+            <span className="flex-1">Owner console</span>
+            <ChevronRightIcon size={16} className="text-slate-300" />
+          </Link>
+        )}
         <button
           type="button"
           onClick={logout}
@@ -235,12 +240,11 @@ function Sidebar({ onClose, showClose }) {
 
 function Shell() {
   const [open, setOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const location = useLocation();
   const hamburgerRef = useRef(null);
   const { count } = useLiveOrders();
-  const { open: panelDocked } = useSidePanelSpace();
+  const { open: panelDocked, notificationsOpen, setNotificationsOpen } = useSidePanelSpace();
   const { vendor } = useAuth();
   // "Thursday, 19 November" in the restaurant's own time zone.
   const today = useMemo(
@@ -364,12 +368,12 @@ function Shell() {
 
         {/* On a wide screen there is no top bar (the sidebar carries the menu), so the bell gets a slim one of its own. */}
         <div className="sticky top-0 z-20 hidden h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
-          <p className="text-sm font-medium text-slate-500">{today}</p>
-          <div className="ml-auto flex items-center gap-2">
+          <p className="min-w-0 truncate text-sm font-medium text-slate-500">{today}</p>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {count > 0 && (
               <Link
                 to="/orders"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-50 px-3 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-200 hover:bg-brand-100"
+                className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-50 px-3 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-200 hover:bg-brand-100"
               >
                 <span aria-hidden="true" className="size-1.5 rounded-full bg-brand-500" />
                 {count} live {count === 1 ? 'order' : 'orders'}

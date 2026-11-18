@@ -140,7 +140,7 @@ function RestaurantRow({ r, fmt, onSuspend, onReactivate, busy }) {
 }
 
 export default function Platform() {
-  useDocumentTitle('Platform');
+  useDocumentTitle('Owner console');
   const { vendor } = useAuth();
   const toast = useToast();
   const fmt = useFmt();
@@ -198,8 +198,8 @@ export default function Platform() {
   return (
     <>
       <PageHeader
-        title="Platform"
-        description="Every restaurant on the product. Suspend one to stop it signing in and taking orders."
+        title="Restaurants"
+        description="Every restaurant on MezMitra. Suspend one to stop it signing in and taking orders."
         actions={
           <>
             <span className="text-xs text-slate-500">{list.updatedAt ? `Updated ${fmt.clock(list.updatedAt)}` : 'Updating…'}</span>

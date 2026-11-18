@@ -80,7 +80,7 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (your admin and customer URLs). |
 | `CUSTOMER_APP_URL` | Public URL of the customer app. It is the base of every table QR link. |
 | `ALLOW_SIGNUP` | `false` to stop new restaurants signing up. |
-| `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get **Platform** in the admin sidebar: every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
+| `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get the **Owner console** (`/owner`, linked from the sidebar): every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
 | `SMTP_URL`, `MAIL_FROM` | Email for password reset. `SMTP_URL` is any provider's SMTP address, e.g. `smtps://user:app-password@smtp.gmail.com:465` (Gmail needs an *app password*). Empty = no email is sent; in development the email is printed in the API console instead. |
 | `ADMIN_APP_URL` | Public URL of the admin site (default `http://localhost:5180`): the base of the link inside the reset email. |
 | `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, `cashfree`, `phonepe`, `paytm`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay,phonepe,paytm` to bring the others back. |
@@ -126,8 +126,10 @@ Add `--email you@x.in` to use another restaurant.
 ## Platform owner (all restaurants)
 
 Sign up an account of your own (Admin -> Sign up), put its email in `SUPER_ADMIN_EMAILS` and restart the API. That account now has
-**Platform -> All restaurants** in the sidebar: every restaurant with its orders, paid revenue, tables, dishes and whether it has a UPI
-ID, search and filters, and **Suspend / Reactivate**. A suspended restaurant cannot sign in (it sees your optional reason), its admin
+the **Owner console** at `/owner` (a link above "Sign out" in the sidebar; old `/platform` links land there). It is a separate area with
+its own dark header and an "Owner" mark, not part of a restaurant's admin, and it has a link back to the account's own restaurant admin.
+It lists every restaurant with its orders, paid revenue, tables, dishes and whether it has a UPI
+ID, search and filters, and **Suspend / Reactivate**. Everyone else who opens `/owner` is sent back to their own admin. A suspended restaurant cannot sign in (it sees your optional reason), its admin
 API is refused on the very next request, and its tables stop taking orders; its data is kept and reactivating restores everything.
 Platform owner accounts cannot be suspended. Removing an email from `SUPER_ADMIN_EMAILS` removes the access.
 

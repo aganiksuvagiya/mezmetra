@@ -1,5 +1,6 @@
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell.jsx';
+import OwnerShell from './components/OwnerShell.jsx';
 import { Button } from './components/Button.jsx';
 import { ToastProvider } from './components/Toast.jsx';
 import { LoadingBlock } from './components/Spinner.jsx';
@@ -102,6 +103,18 @@ export default function App() {
             <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
             <Route path="/forgot-password" element={<GuestOnly><ForgotPassword /></GuestOnly>} />
             <Route path="/reset-password" element={<GuestOnly><ResetPassword /></GuestOnly>} />
+            {/* The owner console: separate from a restaurant's admin (own layout); only the platform owner gets in. */}
+            <Route
+              path="owner"
+              element={
+                <RequireAuth>
+                  <OwnerShell />
+                </RequireAuth>
+              }
+            >
+              <Route index element={<Platform />} />
+              <Route path="*" element={<Navigate to="/owner" replace />} />
+            </Route>
             <Route
               element={
                 <RequireAuth>
@@ -119,7 +132,8 @@ export default function App() {
               <Route path="payments" element={<Payments />} />
               <Route path="reports" element={<Reports />} />
               <Route path="appearance" element={<Appearance />} />
-              <Route path="platform" element={<Platform />} />
+              {/* The owner console moved to /owner (its own area); old links to /platform land there. */}
+              <Route path="platform" element={<Navigate to="/owner" replace />} />
               <Route path="settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />
             </Route>
