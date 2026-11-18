@@ -9,8 +9,19 @@ export default function RevenueChart({ days }) {
   const max = Math.max(0, ...days.map((d) => Number(d.revenue) || 0));
 
   return (
-    <figure>
-      <ul className="grid grid-cols-7 gap-1.5 sm:gap-4" aria-label="Revenue for each of the last 7 days">
+    <figure className="relative">
+      {/* Faint guide lines (a quarter of the height apart), so a bar's height can be judged by eye. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-[calc(12rem-1px)]"
+        style={{ backgroundImage: 'linear-gradient(to bottom, transparent calc(100% - 1px), var(--color-slate-100) 0)', backgroundSize: '100% 25%' }}
+      />
+      {max === 0 && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 grid h-48 place-items-center px-4 text-center">
+          <p className="rounded-lg bg-white/90 px-3 py-1.5 text-sm text-slate-500">No paid orders in the last 7 days yet.</p>
+        </div>
+      )}
+      <ul className="relative grid grid-cols-7 gap-1.5 sm:gap-4" aria-label="Revenue for each of the last 7 days">
         {days.map((d, i) => {
           const value = Number(d.revenue) || 0;
           const isToday = i === days.length - 1;

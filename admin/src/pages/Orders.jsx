@@ -35,7 +35,14 @@ const countFor = async (status) => Number((await apiPage('/api/admin/orders', { 
 
 function OrderRow({ order, fresh, fmt, onOpen, selected }) {
   return (
-    <li className={cx(fresh && 'animate-flash', selected && 'bg-brand-50/70 shadow-[inset_3px_0_0_var(--color-brand-600)]')}>
+    <li
+      className={cx(
+        fresh && 'animate-flash',
+        // An order waiting to be accepted gets an amber edge, so what needs staff next stands out in the list.
+        !selected && order.status === 'pending' && 'shadow-[inset_3px_0_0_var(--color-amber-400)]',
+        selected && 'bg-brand-50/70 shadow-[inset_3px_0_0_var(--color-brand-600)]',
+      )}
+    >
       <button
         type="button"
         onClick={() => onOpen(order.id)}

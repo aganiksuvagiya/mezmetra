@@ -1,6 +1,6 @@
 import NotificationsPanel from './NotificationsPanel.jsx';
 import RequestsBanner from './RequestsBanner.jsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { LiveOrdersProvider, useLiveOrders } from '../context/LiveOrdersContext.jsx';
@@ -59,8 +59,10 @@ function NavItem({ to, label, icon: Icon, live }) {
       end
       className={({ isActive }) =>
         cx(
-          'group flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors lg:h-10',
-          isActive ? 'bg-brand-50 text-brand-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+          'group relative flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors lg:h-10',
+          isActive
+            ? 'bg-brand-50 font-semibold text-brand-800 before:absolute before:inset-y-2 before:-left-3 before:w-1 before:rounded-r-full before:bg-brand-600'
+            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
         )
       }
     >
@@ -81,14 +83,15 @@ function NavItem({ to, label, icon: Icon, live }) {
 }
 
 /** Switch for the new-order chime. Browsers only allow sound after a click, which is why this is a button and not a setting. */
-function SoundToggle({ compact = false }) {
+function SoundToggle({ pill = false }) {
   const { sound } = useLiveOrders();
   if (!sound.supported) return null;
   const waiting = sound.on && !sound.ready;
   const Icon = sound.on ? VolumeIcon : VolumeOffIcon;
   const label = waiting ? 'New-order sound: click to enable' : sound.on ? 'New-order sound is on. Click to turn off.' : 'New-order sound is off. Click to turn on.';
+  const tone = waiting ? 'text-amber-700' : sound.on ? 'text-brand-600' : 'text-slate-400';
 
-  if (compact) {
+  if (!pill) {
     return (
       <button
         type="button"
@@ -97,10 +100,7 @@ function SoundToggle({ compact = false }) {
         aria-pressed={sound.on}
         aria-label={label}
         title={label}
-        className={cx(
-          'inline-flex size-10 items-center justify-center rounded-lg hover:bg-slate-100',
-          waiting ? 'text-amber-600' : sound.on ? 'text-brand-600' : 'text-slate-400',
-        )}
+        className={cx('inline-flex size-10 items-center justify-center rounded-lg hover:bg-slate-100', tone)}
       >
         <Icon size={20} />
       </button>
@@ -113,18 +113,17 @@ function SoundToggle({ compact = false }) {
       onClick={sound.toggle}
       aria-pressed={sound.on}
       title={label}
-      className="mb-1 flex h-10 w-full items-center gap-2.5 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+      className={cx(
+        'inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ring-1 ring-inset transition-colors',
+        waiting
+          ? 'bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100'
+          : sound.on
+            ? 'bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100'
+            : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50',
+      )}
     >
-      <Icon size={18} className={sound.on ? 'text-brand-600' : 'text-slate-400'} />
-      <span className="flex-1 whitespace-nowrap text-left">New-order sound</span>
-      <span
-        className={cx(
-          'rounded-full px-2 py-0.5 text-xs font-semibold',
-          waiting ? 'bg-amber-100 text-amber-800' : sound.on ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500',
-        )}
-      >
-        {waiting ? 'Enable' : sound.on ? 'On' : 'Off'}
-      </span>
+      <Icon size={16} />
+      {waiting ? 'Enable sound' : sound.on ? 'Sound on' : 'Sound off'}
     </button>
   );
 }
@@ -208,15 +207,19 @@ function Sidebar({ onClose, showClose }) {
       </nav>
 
       <div className="shrink-0 border-t border-slate-200 p-3">
-        <div className="mb-2 px-2">
-          <p className="truncate text-sm font-semibold text-slate-900" title={vendor?.name}>
-            {vendor?.name}
-          </p>
-          <p className="truncate text-xs text-slate-500" title={vendor?.email}>
-            {vendor?.email}
-          </p>
+        <div className="mb-2 flex items-center gap-3 rounded-xl bg-slate-50 p-2.5">
+          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+            {(vendor?.name ?? '?').trim().charAt(0).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900" title={vendor?.name}>
+              {vendor?.name}
+            </p>
+            <p className="truncate text-xs text-slate-500" title={vendor?.email}>
+              {vendor?.email}
+            </p>
+          </div>
         </div>
-        <SoundToggle />
         <button
           type="button"
           onClick={logout}
@@ -238,6 +241,12 @@ function Shell() {
   const hamburgerRef = useRef(null);
   const { count } = useLiveOrders();
   const { open: panelDocked } = useSidePanelSpace();
+  const { vendor } = useAuth();
+  // "Thursday, 19 November" in the restaurant's own time zone.
+  const today = useMemo(
+    () => new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: vendor?.timezone || undefined }).format(new Date()),
+    [vendor?.timezone],
+  );
 
   // Navigating closes the drawer (and moves focus to the new page, since the link that was clicked is now hidden);
   // so does growing the window past the breakpoint.
@@ -348,19 +357,34 @@ function Shell() {
                 <span className="sr-only min-[420px]:not-sr-only">{count === 1 ? 'order' : 'orders'}</span>
               </Link>
             )}
-            <SoundToggle compact />
-            <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen(true)} />
+            <SoundToggle />
+            <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen((v) => !v)} />
           </div>
         </header>
 
         {/* On a wide screen there is no top bar (the sidebar carries the menu), so the bell gets a slim one of its own. */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-1 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
-          <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen(true)} />
+        <div className="sticky top-0 z-20 hidden h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
+          <p className="text-sm font-medium text-slate-500">{today}</p>
+          <div className="ml-auto flex items-center gap-2">
+            {count > 0 && (
+              <Link
+                to="/orders"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-50 px-3 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-200 hover:bg-brand-100"
+              >
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-brand-500" />
+                {count} live {count === 1 ? 'order' : 'orders'}
+              </Link>
+            )}
+            <SoundToggle pill />
+            <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen((v) => !v)} />
+          </div>
         </div>
 
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8 print:max-w-none print:p-0">
-          <RequestsBanner />
-          <Outlet />
+          <div key={location.pathname} className="animate-fade-in">
+            <RequestsBanner />
+            <Outlet />
+          </div>
         </main>
       </div>
       {notificationsOpen && <NotificationsPanel onClose={() => setNotificationsOpen(false)} />}
