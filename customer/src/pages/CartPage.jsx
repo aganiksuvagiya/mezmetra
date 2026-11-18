@@ -12,7 +12,7 @@ import { ApiError, createOrder, errorMessage } from '../lib/api';
 import { buildOrderBody, describeDropped, lineTotalPaise, MAX_NOTE } from '../lib/cart';
 import { clearIdempotencyKey, idempotencyKeyFor } from '../lib/idempotency';
 import { formatMoney, formatPaise } from '../lib/money';
-import { rememberOrder } from '../lib/orderMemory';
+import { recordOrder, rememberOrder } from '../lib/orderMemory';
 import { getItem, getJSON, removeItem, setItem, setJSON } from '../lib/storage';
 import { useTable } from '../lib/tableContext';
 import { usePageTitle } from '../lib/usePageTitle';
@@ -105,6 +105,7 @@ export default function CartPage() {
       if (showCode && tableCode) setItem(codeKey(token), tableCode); // the next order from this table needs no retyping
       setPlaced(true);
       rememberOrder(token, order.token);
+      recordOrder(order, token);
       clearIdempotencyKey(token);
       removeItem(checkoutKey(token));
       cart.clear();

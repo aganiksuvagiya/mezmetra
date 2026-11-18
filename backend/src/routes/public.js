@@ -210,11 +210,21 @@ export function publicRouter(db, { orderLimiter }) {
   // --- Call the waiter / ask for the bill ------------------------------------------------------------------------
   const requestSchema = z.object({ kind: z.enum(['waiter', 'bill']) });
 
+  // Which requests of this table are open, and since when. `*_since` lets each phone tell "the request I made" from one somebody else
+  // at this table made (or an old one nobody dealt with), so a newcomer's buttons do not claim the waiter was called for them.
+  const openRequests = async (q, tableId) => {
+    const { rows } = await q.query(`SELECT kind, created_at FROM service_requests WHERE table_id = $1 AND resolved_at IS NULL`, [tableId]);
+    const since = (kind) => {
+      const r = rows.find((x) => x.kind === kind);
+      return r ? new Date(r.created_at).toISOString() : null;
+    };
+    return { waiter: since('waiter') !== null, bill: since('bill') !== null, waiter_since: since('waiter'), bill_since: since('bill') };
+  };
+
   // Which requests of this table are open, so the buttons can show "Waiter called" after a reload.
   router.get('/t/:token/requests', async (req, res) => {
     const table = await tableByToken(db, req.params.token);
-    const { rows } = await db.query(`SELECT kind FROM service_requests WHERE table_id = $1 AND resolved_at IS NULL`, [table.id]);
-    res.json({ data: { waiter: rows.some((r) => r.kind === 'waiter'), bill: rows.some((r) => r.kind === 'bill') } });
+    res.json({ data: await openRequests(db, table.id) });
   });
 
   // One open request of each kind per table: tapping again just reports the one already waiting.
@@ -226,10 +236,7 @@ export function publicRouter(db, { orderLimiter }) {
       `INSERT INTO service_requests (vendor_id, table_id, kind) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id`,
       [table.vendor_id, table.id, kind],
     );
-    const { rows } = await db.query(`SELECT kind FROM service_requests WHERE table_id = $1 AND resolved_at IS NULL`, [table.id]);
-    res.status(inserted.rows[0] ? 201 : 200).json({
-      data: { kind, already_asked: !inserted.rows[0], waiter: rows.some((r) => r.kind === 'waiter'), bill: rows.some((r) => r.kind === 'bill') },
-    });
+    res.status(inserted.rows[0] ? 201 : 200).json({ data: { kind, already_asked: !inserted.rows[0], ...(await openRequests(db, table.id)) } });
   });
 
   // --- Place an order -----------------------------------------------------------------------------------------

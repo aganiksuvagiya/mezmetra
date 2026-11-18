@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getOrder, isAbort } from './api';
-import { forgetLastOrder, getLastOrder, isFinished } from './orderMemory';
+import { forgetLastOrder, getLastOrder, isFinished, recordOrder } from './orderMemory';
 
 // Remember the last answer per table so coming back from the cart does not make the banner pop in again.
 const cache = new Map();
@@ -34,6 +34,7 @@ export function useActiveOrder(tableToken) {
           forgetLastOrder(tableToken, token);
           update(null);
         } else {
+          recordOrder(order, tableToken); // an order placed before the "recent orders" list existed joins it here
           update({ token, order });
         }
       })

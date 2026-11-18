@@ -1786,7 +1786,7 @@ describe('call the waiter / ask for the bill', () => {
 
   it('has nothing open to begin with', async () => {
     assert.deepEqual((await open()).body.data, []);
-    assert.deepEqual((await api('GET', `/api/public/t/${qr}/requests`)).body.data, { waiter: false, bill: false });
+    assert.deepEqual((await api('GET', `/api/public/t/${qr}/requests`)).body.data, { waiter: false, bill: false, waiter_since: null, bill_since: null });
   });
 
   it('lets a diner call the waiter and ask for the bill, and staff see both', async () => {
@@ -1799,7 +1799,11 @@ describe('call the waiter / ask for the bill', () => {
     assert.equal(b.body.data.bill, true);
     const list = (await open()).body.data;
     assert.deepEqual(list.map((r) => [r.kind, r.table_number]), [['waiter', 'W1'], ['bill', 'W1']]);
-    assert.deepEqual((await api('GET', `/api/public/t/${qr}/requests`)).body.data, { waiter: true, bill: true });
+    const state = (await api('GET', `/api/public/t/${qr}/requests`)).body.data;
+    assert.equal(state.waiter, true);
+    assert.equal(state.bill, true);
+    assert.match(state.waiter_since, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(w.body.data.waiter_since, state.waiter_since, 'the asker is told which request is theirs');
   });
 
   it('does not pile up when the diner taps again', async () => {
@@ -1807,6 +1811,13 @@ describe('call the waiter / ask for the bill', () => {
     assert.equal(again.status, 200);
     assert.equal(again.body.data.already_asked, true);
     assert.equal((await open()).body.data.length, 2);
+  });
+
+  it('tells a second diner at the same table which request is already open, so each phone can tell its own', async () => {
+    const before = (await api('GET', `/api/public/t/${qr}/requests`)).body.data;
+    const newcomer = await ask('waiter');
+    assert.equal(newcomer.body.data.already_asked, true);
+    assert.equal(newcomer.body.data.waiter_since, before.waiter_since, 'same request, same timestamp: nothing new is created');
   });
 
   it('refuses anything that is not one of the two kinds, or an unknown table', async () => {

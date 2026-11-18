@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import Alert from './Alert';
 import BottomSheet from './BottomSheet';
 import { Button } from './Button';
+import { CloseIcon } from './Icons';
 import { useToast } from './Toast';
 import { ApiError, cancelOrder, errorMessage } from '../lib/api';
 
@@ -47,15 +48,17 @@ export default function CancelOrder({ order, onCancelled, onRefresh }) {
 
   return (
     <>
-      <div className="text-center">
+      <section aria-label="Cancel this order" className="space-y-2 border-t border-line pt-4 text-center">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="min-h-11 rounded-full px-5 text-[15px] font-bold text-rose-700 hover:bg-rose-50 active:bg-rose-100"
+          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-white px-5 text-[15px] font-bold text-rose-700 transition-colors hover:bg-rose-50 active:bg-rose-100"
         >
+          <CloseIcon className="size-5" />
           Cancel order
         </button>
-      </div>
+        <p className="text-xs text-ink-soft">You can cancel until the kitchen accepts your order.</p>
+      </section>
 
       {open && (
         <BottomSheet

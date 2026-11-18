@@ -6,11 +6,13 @@ import EmptyState from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { CardIcon, CashIcon, ChevronRightIcon, CloseIcon, MenuBookIcon, PhoneIcon, SearchIcon } from '../components/Icons';
 import ItemSheet from '../components/ItemSheet';
+import RecentOrders from '../components/RecentOrders';
 import ServiceButtons from '../components/ServiceButtons';
 import VendorMark from '../components/VendorMark';
 import { useToast } from '../components/Toast';
 import { buildLine, lineKey, MAX_LINES, MAX_QTY } from '../lib/cart';
 import { useActiveOrder } from '../lib/useActiveOrder';
+import { useRecentOrders } from '../lib/useRecentOrders';
 import { useTable } from '../lib/tableContext';
 import { usePageTitle } from '../lib/usePageTitle';
 import { formatMoney } from '../lib/money';
@@ -31,6 +33,7 @@ export default function MenuPage() {
   const { token, menu, cart } = useTable();
   const toast = useToast();
   const activeOrder = useActiveOrder(token);
+  const recentOrders = useRecentOrders(menu.vendor.name);
   const [openItem, setOpenItem] = useState(null);
   const [query, setQuery] = useState('');
   const [activeId, setActiveId] = useState(null);
@@ -270,6 +273,8 @@ export default function MenuPage() {
           </Link>
         </div>
       )}
+
+      {!searching && <RecentOrders orders={recentOrders} tableToken={token} />}
 
       {!searching && chips.length > 1 && (
         <nav aria-label="Menu categories" className="sticky top-0 z-20 mt-3 border-b border-black/10 bg-page/80 backdrop-blur-xl backdrop-saturate-150">

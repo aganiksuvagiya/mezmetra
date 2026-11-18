@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import Alert from '../components/Alert';
 import BillSummary from '../components/BillSummary';
 import { Button, LinkButton } from '../components/Button';
 import CancelOrder from '../components/CancelOrder';
 import EmptyState from '../components/EmptyState';
-import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, MenuBookIcon, QrIcon } from '../components/Icons';
+import { AlertIcon, CheckIcon, ClockIcon, CloseIcon, MenuBookIcon, PlusIcon, QrIcon } from '../components/Icons';
 import OrderItems from '../components/OrderItems';
 import PaymentCard from '../components/PaymentCard';
 import ServiceButtons from '../components/ServiceButtons';
@@ -15,7 +15,7 @@ import VendorMark from '../components/VendorMark';
 import { errorMessage } from '../lib/api';
 import { alertOrderReady } from '../lib/readyAlert';
 import { TABLE_TOKEN_RE } from '../lib/ids';
-import { forgetLastOrder, isFinished, tableForOrder } from '../lib/orderMemory';
+import { dropRecentOrder, forgetLastOrder, isFinished, recordOrder, tableForOrder } from '../lib/orderMemory';
 import { applyTheme } from '../lib/theme';
 import { formatTime } from '../lib/time';
 import { useOrder } from '../lib/useOrder';
@@ -66,6 +66,14 @@ function OrderView({ orderToken }) {
   useEffect(() => {
     if (order && tableToken && isFinished(order)) forgetLastOrder(tableToken, orderToken);
   }, [order, tableToken, orderToken]);
+
+  // Keep this phone's "recent orders" list true as the order moves along (or forget it once the restaurant no longer has it).
+  useEffect(() => {
+    if (order) recordOrder(order, tableToken);
+  }, [order?.token, order?.status, order?.payment_status, order?.ready_at, tableToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (state.status === 'notfound') dropRecentOrder(orderToken);
+  }, [state.status, orderToken]);
 
   if (state.status === 'loading') return <OrderSkeleton />;
 
@@ -187,22 +195,20 @@ function OrderView({ orderToken }) {
 
         <PaymentCard order={order} onPaid={applyOrder} onRefresh={refresh} />
 
-        {tableToken && !cancelled && <ServiceButtons tableToken={tableToken} className="justify-center" />}
+        {/* What next: the one main action first, then the two "help" buttons side by side, then (only while it is allowed) the quiet cancel. */}
+        <section aria-label="What next" className="space-y-3">
+          {tableToken ? (
+            <LinkButton to={`/t/${tableToken}`} variant="secondary" block className="!rounded-2xl">
+              <PlusIcon className="size-5" />
+              Order more
+            </LinkButton>
+          ) : (
+            <p className="text-center text-sm text-ink-soft">To order more, scan the QR code on your table again.</p>
+          )}
+          {tableToken && !cancelled && <ServiceButtons tableToken={tableToken} grid />}
+        </section>
 
         {order.can_cancel && <CancelOrder order={order} onCancelled={applyOrder} onRefresh={refresh} />}
-
-        <div className="pt-2 text-center">
-          {tableToken ? (
-            <Link
-              to={`/t/${tableToken}`}
-              className="surface inline-flex min-h-12 items-center justify-center !rounded-full px-7 text-base font-bold text-brand-700 hover:bg-brand-50"
-            >
-              Order more
-            </Link>
-          ) : (
-            <p className="text-sm text-ink-soft">To order more, scan the QR code on your table again.</p>
-          )}
-        </div>
       </div>
     </main>
   );
