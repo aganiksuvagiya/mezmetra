@@ -1,3 +1,4 @@
+import NotificationsPanel from './NotificationsPanel.jsx';
 import RequestsBanner from './RequestsBanner.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -8,7 +9,6 @@ import { useMediaQuery } from '../lib/hooks.js';
 import { SidePanelProvider, useSidePanelSpace } from '../context/SidePanelContext.jsx';
 import {
   BellIcon,
-  BellOffIcon,
   CardIcon,
   CloseIcon,
   DashboardIcon,
@@ -24,6 +24,8 @@ import {
   TableIcon,
   TagIcon,
   TrendingIcon,
+  VolumeIcon,
+  VolumeOffIcon,
 } from './icons.jsx';
 
 const NAV = [
@@ -83,7 +85,7 @@ function SoundToggle({ compact = false }) {
   const { sound } = useLiveOrders();
   if (!sound.supported) return null;
   const waiting = sound.on && !sound.ready;
-  const Icon = sound.on ? BellIcon : BellOffIcon;
+  const Icon = sound.on ? VolumeIcon : VolumeOffIcon;
   const label = waiting ? 'New-order sound: click to enable' : sound.on ? 'New-order sound is on. Click to turn off.' : 'New-order sound is off. Click to turn on.';
 
   if (compact) {
@@ -123,6 +125,37 @@ function SoundToggle({ compact = false }) {
       >
         {waiting ? 'Enable' : sound.on ? 'On' : 'Off'}
       </span>
+    </button>
+  );
+}
+
+/** The notification bell: how many things are waiting for staff (orders to accept, customers calling, UPI payments to confirm). */
+function NotificationBell({ onOpen, open }) {
+  const { notifications } = useLiveOrders();
+  const n = notifications.length;
+  const label = n > 0 ? `Notifications: ${n} waiting for you` : 'Notifications: nothing waiting';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={label}
+      title={label}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className={cx(
+        'relative inline-flex size-10 items-center justify-center rounded-lg hover:bg-slate-100',
+        n > 0 ? 'text-slate-800' : 'text-slate-500',
+      )}
+    >
+      <BellIcon size={21} />
+      {n > 0 && (
+        <span
+          aria-hidden="true"
+          className="absolute right-0 top-0 min-w-[1.15rem] rounded-full bg-red-600 px-1 text-center text-[11px] font-bold leading-[1.15rem] text-white ring-2 ring-white"
+        >
+          {n > 9 ? '9+' : n}
+        </span>
+      )}
     </button>
   );
 }
@@ -199,6 +232,7 @@ function Sidebar({ onClose, showClose }) {
 
 function Shell() {
   const [open, setOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const location = useLocation();
   const hamburgerRef = useRef(null);
@@ -307,21 +341,29 @@ function Shell() {
             {count > 0 && (
               <Link
                 to="/orders"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-brand-50 px-3 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-200"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-50 px-3 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-200"
               >
                 <span aria-hidden="true" className="size-1.5 rounded-full bg-brand-500" />
-                {count} live {count === 1 ? 'order' : 'orders'}
+                {count} live
+                <span className="sr-only min-[420px]:not-sr-only">{count === 1 ? 'order' : 'orders'}</span>
               </Link>
             )}
             <SoundToggle compact />
+            <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen(true)} />
           </div>
         </header>
+
+        {/* On a wide screen there is no top bar (the sidebar carries the menu), so the bell gets a slim one of its own. */}
+        <div className="sticky top-0 z-20 hidden h-14 items-center justify-end gap-1 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
+          <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen(true)} />
+        </div>
 
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8 print:max-w-none print:p-0">
           <RequestsBanner />
           <Outlet />
         </main>
       </div>
+      {notificationsOpen && <NotificationsPanel onClose={() => setNotificationsOpen(false)} />}
     </div>
   );
 }

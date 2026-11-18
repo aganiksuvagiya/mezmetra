@@ -149,7 +149,7 @@ export default function Modal({
         className={cx(
           'relative flex w-full flex-col overflow-hidden bg-white shadow-2xl outline-none',
           drawer
-            ? cx('h-dvh sm:rounded-l-2xl', leaving ? 'animate-slide-out' : 'animate-slide-in', drawerSizes[size])
+            ? cx('h-dvh', leaving ? 'animate-slide-out' : 'animate-slide-in', drawerSizes[size])
             : cx('max-h-[92dvh] animate-pop-in rounded-t-2xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl', sizes[size]),
         )}
       >

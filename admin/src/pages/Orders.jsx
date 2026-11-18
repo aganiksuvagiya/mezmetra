@@ -90,8 +90,11 @@ export default function Orders() {
   const term = useDebouncedValue(search.trim());
 
   // `?order=12` (from the dashboard) opens that order once; drop the parameter so Back/refresh don't reopen it.
+  // Also when this page is already open (a notification opening an order): the parameter is read whenever it shows up.
+  const orderParam = params.get('order');
   useEffect(() => {
-    if (!params.has('order')) return;
+    if (!orderParam) return;
+    setSelectedId(Number(orderParam) || null);
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -101,7 +104,7 @@ export default function Orders() {
       { replace: true },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [orderParam]);
 
   const setTab = (value) => {
     setParams(value === 'active' ? {} : { status: value }, { replace: true });

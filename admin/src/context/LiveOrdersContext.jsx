@@ -12,6 +12,7 @@ const LiveOrdersContext = createContext({
   pending: 0,
   arrivals: 0,
   requests: [],
+  notifications: [],
   resolveRequest: noop,
   reload: noop,
   sound: { supported: false, on: false, ready: false, toggle: noop },
@@ -45,6 +46,19 @@ export function LiveOrdersProvider({ children }) {
   // Diners calling the waiter / asking for the bill.
   const rq = useQuery(() => api('/api/admin/requests'), [], { interval: POLL_MS, pollInBackground: true });
   const requests = rq.data ?? [];
+
+  // Everything that is waiting for staff right now, newest first: customers calling, orders to accept, UPI payments to confirm.
+  // Each disappears by itself once it is dealt with, so this is a to-do list, not a history.
+  const notifications = useMemo(() => {
+    const list = requests.map((r) => ({ key: `request-${r.id}`, type: r.kind === 'bill' ? 'bill' : 'waiter', at: r.created_at, requestId: r.id, table: r.table_number }));
+    for (const o of rows ?? []) {
+      if (o.status === 'pending') list.push({ key: `order-${o.id}`, type: 'order', at: o.created_at, order: o });
+      if (o.payment_status === 'unpaid' && o.payment_claim && o.status !== 'cancelled') {
+        list.push({ key: `claim-${o.id}`, type: 'claim', at: o.payment_claim.claimed_at ?? o.created_at, order: o });
+      }
+    }
+    return list.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  }, [requests, rows]);
 
   const [soundOn, setSoundOn] = useState(readSoundPref);
   const [soundReady, setSoundReady] = useState(audioRunning);
@@ -192,11 +206,12 @@ export function LiveOrdersProvider({ children }) {
       pending,
       arrivals,
       requests,
+      notifications,
       resolveRequest,
       reload: q.reload,
       sound: { supported: soundSupported(), on: soundOn, ready: soundReady, toggle: toggleSound },
     }),
-    [count, pending, arrivals, requests, resolveRequest, q.reload, soundOn, soundReady, toggleSound],
+    [count, pending, arrivals, requests, notifications, resolveRequest, q.reload, soundOn, soundReady, toggleSound],
   );
   return <LiveOrdersContext value={value}>{children}</LiveOrdersContext>;
 }

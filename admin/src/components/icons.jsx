@@ -48,6 +48,18 @@ export const BellOffIcon = make(
     <path d="m2 2 20 20" />
   </>,
 );
+export const VolumeIcon = make(
+  <>
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" />
+  </>,
+);
+export const VolumeOffIcon = make(
+  <>
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="m22 9-6 6M16 9l6 6" />
+  </>,
+);
 export const DashboardIcon = make(
   <>
     <rect x="3" y="3" width="7" height="9" rx="1.5" />
