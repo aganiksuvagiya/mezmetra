@@ -248,14 +248,14 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
 
     if (main.length || order.receipt_url || canCancel || canRefund || waitingForPayment) {
       footer = (
-        <div className="grid w-full gap-2.5">
+        <div className="@container grid w-full gap-2.5">
           {waitingForPayment && (
             <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-slate-600">
               <InfoIcon size={16} className="text-slate-400" />
               {cashOffered ? 'Record the payment first, then complete the order' : 'Confirm the payment first, then complete the order'}
             </p>
           )}
-          {main.length > 0 && <div className={main.length > 1 ? 'grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 [&>button]:w-full' : '[&>button]:w-full'}>{main}</div>}
+          {main.length > 0 && <div className={main.length > 1 ? 'grid grid-cols-1 gap-2.5 @[26rem]:grid-cols-2 [&>button]:w-full' : '[&>button]:w-full'}>{main}</div>}
           {order.receipt_url && (
             <Button variant="secondary" icon={ReceiptIcon} busy={pending === 'receipt'} disabled={busy} onClick={openReceipt} className="w-full">
               View receipt
