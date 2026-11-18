@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Button } from './Button.jsx';
 import { Card, CardHeader } from './Card.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 import { ImageIcon, UploadIcon } from './icons.jsx';
 import { useToast } from './Toast.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -15,6 +16,7 @@ export default function LogoCard() {
   const [busy, setBusy] = useState(null); // 'upload' | 'remove' | null
   const [error, setError] = useState(null);
   const [brokenUrl, setBrokenUrl] = useState(null);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const shown = vendor.logo_url && brokenUrl !== vendor.logo_url ? apiUrl(vendor.logo_url) : null;
 
   const pick = async (e) => {
@@ -35,17 +37,12 @@ export default function LogoCard() {
     }
   };
 
+  // Asked first (ConfirmDialog): a failure is shown inside that dialog, which stays open.
   const remove = async () => {
     setError(null);
-    setBusy('remove');
-    try {
-      updateVendor(await api('/api/admin/vendor/logo', { method: 'DELETE' }));
-      toast.success('Logo removed.');
-    } catch (err) {
-      setError(err.message || 'Could not remove the logo.');
-    } finally {
-      setBusy(null);
-    }
+    updateVendor(await api('/api/admin/vendor/logo', { method: 'DELETE' }));
+    setConfirmingRemove(false);
+    toast.success('Logo removed.');
   };
 
   return (
@@ -66,7 +63,7 @@ export default function LogoCard() {
               {busy === 'upload' ? 'Uploading…' : shown ? 'Replace logo' : 'Upload logo'}
             </Button>
             {shown && (
-              <Button variant="danger-outline" size="sm" busy={busy === 'remove'} disabled={busy !== null} onClick={remove}>
+              <Button variant="danger-outline" size="sm" disabled={busy !== null} onClick={() => setConfirmingRemove(true)}>
                 Remove logo
               </Button>
             )}
@@ -81,6 +78,14 @@ export default function LogoCard() {
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmingRemove}
+        title="Remove your logo?"
+        message="Diners will see your restaurant's name without a logo. You can upload a new one any time."
+        confirmLabel="Remove logo"
+        onConfirm={remove}
+        onCancel={() => setConfirmingRemove(false)}
+      />
     </Card>
   );
 }

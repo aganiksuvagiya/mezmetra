@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Alert from '../components/Alert';
+import ConfirmSheet from '../components/ConfirmSheet';
 import { Button, LinkButton } from '../components/Button';
 import DishImage from '../components/DishImage';
 import EmptyState from '../components/EmptyState';
@@ -77,6 +78,8 @@ export default function CartPage() {
   const taxPaise = Math.round((subtotalPaise * taxPercent) / 100); // same rounding as the server
   const totalPaise = subtotalPaise + taxPaise;
 
+  // The Remove button asks first; once confirmed the dish goes (and the toast still offers Undo).
+  const [removing, setRemoving] = useState(null);
   const removeLine = (line) => {
     const undo = cart.remove(line.key);
     if (undo) toast.show(`${line.name} removed from your cart`, { action: { label: 'Undo', onClick: () => cart.restore(undo) } });
@@ -234,7 +237,7 @@ export default function CartPage() {
                       <QuantityStepper value={line.quantity} onChange={(q) => cart.setQuantity(line.key, q)} label={line.name} />
                       <button
                         type="button"
-                        onClick={() => removeLine(line)}
+                        onClick={() => setRemoving(line)}
                         aria-label={`Remove ${line.name} from cart`}
                         className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-2.5 text-sm font-bold text-rose-700 hover:bg-rose-50"
                       >
@@ -378,6 +381,20 @@ export default function CartPage() {
             {pending ? 'Placing your order' : ''}
           </p>
         </div>
+      )}
+
+      {removing && (
+        <ConfirmSheet
+          title={`Remove ${removing.name}?`}
+          message="It will be taken out of your cart. You can add it again from the menu."
+          confirmLabel="Yes, remove it"
+          cancelLabel="Keep it"
+          onCancel={() => setRemoving(null)}
+          onConfirm={() => {
+            removeLine(removing);
+            setRemoving(null);
+          }}
+        />
       )}
     </main>
   );

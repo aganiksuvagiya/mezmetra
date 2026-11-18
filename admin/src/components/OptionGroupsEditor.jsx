@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { emptyGroup, emptyOption, MAX_GROUPS, MAX_OPTIONS } from '../lib/optionGroups.js';
 import { Button, IconButton } from './Button.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 import { Checkbox, Input } from './Field.jsx';
 import { PlusIcon, TrashIcon } from './icons.jsx';
 
@@ -12,6 +14,26 @@ export default function OptionGroupsEditor({ groups, onChange, errors, disabled 
   const updateGroup = (gi, patch) => onChange(groups.map((g, i) => (i === gi ? { ...g, ...patch } : g)));
   const updateOption = (gi, oi, patch) =>
     updateGroup(gi, { options: groups[gi].options.map((o, i) => (i === oi ? { ...o, ...patch } : o)) });
+
+  // Removing a group or an option that has something typed in it asks first; an empty row just goes.
+  const [removing, setRemoving] = useState(null); // { type: 'group', gi } | { type: 'option', gi, oi }
+  const filled = (option) => Boolean(option.name.trim() || String(option.price).trim());
+  const askRemoveGroup = (gi) => {
+    const g = groups[gi];
+    if (g.name.trim() || g.options.some(filled)) setRemoving({ type: 'group', gi });
+    else onChange(groups.filter((_, i) => i !== gi));
+  };
+  const askRemoveOption = (gi, oi) => {
+    if (filled(groups[gi].options[oi])) setRemoving({ type: 'option', gi, oi });
+    else updateGroup(gi, { options: groups[gi].options.filter((_, i) => i !== oi) });
+  };
+  const confirmRemove = () => {
+    if (removing.type === 'group') onChange(groups.filter((_, i) => i !== removing.gi));
+    else updateGroup(removing.gi, { options: groups[removing.gi].options.filter((_, i) => i !== removing.oi) });
+    setRemoving(null);
+  };
+  const removingGroup = removing ? groups[removing.gi] : null;
+  const removingOption = removing?.type === 'option' ? removingGroup?.options[removing.oi] : null;
 
   return (
     <div className="space-y-3">
@@ -36,7 +58,7 @@ export default function OptionGroupsEditor({ groups, onChange, errors, disabled 
                 maxLength={80}
                 wrapperClassName="min-w-0 flex-1"
               />
-              <IconButton label={`Remove option group ${gi + 1}`} icon={TrashIcon} variant="danger" onClick={() => onChange(groups.filter((_, i) => i !== gi))} className="mt-6" />
+              <IconButton label={`Remove option group ${gi + 1}`} icon={TrashIcon} variant="danger" onClick={() => askRemoveGroup(gi)} className="mt-6" />
             </div>
 
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
@@ -74,7 +96,7 @@ export default function OptionGroupsEditor({ groups, onChange, errors, disabled 
                     icon={TrashIcon}
                     variant="danger"
                     disabled={group.options.length === 1}
-                    onClick={() => updateGroup(gi, { options: group.options.filter((_, i) => i !== oi) })}
+                    onClick={() => askRemoveOption(gi, oi)}
                   />
                 </li>
               ))}
@@ -98,6 +120,19 @@ export default function OptionGroupsEditor({ groups, onChange, errors, disabled 
       <Button variant="secondary" size="sm" icon={PlusIcon} disabled={disabled || groups.length >= MAX_GROUPS} onClick={() => onChange([...groups, emptyGroup()])}>
         Add option group
       </Button>
+
+      <ConfirmDialog
+        open={Boolean(removingGroup)}
+        title={removing?.type === 'group' ? `Remove “${removingGroup?.name.trim() || 'this group'}”?` : `Remove “${removingOption?.name.trim() || 'this option'}”?`}
+        message={
+          removing?.type === 'group'
+            ? `This removes the group and its ${removingGroup?.options.length === 1 ? 'option' : `${removingGroup?.options.length} options`}. Nothing is saved until you save the dish.`
+            : 'Nothing is saved until you save the dish.'
+        }
+        confirmLabel={removing?.type === 'group' ? 'Remove group' : 'Remove option'}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoving(null)}
+      />
     </div>
   );
 }

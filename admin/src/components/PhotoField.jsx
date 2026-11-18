@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../lib/api.js';
 import { formatBytes, prepareImage } from '../lib/image.js';
 import { Button } from './Button.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 import { ImageIcon, UploadIcon } from './icons.jsx';
 
 /**
@@ -16,6 +17,7 @@ export default function PhotoField({ existingUrl, photo, onChange, disabled }) {
   const [error, setError] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [brokenExisting, setBrokenExisting] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   // Preview of the prepared image; revoked when replaced or when the form closes.
   useEffect(() => {
@@ -64,7 +66,7 @@ export default function PhotoField({ existingUrl, photo, onChange, disabled }) {
             {processing ? 'Preparing…' : shown ? 'Replace photo' : 'Choose photo'}
           </Button>
           {shown && !processing && (
-            <Button variant="danger-outline" size="sm" disabled={disabled} onClick={() => { setError(null); onChange({ blob: null, removed: true }); }}>
+            <Button variant="danger-outline" size="sm" disabled={disabled} onClick={() => setConfirmingRemove(true)}>
               Remove photo
             </Button>
           )}
@@ -83,6 +85,18 @@ export default function PhotoField({ existingUrl, photo, onChange, disabled }) {
           </p>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmingRemove}
+        title="Remove this photo?"
+        message="The photo is taken off this dish when you save it."
+        confirmLabel="Remove photo"
+        onConfirm={() => {
+          setError(null);
+          onChange({ blob: null, removed: true });
+          setConfirmingRemove(false);
+        }}
+        onCancel={() => setConfirmingRemove(false)}
+      />
     </div>
   );
 }
