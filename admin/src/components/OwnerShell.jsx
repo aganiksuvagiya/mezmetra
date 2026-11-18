@@ -1,4 +1,4 @@
-import { Link, Navigate, Outlet } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronRightIcon, LogoMark, LogoutIcon } from './icons.jsx';
 
@@ -23,6 +23,19 @@ export default function OwnerShell() {
             </span>
             <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-brand-200 ring-1 ring-inset ring-white/20">Owner</span>
           </Link>
+
+          <nav aria-label="Owner" className="ml-3 hidden items-center sm:flex">
+            <NavLink
+              to="/owner"
+              className={({ isActive }) =>
+                `inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold transition-colors ${
+                  isActive ? 'bg-white/10 text-white' : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                }`
+              }
+            >
+              Restaurants
+            </NavLink>
+          </nav>
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <span className="mr-1 hidden max-w-56 truncate text-xs text-slate-400 md:block" title={vendor.email}>

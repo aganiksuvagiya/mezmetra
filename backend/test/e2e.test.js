@@ -815,6 +815,166 @@ describe('platform owner (super admin)', () => {
   });
 });
 
+describe("owner console: a restaurant's page and the owner's actions", () => {
+  const OWNER = 'owner.console@mezmitra.test';
+  const PASSWORD = 'a-long-enough-password';
+  let ownerToken;
+  let ownerId;
+  const signup = async (name, email) => (await api('POST', '/api/auth/signup', { body: { name, email, password: PASSWORD } })).body.data;
+  const ownerApi = (method, path, body) => api(method, `/api/platform${path}`, { token: ownerToken, body });
+
+  before(async () => {
+    const o = await signup('Console HQ', OWNER);
+    ownerToken = o.token;
+    ownerId = o.vendor.id;
+    config.superAdminEmails = new Set([OWNER]);
+  });
+  after(() => {
+    config.superAdminEmails = new Set();
+  });
+
+  it('is only for the owner', async () => {
+    const other = await signup('Not The Owner', 'not.owner@mezmitra.test');
+    for (const [method, path, body] of [
+      ['GET', `/restaurants/${other.vendor.id}`],
+      ['POST', `/restaurants/${other.vendor.id}/password`, { password: 'another-long-password' }],
+      ['POST', `/restaurants/${other.vendor.id}/login-as`, {}],
+      ['POST', `/restaurants/${other.vendor.id}/delete`, { confirm_name: 'Not The Owner' }],
+    ]) {
+      assert.equal((await api(method, `/api/platform${path}`, { token: other.token, body })).status, 403, `${method} ${path}`);
+      assert.equal((await api(method, `/api/platform${path}`, { body })).status, 401, `${method} ${path} (signed out)`);
+    }
+  });
+
+  it("shows one restaurant's profile, payments and recent orders (never a secret)", async () => {
+    const r = await signup('Detail Cafe', 'detail.cafe@mezmitra.test');
+    const cat = (await api('POST', '/api/admin/categories', { token: r.token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token: r.token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data;
+    const table = (await api('POST', '/api/admin/tables', { token: r.token, body: { number: 'D1', capacity: 2 } })).body.data;
+    const qr = table.qr_url.split('/').pop();
+    await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: item.id, quantity: 2, option_ids: [] }] } });
+
+    const res = await ownerApi('GET', `/restaurants/${r.vendor.id}`);
+    assert.equal(res.status, 200);
+    const d = res.body.data;
+    assert.equal(d.name, 'Detail Cafe');
+    assert.equal(d.email, 'detail.cafe@mezmitra.test');
+    assert.equal(d.status, 'active');
+    assert.equal(d.is_platform_owner, false);
+    assert.equal(d.orders_total, 1);
+    assert.equal(d.tables, 1);
+    assert.equal(d.items, 1);
+    assert.equal(d.categories, 1);
+    assert.equal(d.timezone, 'Asia/Kolkata');
+    assert.equal(d.recent_orders.length, 1);
+    assert.deepEqual([d.recent_orders[0].number, d.recent_orders[0].table_number, d.recent_orders[0].status, d.recent_orders[0].total], [1, 'D1', 'pending', 40]);
+    assert.deepEqual(d.activity, []);
+    const cash = d.payment.find((p) => p.key === 'cash');
+    assert.deepEqual([cash.enabled, cash.configured], [true, true]);
+    assert.equal(d.payment.find((p) => p.key === 'razorpay').configured, false);
+    const text = JSON.stringify(res.body);
+    assert.ok(!/password_hash|secret_enc|key_enc/.test(text), 'no secrets in the answer');
+    assert.equal((await ownerApi('GET', '/restaurants/999999')).status, 404);
+    assert.equal((await ownerApi('GET', '/restaurants/abc')).status, 404);
+  });
+
+  it('sets a new password for a restaurant and signs everyone in it out', async () => {
+    const r = await signup('Locked Out Cafe', 'locked.out@mezmitra.test');
+    assert.equal((await ownerApi('POST', `/restaurants/${r.vendor.id}/password`, { password: 'short' })).status, 400);
+    assert.equal((await ownerApi('POST', `/restaurants/${r.vendor.id}/password`, {})).status, 400);
+    // Tokens are stamped to the second, so let the restaurant's login be a second older than the change (as it is in real life).
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const set = await ownerApi('POST', `/restaurants/${r.vendor.id}/password`, { password: 'brand-new-password-1' });
+    assert.equal(set.status, 200);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'locked.out@mezmitra.test', password: PASSWORD } })).status, 401, 'the old password stops working');
+    const login = await api('POST', '/api/auth/login', { body: { email: 'locked.out@mezmitra.test', password: 'brand-new-password-1' } });
+    assert.equal(login.status, 200);
+    assert.equal((await api('GET', '/api/auth/me', { token: r.token })).status, 401, 'an older session is signed out');
+    assert.equal((await api('GET', '/api/auth/me', { token: login.body.data.token })).status, 200);
+    const detail = (await ownerApi('GET', `/restaurants/${r.vendor.id}`)).body.data;
+    assert.deepEqual(detail.activity.map((a) => [a.action, a.by]), [['set_password', OWNER]]);
+    assert.ok(!JSON.stringify(detail).includes('brand-new-password-1'), 'the new password is never recorded');
+    // An owner account is changed in Settings, not here.
+    const own = await ownerApi('POST', `/restaurants/${ownerId}/password`, { password: 'brand-new-password-2' });
+    assert.equal(own.status, 409);
+    assert.equal(own.body.error.code, 'CANNOT_RESET_OWNER');
+    assert.equal((await ownerApi('POST', '/restaurants/999999/password', { password: 'brand-new-password-1' })).status, 404);
+  });
+
+  it('logs in as a restaurant for an hour, and says so', async () => {
+    const r = await signup('Support Cafe', 'support.cafe@mezmitra.test');
+    const res = await ownerApi('POST', `/restaurants/${r.vendor.id}/login-as`, {});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.restaurant.name, 'Support Cafe');
+    assert.equal(res.body.data.expires_in, 3600);
+    const token = res.body.data.token;
+    const me = (await api('GET', '/api/auth/me', { token })).body.data;
+    assert.equal(me.email, 'support.cafe@mezmitra.test');
+    assert.equal(me.impersonated_by_owner, true);
+    assert.equal((await api('GET', '/api/auth/me', { token: r.token })).body.data.impersonated_by_owner, false, "the restaurant's own login is not marked");
+    assert.equal((await api('GET', '/api/admin/tables', { token })).status, 200, 'it can use the restaurant admin');
+    assert.equal((await api('GET', '/api/platform/overview', { token })).status, 403, 'it is not an owner session');
+    assert.equal((await api('GET', '/api/auth/me', { token: ownerToken })).body.data.email, OWNER, "the owner's own session is untouched");
+    const detail = (await ownerApi('GET', `/restaurants/${r.vendor.id}`)).body.data;
+    assert.deepEqual(detail.activity.map((a) => a.action), ['login_as']);
+
+    const own = await ownerApi('POST', `/restaurants/${ownerId}/login-as`, {});
+    assert.equal(own.status, 409);
+    assert.equal(own.body.error.code, 'CANNOT_LOGIN_AS_OWNER');
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true, reason: 'test' });
+    const closed = await ownerApi('POST', `/restaurants/${r.vendor.id}/login-as`, {});
+    assert.equal(closed.status, 409);
+    assert.equal(closed.body.error.code, 'RESTAURANT_SUSPENDED');
+    assert.equal((await ownerApi('POST', '/restaurants/999999/login-as', {})).status, 404);
+  });
+
+  it('records suspend and reactivate in the restaurant\'s activity (only when something changed)', async () => {
+    const r = await signup('Activity Cafe', 'activity.cafe@mezmitra.test');
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true, reason: 'unpaid' });
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true, reason: 'unpaid' }); // nothing changed: not recorded again
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: false });
+    const detail = (await ownerApi('GET', `/restaurants/${r.vendor.id}`)).body.data;
+    assert.deepEqual(detail.activity.map((a) => a.action), ['reactivate', 'suspend']);
+    assert.equal(detail.activity[1].detail.reason, 'unpaid');
+  });
+
+  it('deletes a suspended restaurant with all its data, only when its name is typed', async () => {
+    const r = await signup('Doomed Cafe', 'doomed.cafe@mezmitra.test');
+    const cat = (await api('POST', '/api/admin/categories', { token: r.token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token: r.token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data;
+    const table = (await api('POST', '/api/admin/tables', { token: r.token, body: { number: 'X1', capacity: 2 } })).body.data;
+    const qr = table.qr_url.split('/').pop();
+    await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: item.id, quantity: 1, option_ids: [] }] } });
+    await api('POST', `/api/public/t/${qr}/requests`, { body: { kind: 'waiter' } });
+
+    const early = await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, { confirm_name: 'Doomed Cafe' });
+    assert.equal(early.status, 409);
+    assert.equal(early.body.error.code, 'SUSPEND_FIRST');
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true });
+    const wrong = await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, { confirm_name: 'doomed' });
+    assert.equal(wrong.status, 400);
+    assert.equal(wrong.body.error.code, 'NAME_MISMATCH');
+    assert.equal((await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, {})).status, 400);
+    assert.equal((await ownerApi('GET', `/restaurants/${r.vendor.id}`)).status, 200, 'still there after the refusals');
+
+    const done = await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, { confirm_name: 'Doomed Cafe' });
+    assert.equal(done.status, 200);
+    assert.equal(done.body.data.deleted, true);
+    assert.equal((await ownerApi('GET', `/restaurants/${r.vendor.id}`)).status, 404);
+    assert.equal((await api('GET', `/api/public/t/${qr}`)).status, 404, 'its QR codes stop working');
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'doomed.cafe@mezmitra.test', password: PASSWORD } })).status, 401);
+    const list = (await ownerApi('GET', '/restaurants?q=doomed')).body;
+    assert.equal(list.meta.total, 0);
+    assert.equal((await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, { confirm_name: 'Doomed Cafe' })).status, 404);
+
+    // A platform owner can never be deleted.
+    await ownerApi('PATCH', `/restaurants/${ownerId}`, { suspended: true });
+    const own = await ownerApi('POST', `/restaurants/${ownerId}/delete`, { confirm_name: 'Console HQ' });
+    assert.equal(own.status, 409);
+    assert.equal(own.body.error.code, 'CANNOT_DELETE_OWNER');
+  });
+});
+
 describe('changing your own password', () => {
   const EMAIL = 'changer@example.test';
   const OLD = 'the-old-password-1';

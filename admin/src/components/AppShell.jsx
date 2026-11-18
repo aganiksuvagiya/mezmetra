@@ -1,3 +1,4 @@
+import ImpersonationBar from './ImpersonationBar.jsx';
 import NotificationsPanel from './NotificationsPanel.jsx';
 import RequestsBanner from './RequestsBanner.jsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -332,7 +333,10 @@ function Shell() {
         inert={drawerOpenOnMobile}
         className={'transition-[padding] duration-200 lg:pl-64 print:pl-0' + (panelDocked ? ' lg:pr-[22rem] xl:pr-[26rem]' : '')}
       >
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/95 px-3 backdrop-blur lg:hidden print:hidden">
+        {/* One sticky strip: the "viewing as owner" bar (when it applies), then the phone header or the wide top bar. */}
+        <div className="sticky top-0 z-20 print:static">
+        <ImpersonationBar />
+        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white/95 px-3 backdrop-blur lg:hidden print:hidden">
           <button
             ref={hamburgerRef}
             type="button"
@@ -367,7 +371,7 @@ function Shell() {
         </header>
 
         {/* On a wide screen there is no top bar (the sidebar carries the menu), so the bell gets a slim one of its own. */}
-        <div className="sticky top-0 z-20 hidden h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
+        <div className="hidden h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
           <p className="min-w-0 truncate text-sm font-medium text-slate-500">{today}</p>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {count > 0 && (
@@ -382,6 +386,8 @@ function Shell() {
             <SoundToggle pill />
             <NotificationBell open={notificationsOpen} onOpen={() => setNotificationsOpen((v) => !v)} />
           </div>
+        </div>
+
         </div>
 
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8 print:max-w-none print:p-0">

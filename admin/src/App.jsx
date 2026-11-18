@@ -15,7 +15,8 @@ import Login from './pages/Login.jsx';
 import Orders from './pages/Orders.jsx';
 import Payments from './pages/Payments.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
-import Platform from './pages/Platform.jsx';
+import RestaurantDetail from './pages/owner/RestaurantDetail.jsx';
+import Restaurants from './pages/owner/Restaurants.jsx';
 import Reports from './pages/Reports.jsx';
 import QrCodes from './pages/QrCodes.jsx';
 import Appearance from './pages/Appearance.jsx';
@@ -112,7 +113,8 @@ export default function App() {
                 </RequireAuth>
               }
             >
-              <Route index element={<Platform />} />
+              <Route index element={<Restaurants />} />
+              <Route path="restaurants/:id" element={<RestaurantDetail />} />
               <Route path="*" element={<Navigate to="/owner" replace />} />
             </Route>
             <Route

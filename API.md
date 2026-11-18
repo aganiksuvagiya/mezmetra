@@ -180,6 +180,11 @@ Only for accounts listed in `SUPER_ADMIN_EMAILS` (`GET /api/auth/me` has `is_sup
 - `GET /api/platform/restaurants?q=&status=active|suspended&page=&per_page=` -> `{ data: restaurant[], meta: { page, per_page, total } }`, newest first.
   `restaurant` = `{ id, name, email, created_at, status: "active"|"suspended", suspended_at, suspended_reason, is_platform_owner, tables, items, orders_total, orders_30d, revenue_total, last_order_at, upi_ready }`.
 - `PATCH /api/platform/restaurants/:id` `{ suspended: boolean, reason?: string(<=200) }` -> the updated `restaurant`. 409 `CANNOT_SUSPEND` for a platform owner (or yourself); 404 unknown id.
+- `GET /api/platform/restaurants/:id` -> one restaurant in full: the `restaurant` fields plus `timezone`, `currency`, `tax_percent`, `categories`, `revenue_30d`, `payment` (per way of paying `{ key, enabled, configured, offered }`, never a secret), `recent_orders` (latest 10: `number`, `table_number`, `status`, `payment_status`, `payment_method`, `total`, `created_at`) and `activity` (the owner's latest 10 actions on it: `{ action, by, detail, at }`).
+- `POST /api/platform/restaurants/:id/password` `{ password (8-200) }` -> `{ ok }`. Sets a new password and signs the restaurant out everywhere. 409 `CANNOT_RESET_OWNER` for a platform owner (their password is changed in Settings).
+- `POST /api/platform/restaurants/:id/login-as` -> `{ token, restaurant: { id, name }, expires_in: 3600 }`. A one-hour login for that restaurant; `GET /api/auth/me` with it returns `impersonated_by_owner: true`. 409 `CANNOT_LOGIN_AS_OWNER` for a platform owner, 409 `RESTAURANT_SUSPENDED` for a suspended one.
+- `POST /api/platform/restaurants/:id/delete` `{ confirm_name }` -> `{ deleted: true }`. Deletes the restaurant and all its data. Only a suspended one (409 `SUSPEND_FIRST`), only with its exact name (400 `NAME_MISMATCH`), never a platform owner (409 `CANNOT_DELETE_OWNER`).
+- Every suspend / reactivate (when something changed), new password, log-in-as and delete is recorded in `platform_audit` (migration 019); the latest ones for a restaurant are in its `activity`.
 
 A suspended restaurant: `POST /api/auth/login` and every `/api/admin/*` call return 403 `ACCOUNT_SUSPENDED` (message includes the reason), and its public menu / order endpoints return 409 `TABLE_UNAVAILABLE`.
 

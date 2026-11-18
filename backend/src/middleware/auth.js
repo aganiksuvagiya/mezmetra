@@ -3,8 +3,14 @@ import { config } from '../config.js';
 import { forbidden, suspended, unauthorized } from '../lib/errors.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
 
-export function signToken(vendorId) {
-  return jwt.sign({ sub: String(vendorId) }, config.appSecret, { expiresIn: config.jwtExpiresIn, algorithm: 'HS256' });
+/**
+ * A login token for a restaurant. The platform owner's "log in as" makes a short-lived one that also names the owner (`imp`), so
+ * the admin can show "you are viewing this restaurant as the owner" and the owner's own session is never touched.
+ */
+export function signToken(vendorId, { impersonatedBy, expiresIn } = {}) {
+  const payload = { sub: String(vendorId) };
+  if (impersonatedBy) payload.imp = String(impersonatedBy);
+  return jwt.sign(payload, config.appSecret, { expiresIn: expiresIn ?? config.jwtExpiresIn, algorithm: 'HS256' });
 }
 
 /** Requires `Authorization: Bearer <jwt>` and sets req.vendorId. */
@@ -16,6 +22,7 @@ export function requireAuth(req, _res, next) {
     const payload = jwt.verify(token, config.appSecret, { algorithms: ['HS256'] });
     req.vendorId = Number(payload.sub);
     req.tokenIssuedAt = Number(payload.iat) || 0; // seconds
+    req.impersonatedBy = payload.imp ? Number(payload.imp) : null; // set when the platform owner is looking at this restaurant
     if (!Number.isSafeInteger(req.vendorId)) throw new Error('bad subject');
     next();
   } catch {

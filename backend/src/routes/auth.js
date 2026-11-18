@@ -115,7 +115,8 @@ export function authRouter(db, { loginLimiter }, mailer) {
   router.get('/me', requireAuth, requireActiveVendor(db), async (req, res) => {
     const { rows } = await db.query(`SELECT * FROM vendors WHERE id = $1`, [req.vendorId]);
     if (!rows[0]) throw unauthorized('Account no longer exists');
-    res.json({ data: vendorOut(rows[0]) });
+    // `impersonated_by_owner`: the platform owner is viewing this restaurant (the admin shows a bar with a way back).
+    res.json({ data: { ...vendorOut(rows[0]), impersonated_by_owner: Boolean(req.impersonatedBy) } });
   });
 
   // A signed-in restaurant changes its own password. Every older session is signed out by the change, so the answer carries a fresh token.

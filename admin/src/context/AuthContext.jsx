@@ -20,7 +20,15 @@ export function AuthProvider({ children }) {
 
   // Any 401 from the API lands here (api.js has already cleared the token).
   useEffect(
-    () => onUnauthorized(() => setState({ status: 'anon', vendor: null, error: null, expired: true })),
+    () =>
+      onUnauthorized(() => {
+        // A "log in as" session that ran out (they last an hour): the owner goes back to their own console, not to a sign-in page.
+        if (auth.returnToOwner()) {
+          window.location.assign('/owner');
+          return;
+        }
+        setState({ status: 'anon', vendor: null, error: null, expired: true });
+      }),
     [],
   );
 
@@ -41,6 +49,7 @@ export function AuthProvider({ children }) {
 
   const startSession = useCallback(async (path, body) => {
     const { token, vendor } = await api(path, { method: 'POST', body, auth: false });
+    auth.forgetOwnerBackup();
     auth.setToken(token);
     setState({ status: 'authed', vendor, error: null, expired: false });
   }, []);
