@@ -89,6 +89,8 @@ function SuspendDialog({ restaurant, onClose, onDone }) {
 }
 
 function RestaurantRow({ r, fmt, onSuspend, onReactivate, busy }) {
+  const { vendor } = useAuth();
+  const upiOffered = vendor?.payment_methods?.includes('upi') ?? true; // with UPI switched off for the product, "No UPI ID yet" is noise
   const suspended = r.status === 'suspended';
   return (
     <li className="grid grid-cols-1 gap-x-4 gap-y-2 px-4 py-3.5 sm:px-5 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] md:items-center">
@@ -117,7 +119,9 @@ function RestaurantRow({ r, fmt, onSuspend, onReactivate, busy }) {
           {formatNumber(r.tables)} {r.tables === 1 ? 'table' : 'tables'} · {formatNumber(r.items)} {r.items === 1 ? 'dish' : 'dishes'} ·{' '}
           {r.last_order_at ? `last order ${fmt.dateTime(r.last_order_at)}` : 'no orders yet'}
         </p>
-        <p className="pt-1">{r.upi_ready ? <Badge tone="green" dot={false}>UPI ready</Badge> : <Badge tone="amber" dot={false}>No UPI ID yet</Badge>}</p>
+        {upiOffered && (
+          <p className="pt-1">{r.upi_ready ? <Badge tone="green" dot={false}>UPI ready</Badge> : <Badge tone="amber" dot={false}>No UPI ID yet</Badge>}</p>
+        )}
       </div>
 
       <div className="md:text-right">

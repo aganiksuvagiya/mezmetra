@@ -11,7 +11,7 @@ import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { api } from '../lib/api.js';
 import { formatNumber } from '../lib/format.js';
 import { useDocumentTitle, useQuery } from '../lib/hooks.js';
-import { canTakeOrders } from '../lib/payments.js';
+import { canTakeOrders, methodsAvailable } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
 const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)' };
@@ -136,7 +136,8 @@ export default function Dashboard() {
       {pay.data && !canTakeOrders(pay.data) && (
         <div className="mb-4 sm:mb-6">
           <Alert tone="warning">
-            <strong>Diners can&rsquo;t place orders yet.</strong> Add your UPI ID and turn on UPI payments so they can pay.{' '}
+            <strong>Diners can&rsquo;t place orders yet.</strong>{' '}
+            {methodsAvailable(pay.data).has('upi') ? 'Add your UPI ID and turn on UPI payments so they can pay.' : 'Turn on a payment method so they can pay.'}{' '}
             <Link to="/payments" className="font-semibold text-brand-700 underline underline-offset-2">
               Set up payments
             </Link>

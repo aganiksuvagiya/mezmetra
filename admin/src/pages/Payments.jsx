@@ -93,6 +93,9 @@ function PaymentsForm({ settings, onSaved }) {
   const showCashfree = avail.has('cashfree');
   const showPhonepe = avail.has('phonepe');
   const showPaytm = avail.has('paytm');
+  // The plain "UPI ID" way of paying (QR + UPI ID, staff confirm) is shown only while the product offers it; remove `upi` from
+  // PAYMENT_METHODS on the server to hide the switch and the UPI ID card (the restaurant's saved UPI ID is kept).
+  const showUpi = avail.has('upi');
   const upiOnly = avail.size === 1 && avail.has('upi');
 
   const savedKeyId = settings.razorpay_key_id ?? '';
@@ -108,7 +111,7 @@ function PaymentsForm({ settings, onSaved }) {
   const ptChanged =
     showPaytm &&
     (ptMid.trim() !== savedPtMid || ptKey.trim() !== '' || ptWebsite.trim() !== (settings.paytm_website ?? '') || ptEnv !== (settings.paytm_env ?? 'sandbox'));
-  const upiChanged = upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || payButtons !== (settings.upi_pay_buttons ?? false);
+  const upiChanged = showUpi && (upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || payButtons !== (settings.upi_pay_buttons ?? false));
   const dirty =
     (showCash && cash !== settings.cash_enabled) ||
     (showRazorpay && online !== settings.razorpay_enabled) ||
@@ -141,8 +144,8 @@ function PaymentsForm({ settings, onSaved }) {
     }
     if (sec && sec.length < 8) next.secret = 'That Key Secret looks too short.';
     const vpa = upiId.trim();
-    if (vpa && !UPI_RE.test(vpa)) next.upiId = 'A UPI ID looks like name@bank, e.g. shop@okhdfcbank or 9876543210@ybl.';
-    if (upi && !vpa) next.upiId = 'Enter your UPI ID to turn on UPI payments.';
+    if (showUpi && vpa && !UPI_RE.test(vpa)) next.upiId = 'A UPI ID looks like name@bank, e.g. shop@okhdfcbank or 9876543210@ybl.';
+    if (showUpi && upi && !vpa) next.upiId = 'Enter your UPI ID to turn on UPI payments.';
     const cid = cfAppId.trim();
     const csec = cfSecret.trim();
     if (cid) {
@@ -189,7 +192,7 @@ function PaymentsForm({ settings, onSaved }) {
     e.preventDefault();
     const form = e.currentTarget;
     clearFeedback();
-    if (!(showCash && cash) && !(showRazorpay && online) && !(showCashfree && cashfree) && !(showPhonepe && phonepe) && !(showPaytm && paytm) && !upi) {
+    if (!(showCash && cash) && !(showRazorpay && online) && !(showCashfree && cashfree) && !(showPhonepe && phonepe) && !(showPaytm && paytm) && !(showUpi && upi)) {
       setErrors({});
       setFormError(
         upiOnly
@@ -208,9 +211,9 @@ function PaymentsForm({ settings, onSaved }) {
     if (cash !== settings.cash_enabled) body.cash_enabled = cash;
     if (online !== settings.razorpay_enabled) body.razorpay_enabled = online;
     if (showCashfree && cashfree !== (settings.cashfree_enabled ?? false)) body.cashfree_enabled = cashfree;
-    if (upi !== settings.upi_enabled) body.upi_enabled = upi;
-    if (upiId.trim() !== (settings.upi_id ?? '')) body.upi_id = upiId.trim();
-    if (payButtons !== (settings.upi_pay_buttons ?? false)) body.upi_pay_buttons = payButtons;
+    if (showUpi && upi !== settings.upi_enabled) body.upi_enabled = upi;
+    if (showUpi && upiId.trim() !== (settings.upi_id ?? '')) body.upi_id = upiId.trim();
+    if (showUpi && payButtons !== (settings.upi_pay_buttons ?? false)) body.upi_pay_buttons = payButtons;
     if (keyId.trim() && keyId.trim() !== savedKeyId) body.razorpay_key_id = keyId.trim();
     if (secret.trim()) body.razorpay_key_secret = secret.trim();
     if (cfAppId.trim() && cfAppId.trim() !== savedCfAppId) body.cashfree_app_id = cfAppId.trim();
@@ -331,17 +334,19 @@ function PaymentsForm({ settings, onSaved }) {
               />
             </div>
           )}
-          <div>
-            <SwitchField
-              label="UPI apps (Google Pay, PhonePe, Paytm…)"
-              description="Diners tap their UPI app with the amount already filled in, pay, then tell us they paid. You confirm it in Orders."
-              checked={upi}
-              onChange={(v) => {
-                setUpi(v);
-                clearFeedback();
-              }}
-            />
-          </div>
+          {showUpi && (
+            <div>
+              <SwitchField
+                label="UPI apps (Google Pay, PhonePe, Paytm…)"
+                description="Diners tap their UPI app with the amount already filled in, pay, then tell us they paid. You confirm it in Orders."
+                checked={upi}
+                onChange={(v) => {
+                  setUpi(v);
+                  clearFeedback();
+                }}
+              />
+            </div>
+          )}
           {showCashfree && (
             <div>
               <SwitchField
@@ -417,41 +422,43 @@ function PaymentsForm({ settings, onSaved }) {
         </div>
       </Card>
 
-      <Card as="section" aria-labelledby="upi">
-        <CardHeader id="upi" title="UPI ID" description="Money from UPI apps goes straight to your UPI ID." />
-        <div className="space-y-3 p-4 sm:p-5">
-          <Input
-            label="Your UPI ID"
-            value={upiId}
-            onChange={(e) => {
-              setUpiId(e.target.value);
-              setErrors((p) => ({ ...p, upiId: undefined }));
-              clearFeedback();
-            }}
-            error={errors.upiId}
-            placeholder="shopname@okhdfcbank"
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            inputMode="email"
-            hint="Find it in your UPI app under your profile. Diners see it when they pay."
-          />
-          <SwitchField
-            label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
-            description="Turn this on only if your UPI ID is a business (merchant) ID. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID, which always works."
-            checked={payButtons}
-            onChange={(v) => {
-              setPayButtons(v);
-              clearFeedback();
-            }}
-          />
-          <Alert tone="warning">
-            A plain UPI link can’t tell us whether the payment went through, so each UPI order shows “Customer says paid” and you press
-            <strong> Confirm payment</strong> after you see the money in your bank or UPI app. Some UPI apps may refuse a pre-filled amount for a
-            personal UPI ID: <strong>Google Pay in particular blocks them</strong> with a “bank limit exceeded” message, while PhonePe and Paytm usually work. Diners can always pay manually (UPI ID + amount). {showRazorpay || showCashfree ? 'A merchant (business) UPI ID or online payments (below) is' : 'A merchant (business) UPI ID is'} the reliable fix.
-          </Alert>
-        </div>
-      </Card>
+      {showUpi && (
+        <Card as="section" aria-labelledby="upi">
+          <CardHeader id="upi" title="UPI ID" description="Money from UPI apps goes straight to your UPI ID." />
+          <div className="space-y-3 p-4 sm:p-5">
+            <Input
+              label="Your UPI ID"
+              value={upiId}
+              onChange={(e) => {
+                setUpiId(e.target.value);
+                setErrors((p) => ({ ...p, upiId: undefined }));
+                clearFeedback();
+              }}
+              error={errors.upiId}
+              placeholder="shopname@okhdfcbank"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              inputMode="email"
+              hint="Find it in your UPI app under your profile. Diners see it when they pay."
+            />
+            <SwitchField
+              label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
+              description="Turn this on only if your UPI ID is a business (merchant) ID. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID, which always works."
+              checked={payButtons}
+              onChange={(v) => {
+                setPayButtons(v);
+                clearFeedback();
+              }}
+            />
+            <Alert tone="warning">
+              A plain UPI link can’t tell us whether the payment went through, so each UPI order shows “Customer says paid” and you press
+              <strong> Confirm payment</strong> after you see the money in your bank or UPI app. Some UPI apps may refuse a pre-filled amount for a
+              personal UPI ID: <strong>Google Pay in particular blocks them</strong> with a “bank limit exceeded” message, while PhonePe and Paytm usually work. Diners can always pay manually (UPI ID + amount). {showRazorpay || showCashfree ? 'A merchant (business) UPI ID or online payments (below) is' : 'A merchant (business) UPI ID is'} the reliable fix.
+            </Alert>
+          </div>
+        </Card>
+      )}
 
       {showCashfree && (
         <Card as="section" aria-labelledby="cashfree">
