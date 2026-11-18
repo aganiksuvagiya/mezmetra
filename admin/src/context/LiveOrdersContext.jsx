@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast.jsx';
 import { api, apiPage } from '../lib/api.js';
 import { formatMoney } from '../lib/format.js';
@@ -35,6 +35,7 @@ const TITLE_COUNT = /^\(\d+\)\s/;
 export function LiveOrdersProvider({ children }) {
   const toast = useToast();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const q = useQuery(() => apiPage('/api/admin/orders', { query: { status: 'active', per_page: 20 } }), [], {
     interval: POLL_MS,
     pollInBackground: true,
@@ -66,7 +67,7 @@ export function LiveOrdersProvider({ children }) {
 
   const latest = useRef({});
   useEffect(() => {
-    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders') };
+    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders'), navigate };
   });
 
   // New orders: anything newer than the newest order we have already seen.
@@ -96,10 +97,17 @@ export function LiveOrdersProvider({ children }) {
         playOrderChime();
       }
     }
-    if (!latest.current.onOrdersPage) toast.info(text);
+    // Opening the notification shows the order itself (one new order) or the orders list (several).
+    const openIt = () => latest.current.navigate(fresh.length === 1 ? `/orders?order=${fresh[0].id}` : '/orders');
+    if (!latest.current.onOrdersPage) toast.info(text, { action: { label: fresh.length === 1 ? 'View' : 'Open', onClick: openIt } });
     if (document.visibilityState !== 'visible' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       try {
-        new Notification('New order', { body: text, tag: 'mezmitra-new-order' });
+        const note = new Notification('New order', { body: text, tag: 'mezmitra-new-order' });
+        note.onclick = () => {
+          window.focus();
+          openIt();
+          note.close();
+        };
       } catch {
         /* some browsers only show notifications from a service worker */
       }

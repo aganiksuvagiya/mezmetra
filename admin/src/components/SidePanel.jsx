@@ -40,7 +40,7 @@ export default function SidePanel({ title, onClose, children, footer, className 
       aria-labelledby={titleId}
       tabIndex={-1}
       className={cx(
-        'flex h-full min-h-0 animate-slide-in flex-col overflow-hidden border-l border-slate-200 bg-white shadow-[-8px_0_24px_-12px_rgba(15,23,42,0.18)] outline-none',
+        'flex h-full min-h-0 animate-slide-in flex-col overflow-hidden border-l border-slate-200 bg-white outline-none',
         className,
       )}
     >

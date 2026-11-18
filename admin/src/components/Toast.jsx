@@ -19,19 +19,20 @@ export function ToastProvider({ children }) {
   const dismiss = useCallback((id) => setToasts((list) => list.filter((t) => t.id !== id)), []);
 
   const push = useCallback(
-    (tone, message) => {
+    (tone, message, options = {}) => {
       const id = ++nextId.current;
-      setToasts((list) => [...list.slice(-3), { id, tone, message }]);
-      setTimeout(() => dismiss(id), tone === 'error' ? 8000 : 4500);
+      setToasts((list) => [...list.slice(-3), { id, tone, message, action: options.action ?? null }]);
+      setTimeout(() => dismiss(id), tone === 'error' ? 8000 : options.action ? 9000 : 4500);
     },
     [dismiss],
   );
 
   const api = useMemo(
     () => ({
-      success: (message) => push('success', message),
-      error: (message) => push('error', message),
-      info: (message) => push('info', message),
+      // `options.action` = { label, onClick }: a button on the toast (e.g. "View" opens the order the toast is about).
+      success: (message, options) => push('success', message, options),
+      error: (message, options) => push('error', message, options),
+      info: (message, options) => push('info', message, options),
     }),
     [push],
   );
@@ -55,6 +56,18 @@ export function ToastProvider({ children }) {
             >
               <Icon size={18} className={cx('mt-0.5', iconColor)} />
               <p className="min-w-0 flex-1 break-words">{t.message}</p>
+              {t.action && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    dismiss(t.id);
+                    t.action.onClick();
+                  }}
+                  className="-my-0.5 shrink-0 rounded-md px-2 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                >
+                  {t.action.label}
+                </button>
+              )}
               <button type="button" onClick={() => dismiss(t.id)} aria-label="Dismiss notification" className="-mr-1 -mt-0.5 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                 <CloseIcon size={16} />
               </button>
