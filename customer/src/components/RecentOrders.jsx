@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatMoney } from '../lib/money';
+import { clearRecentOrders } from '../lib/orderMemory';
 import { formatTime } from '../lib/time';
+import ConfirmSheet from './ConfirmSheet';
 
 // How an order reads in the list: a short word and a colour, so a glance says "still cooking", "ready", "done" or "cancelled".
 function statusOf(o) {
@@ -11,10 +14,12 @@ function statusOf(o) {
 }
 
 /**
- * "Your recent orders": the last few orders this phone placed at this restaurant, so a diner who scans again can find them
- * (and how they are going) without having kept the page open. A card opens that order's own page.
+ * "Your recent orders": the orders this phone placed at this restaurant during this visit, so a diner who scans again can find them
+ * (and how they are going) without having kept the page open. A card opens that order's own page. Finished orders leave the list on
+ * their own after a while; "Clear" lets a diner (or the next person on a shared phone) empty it at once, after a question.
  */
-export default function RecentOrders({ orders, tableToken }) {
+export default function RecentOrders({ orders, tableToken, vendorName }) {
+  const [clearing, setClearing] = useState(false);
   if (!orders || orders.length === 0) return null;
   return (
     <section aria-labelledby="recent-orders" className="pt-4">
@@ -22,7 +27,18 @@ export default function RecentOrders({ orders, tableToken }) {
         <h2 id="recent-orders" className="text-[15px] font-extrabold text-ink">
           Your recent orders
         </h2>
-        <p className="text-xs text-ink-soft">Saved on this phone</p>
+        <p className="flex items-center gap-1 text-xs text-ink-soft">
+          Saved on this phone
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            onClick={() => setClearing(true)}
+            aria-label="Clear recent orders from this phone"
+            className="-my-3 rounded-md px-1.5 py-3 text-xs font-semibold text-brand-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+          >
+            Clear
+          </button>
+        </p>
       </div>
       <ul className="mt-2 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-1[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {orders.map((o) => {
@@ -48,6 +64,19 @@ export default function RecentOrders({ orders, tableToken }) {
           );
         })}
       </ul>
+      {clearing && (
+        <ConfirmSheet
+          title="Clear these orders from this phone?"
+          message="Only this phone forgets them. The restaurant still has every order. If one is still being made, you will not see it here any more."
+          confirmLabel="Yes, clear them"
+          cancelLabel="Keep them"
+          onCancel={() => setClearing(false)}
+          onConfirm={() => {
+            clearRecentOrders(vendorName);
+            setClearing(false);
+          }}
+        />
+      )}
     </section>
   );
 }

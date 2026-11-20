@@ -274,7 +274,7 @@ export default function MenuPage() {
         </div>
       )}
 
-      {!searching && <RecentOrders orders={recentOrders} tableToken={token} />}
+      {!searching && <RecentOrders orders={recentOrders} tableToken={token} vendorName={menu.vendor.name} />}
 
       {!searching && chips.length > 1 && (
         <nav aria-label="Menu categories" className="sticky top-0 z-20 mt-3 border-b border-black/10 bg-page/80 backdrop-blur-xl backdrop-saturate-150">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getOrder, isAbort } from './api';
-import { forgetLastOrder, getLastOrder, isFinished, recordOrder } from './orderMemory';
+import { VISIT_MAX_MS, forgetLastOrder, getLastOrder, isFinished, onOrdersChanged, recordOrder } from './orderMemory';
 
 // Remember the last answer per table so coming back from the cart does not make the banner pop in again.
 const cache = new Map();
@@ -30,7 +30,8 @@ export function useActiveOrder(tableToken) {
     const controller = new AbortController();
     getOrder(token, { signal: controller.signal })
       .then((order) => {
-        if (isFinished(order)) {
+        // Finished, or so old that it cannot be this visit's order (one the restaurant never closed): not "your order" any more.
+        if (isFinished(order) || Date.now() - Date.parse(order.created_at) > VISIT_MAX_MS) {
           forgetLastOrder(tableToken, token);
           update(null);
         } else {
@@ -49,6 +50,17 @@ export function useActiveOrder(tableToken) {
       });
     return () => controller.abort();
   }, [tableToken]);
+
+  // The diner cleared this phone's orders: the banner goes with them.
+  useEffect(
+    () =>
+      onOrdersChanged(() => {
+        if (getLastOrder(tableToken)) return;
+        cache.delete(tableToken);
+        setActive(null);
+      }),
+    [tableToken],
+  );
 
   return active;
 }
