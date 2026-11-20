@@ -96,3 +96,6 @@ export const refundPhonepe = (creds, { merchantRefundId, originalMerchantOrderId
 
 /** Used by the admin "Test connection" button: asking for a token proves the three keys and the sandbox/live choice. */
 export const pingPhonepe = (creds) => getToken(creds, { force: true }).then(() => true);
+
+/** What PhonePe sends in the webhook's Authorization header: SHA256("username:password"), as hex (the username and password are typed in PhonePe's dashboard). */
+export const phonepeWebhookAuth = (username, password) => createHash('sha256').update(`${username}:${password}`).digest('hex');

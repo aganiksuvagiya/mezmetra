@@ -5,7 +5,7 @@ import { HttpError, conflict, parse } from '../lib/errors.js';
 import { decryptSecret, encryptSecret } from '../lib/crypto.js';
 import { APP_ID_RE, cashfreeMode, pingCashfree } from '../lib/cashfree.js';
 import { GATEWAYS } from '../lib/gateways.js';
-import { CLIENT_ID_RE, CLIENT_VERSION_RE, pingPhonepe } from '../lib/phonepe.js';
+import { CLIENT_ID_RE, CLIENT_VERSION_RE, phonepeWebhookAuth, pingPhonepe } from '../lib/phonepe.js';
 import { MERCHANT_KEY_LENGTH, MID_RE, pingPaytm, WEBSITE_RE } from '../lib/paytm.js';
 import { pingRazorpay } from '../lib/razorpay.js';
 import { VPA_RE } from '../lib/upi.js';
@@ -34,6 +34,10 @@ const putSchema = z.object({
   phonepe_client_secret: z.string().trim().min(8).max(200).optional(),
   // PhonePe cannot tell from the keys whether they are its sandbox or real ones, so the restaurant says.
   phonepe_env: z.enum(['sandbox', 'live']).optional(),
+  // Webhooks (the gateway tells us a payment succeeded): write-only secrets typed in the gateway's own dashboard.
+  razorpay_webhook_secret: z.string().trim().min(8, 'Use at least 8 characters').max(100).optional(),
+  phonepe_webhook_username: z.string().trim().min(4, 'Use at least 4 characters').max(80).optional(),
+  phonepe_webhook_password: z.string().trim().min(8, 'Use at least 8 characters').max(100).optional(),
   paytm_enabled: z.boolean().optional(),
   paytm_mid: z.string().trim().regex(MID_RE, 'Merchant ID is the code from the Paytm dashboard (letters and numbers)').optional(),
   // Write-only. A Paytm Merchant Key is exactly 16 characters.
@@ -43,7 +47,7 @@ const putSchema = z.object({
   paytm_env: z.enum(['sandbox', 'live']).optional(),
 });
 
-const out = (s) => ({
+const out = (s, apiBase = '') => ({
   // Ways of paying the product offers right now; the admin shows only these.
   methods_available: [...config.paymentMethods],
   cash_enabled: s.cash_enabled,
@@ -66,6 +70,11 @@ const out = (s) => ({
   phonepe_secret_set: Boolean(s.phonepe_secret_enc),
   phonepe_env: s.phonepe_env,
   phonepe_configured: GATEWAYS.phonepe.configured(s),
+  // Webhooks: the address to paste into the gateway's dashboard (private to this restaurant) and whether its secret is saved.
+  webhook_url_razorpay: `${apiBase}/api/webhooks/razorpay/${s.webhook_key}`,
+  webhook_url_phonepe: `${apiBase}/api/webhooks/phonepe/${s.webhook_key}`,
+  razorpay_webhook_set: Boolean(s.razorpay_webhook_secret_enc),
+  phonepe_webhook_set: Boolean(s.phonepe_webhook_auth_enc),
   paytm_enabled: s.paytm_enabled,
   paytm_mid: s.paytm_mid,
   paytm_key_set: Boolean(s.paytm_key_enc),
@@ -73,6 +82,9 @@ const out = (s) => ({
   paytm_env: s.paytm_env,
   paytm_configured: GATEWAYS.paytm.configured(s),
 });
+
+// Where the gateway can reach this server (the public address of the API).
+const apiBaseOf = (req) => config.apiPublicUrl || `${req.protocol}://${req.get('host')}`;
 
 async function loadSettings(q, vendorId) {
   await q.query(`INSERT INTO vendor_payment_settings (vendor_id) VALUES ($1) ON CONFLICT DO NOTHING`, [vendorId]);
@@ -84,7 +96,7 @@ export function paymentSettingsRouter(db) {
   const router = Router();
 
   router.get('/', async (req, res) => {
-    res.json({ data: out(await loadSettings(db, req.vendorId)) });
+    res.json({ data: out(await loadSettings(db, req.vendorId), apiBaseOf(req)) });
   });
 
   router.put('/', async (req, res) => {
@@ -102,6 +114,14 @@ export function paymentSettingsRouter(db) {
       const ppVersion = body.phonepe_client_version ?? current.phonepe_client_version;
       const ppSecretEnc = body.phonepe_client_secret ? encryptSecret(body.phonepe_client_secret) : current.phonepe_secret_enc;
       const ppEnv = body.phonepe_env ?? current.phonepe_env;
+      const rzWebhookEnc = body.razorpay_webhook_secret ? encryptSecret(body.razorpay_webhook_secret) : current.razorpay_webhook_secret_enc;
+      // PhonePe's username and password are only ever used as their hash, so only the hash is kept.
+      if ((body.phonepe_webhook_username === undefined) !== (body.phonepe_webhook_password === undefined)) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'Enter both the webhook username and the webhook password.');
+      }
+      const ppWebhookEnc = body.phonepe_webhook_username
+        ? encryptSecret(phonepeWebhookAuth(body.phonepe_webhook_username, body.phonepe_webhook_password))
+        : current.phonepe_webhook_auth_enc;
       const ptEnabled = body.paytm_enabled ?? current.paytm_enabled;
       const ptMid = body.paytm_mid ?? current.paytm_mid;
       const ptKeyEnc = body.paytm_merchant_key ? encryptSecret(body.paytm_merchant_key) : current.paytm_key_enc;
@@ -164,16 +184,17 @@ export function paymentSettingsRouter(db) {
                 upi_enabled = $6, upi_id = $7, upi_pay_buttons = $8,
                 cashfree_enabled = $9, cashfree_app_id = $10, cashfree_secret_enc = $11,
                 phonepe_enabled = $12, phonepe_client_id = $13, phonepe_client_version = $14, phonepe_secret_enc = $15, phonepe_env = $16,
-                paytm_enabled = $17, paytm_mid = $18, paytm_key_enc = $19, paytm_website = $20, paytm_env = $21, updated_at = now()
+                paytm_enabled = $17, paytm_mid = $18, paytm_key_enc = $19, paytm_website = $20, paytm_env = $21,
+                razorpay_webhook_secret_enc = $22, phonepe_webhook_auth_enc = $23, updated_at = now()
           WHERE vendor_id = $1 RETURNING *`,
         [
           req.vendorId, cashEnabled, razorpayEnabled, keyId, secretEnc, upiEnabled, upiId, upiPayButtons, cashfreeEnabled, cfAppId, cfSecretEnc,
-          ppEnabled, ppClientId, ppVersion, ppSecretEnc, ppEnv, ptEnabled, ptMid, ptKeyEnc, ptWebsite, ptEnv,
+          ppEnabled, ppClientId, ppVersion, ppSecretEnc, ppEnv, ptEnabled, ptMid, ptKeyEnc, ptWebsite, ptEnv, rzWebhookEnc, ppWebhookEnc,
         ],
       );
       return rows[0];
     });
-    res.json({ data: out(saved) });
+    res.json({ data: out(saved, apiBaseOf(req)) });
   });
 
   // Makes one authenticated call to the gateway (Razorpay, or the one the body names: {provider: 'cashfree' | 'phonepe' | 'paytm'})

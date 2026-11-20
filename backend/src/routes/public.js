@@ -10,6 +10,7 @@ import { createRazorpayOrder, createRazorpayQr, fetchRazorpayQr, fetchRazorpayQr
 import { toRupees } from '../lib/money.js';
 import { UPI_REFERENCE_RE, upiQuery } from '../lib/upi.js';
 import { itemOut, loadOptionGroups, loadOrderItems, logoUrl, publicOrderOut, themeOut } from '../lib/serialize.js';
+import { PAID_ONLINE_SQL } from '../lib/onlinePayments.js';
 
 const QR_TOKEN = /^[a-f0-9]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,14 +44,6 @@ const verifySchema = z.object({
   razorpay_payment_id: z.string().trim().min(5).max(64),
   razorpay_signature: z.string().trim().min(10).max(200),
 });
-
-// Paying online is confirmed by the gateway itself, so the kitchen does not need to press "Accept": a pending order is accepted
-// the moment the payment is verified (staff only press "Complete" when it is served). Cancelled and completed orders keep their status.
-const PAID_ONLINE_SQL = (method) => `UPDATE orders
-       SET payment_status = 'paid', payment_method = '${method}', paid_at = now(),
-           status = CASE WHEN status = 'pending' THEN 'accepted' ELSE status END,
-           accepted_at = CASE WHEN status = 'pending' THEN now() ELSE accepted_at END
-     WHERE id = $1 RETURNING *`;
 
 const idempotencyKey = (req) => {
   const key = req.get('idempotency-key');

@@ -3,6 +3,7 @@ import { createDb } from './db.js';
 import { migrate } from './migrate.js';
 import { createApp } from './app.js';
 import { seed } from './seed.js';
+import { startReconciler } from './lib/reconcile.js';
 
 const db = await createDb();
 if (config.autoMigrate) await migrate(db);
@@ -17,6 +18,9 @@ const server = app.listen(config.port, () => {
     console.log('[mezmitra] No DATABASE_URL set - using the local PGlite database in', config.pgliteDir);
   }
 });
+
+// The safety net behind the payment webhooks: now and then, ask the gateways about online payments that are still open.
+startReconciler(db);
 
 async function shutdown(signal) {
   console.log(`[mezmitra] ${signal} received, shutting down`);

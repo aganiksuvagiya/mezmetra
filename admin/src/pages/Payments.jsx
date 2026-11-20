@@ -6,6 +6,7 @@ import { Alert, ErrorState } from '../components/EmptyState.jsx';
 import { focusFirstInvalid, Input, PasswordInput, Select, SwitchField } from '../components/Field.jsx';
 import { ExternalIcon, PlugIcon } from '../components/icons.jsx';
 import { Skeleton } from '../components/Spinner.jsx';
+import WebhookBox from '../components/WebhookBox.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { api, splitFieldErrors } from '../lib/api.js';
 import { useAction, useDocumentTitle, useQuery } from '../lib/hooks.js';
@@ -76,6 +77,10 @@ function PaymentsForm({ settings, onSaved }) {
   const [ppSecret, setPpSecret] = useState('');
   const [ppEnv, setPpEnv] = useState(settings.phonepe_env ?? 'sandbox');
   const [ppTestResult, setPpTestResult] = useState(null);
+  // Webhook secrets (write-only): typed once, here and in the gateway's dashboard.
+  const [rzHookSecret, setRzHookSecret] = useState('');
+  const [ppHookUser, setPpHookUser] = useState('');
+  const [ppHookPass, setPpHookPass] = useState('');
   const [paytm, setPaytm] = useState(settings.paytm_enabled ?? false);
   const [ptMid, setPtMid] = useState(settings.paytm_mid ?? '');
   const [ptKey, setPtKey] = useState('');
@@ -112,7 +117,9 @@ function PaymentsForm({ settings, onSaved }) {
     showPaytm &&
     (ptMid.trim() !== savedPtMid || ptKey.trim() !== '' || ptWebsite.trim() !== (settings.paytm_website ?? '') || ptEnv !== (settings.paytm_env ?? 'sandbox'));
   const upiChanged = showUpi && (upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || payButtons !== (settings.upi_pay_buttons ?? false));
+  const hooksChanged = (showRazorpay && rzHookSecret.trim() !== '') || (showPhonepe && (ppHookUser.trim() !== '' || ppHookPass.trim() !== ''));
   const dirty =
+    hooksChanged ||
     (showCash && cash !== settings.cash_enabled) ||
     (showRazorpay && online !== settings.razorpay_enabled) ||
     (showCashfree && cashfree !== (settings.cashfree_enabled ?? false)) ||
@@ -225,6 +232,11 @@ function PaymentsForm({ settings, onSaved }) {
       if (ppSecret.trim()) body.phonepe_client_secret = ppSecret.trim();
       if (ppEnv !== (settings.phonepe_env ?? 'sandbox')) body.phonepe_env = ppEnv;
     }
+    if (showRazorpay && rzHookSecret.trim()) body.razorpay_webhook_secret = rzHookSecret.trim();
+    if (showPhonepe && (ppHookUser.trim() || ppHookPass.trim())) {
+      body.phonepe_webhook_username = ppHookUser.trim();
+      body.phonepe_webhook_password = ppHookPass.trim();
+    }
     if (showPaytm) {
       if (paytm !== (settings.paytm_enabled ?? false)) body.paytm_enabled = paytm;
       if (ptMid.trim() && ptMid.trim() !== savedPtMid) body.paytm_mid = ptMid.trim();
@@ -251,6 +263,9 @@ function PaymentsForm({ settings, onSaved }) {
           'phonepe_client_id',
           'phonepe_client_version',
           'phonepe_client_secret',
+          'razorpay_webhook_secret',
+          'phonepe_webhook_username',
+          'phonepe_webhook_password',
           'paytm_mid',
           'paytm_merchant_key',
           'paytm_website',
@@ -264,6 +279,9 @@ function PaymentsForm({ settings, onSaved }) {
           ppClientId: fields.phonepe_client_id,
           ppVersion: fields.phonepe_client_version,
           ppSecret: fields.phonepe_client_secret,
+          rzHook: fields.razorpay_webhook_secret,
+          ppHookUser: fields.phonepe_webhook_username,
+          ppHookPass: fields.phonepe_webhook_password,
           ptMid: fields.paytm_mid,
           ptKey: fields.paytm_merchant_key,
           ptWebsite: fields.paytm_website,
@@ -636,6 +654,54 @@ function PaymentsForm({ settings, onSaved }) {
               result={ppTestResult}
               onTest={() => testGateway('phonepe', ppTestAction, setPpTestResult, 'PhonePe')}
             />
+            <WebhookBox
+              url={settings.webhook_url_phonepe}
+              isSet={settings.phonepe_webhook_set}
+              steps={
+                <>
+                  <li>
+                    In the PhonePe Business dashboard, open the <strong>Webhooks</strong> settings (under Developer settings).
+                  </li>
+                  <li>Paste the webhook address above as the URL.</li>
+                  <li>Choose a username and a password of your own, type the same two below, and press Save here.</li>
+                  <li>
+                    Select the events <strong>checkout.order.completed</strong> and <strong>checkout.order.failed</strong>, and save in PhonePe.
+                  </li>
+                </>
+              }
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input
+                  label="Webhook username"
+                  value={ppHookUser}
+                  onChange={(e) => {
+                    setPpHookUser(e.target.value);
+                    setErrors((p) => ({ ...p, ppHookUser: undefined }));
+                    clearFeedback();
+                  }}
+                  error={errors.ppHookUser}
+                  placeholder={settings.phonepe_webhook_set ? 'Saved – leave blank to keep' : 'e.g. mezmitra-hook'}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+                <PasswordInput
+                  label="Webhook password"
+                  value={ppHookPass}
+                  onChange={(e) => {
+                    setPpHookPass(e.target.value);
+                    setErrors((p) => ({ ...p, ppHookPass: undefined }));
+                    clearFeedback();
+                  }}
+                  error={errors.ppHookPass}
+                  placeholder={settings.phonepe_webhook_set ? 'Saved – leave blank to keep' : 'At least 8 characters'}
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  hint="Stored encrypted and never shown again."
+                />
+              </div>
+            </WebhookBox>
             <details className="group rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700">
               <summary className="cursor-pointer font-medium text-slate-900">Where do I find my PhonePe keys?</summary>
               <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-slate-600">
@@ -834,6 +900,40 @@ function PaymentsForm({ settings, onSaved }) {
               {testResult.message}
             </Alert>
           )}
+
+          <WebhookBox
+              url={settings.webhook_url_razorpay}
+              isSet={settings.razorpay_webhook_set}
+              steps={
+                <>
+                  <li>
+                    In the Razorpay Dashboard, open <strong>Settings → Webhooks → Add New Webhook</strong>.
+                  </li>
+                  <li>Paste the webhook address above as the Webhook URL.</li>
+                  <li>Type a secret of your own (at least 8 characters) in Razorpay, type the same secret below, and press Save here.</li>
+                  <li>
+                    Tick the events <strong>payment.captured</strong>, <strong>order.paid</strong> and <strong>qr_code.credited</strong>, and save in Razorpay.
+                  </li>
+                </>
+              }
+            >
+              <PasswordInput
+                label="Webhook secret"
+                value={rzHookSecret}
+                onChange={(e) => {
+                  setRzHookSecret(e.target.value);
+                  setErrors((p) => ({ ...p, rzHook: undefined }));
+                  clearFeedback();
+                }}
+                error={errors.rzHook}
+                placeholder={settings.razorpay_webhook_set ? 'Saved – leave blank to keep' : 'The secret you typed in Razorpay'}
+                autoComplete="new-password"
+                autoCapitalize="none"
+                spellCheck={false}
+                hint="Stored encrypted and never shown again."
+                wrapperClassName="max-w-md"
+              />
+            </WebhookBox>
 
           <details className="group rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700">
             <summary className="cursor-pointer font-medium text-slate-900">Where do I find my Razorpay keys?</summary>

@@ -36,6 +36,14 @@ export function verifyCheckoutSignature({ keySecret, orderId, paymentId, signatu
   return safeEqual(hmacSha256Hex(keySecret, `${orderId}|${paymentId}`), String(signature));
 }
 
+/** A webhook is signed with the secret typed in Razorpay's dashboard: HMAC_SHA256(raw request body, webhook secret), as hex. */
+export function verifyWebhookSignature({ secret, rawBody, signature }) {
+  return safeEqual(hmacSha256Hex(secret, rawBody), String(signature ?? ''));
+}
+
+/** The payments made on a Razorpay order (items with status "captured" are money that arrived). */
+export const fetchRazorpayOrderPayments = ({ keyId, keySecret, orderId }) => call(`/orders/${encodeURIComponent(orderId)}/payments`, { keyId, keySecret });
+
 /**
  * A UPI QR code for one order: single use, and the amount is fixed, so the diner's UPI app cannot change it. Razorpay must have
  * activated "UPI QR" for the merchant (it is an on-demand feature). `closeBy` is a UNIX time (at least 2 minutes from now).

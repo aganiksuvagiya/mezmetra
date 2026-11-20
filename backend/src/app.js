@@ -15,6 +15,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { paymentSettingsRouter } from './routes/paymentSettings.js';
 import { platformRouter } from './routes/platform.js';
 import { publicRouter } from './routes/public.js';
+import { webhooksRouter } from './routes/webhooks.js';
 import { reportsRouter } from './routes/reports.js';
 import { requestsRouter } from './routes/requests.js';
 
@@ -43,6 +44,8 @@ export function createApp({ db, rateLimits = true, mailer = createMailer() } = {
       maxAge: 600,
     }),
   );
+  // Gateways call these from their servers. The signature is computed over the exact bytes, so the body stays raw here.
+  app.use('/api/webhooks', express.raw({ type: () => true, limit: '200kb' }), webhooksRouter(db));
   app.use(express.json({ limit: '100kb' }));
 
   const limits = rateLimits

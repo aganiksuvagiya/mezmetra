@@ -60,6 +60,12 @@ export const VolumeOffIcon = make(
     <path d="m22 9-6 6M16 9l6 6" />
   </>,
 );
+export const CopyIcon = make(
+  <>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+  </>,
+);
 export const DashboardIcon = make(
   <>
     <rect x="3" y="3" width="7" height="9" rx="1.5" />
