@@ -15,11 +15,12 @@ import { cx } from '../../lib/cx.js';
 import { formatMoney, formatNumber, timeAgo } from '../../lib/format.js';
 import { useAction, useDocumentTitle, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
+import { ACTIVITY_LABELS, activityNote } from './activity.js';
+import EditRestaurantDialog from './EditRestaurantDialog.jsx';
 import RestaurantAvatar from './RestaurantAvatar.jsx';
 import SuspendDialog from './SuspendDialog.jsx';
 
 const WAYS = { cash: 'Pay at counter', upi: 'UPI ID', razorpay: 'Razorpay', cashfree: 'Cashfree', phonepe: 'PhonePe', paytm: 'Paytm' };
-const ACTIVITY = { suspend: 'Suspended', reactivate: 'Reactivated', set_password: 'Set a new password', login_as: 'Logged in as the restaurant' };
 
 /** How one way of paying stands: on, set up but off, not set up, or hidden for everyone by the platform. */
 function wayState(w) {
@@ -222,7 +223,7 @@ export default function RestaurantDetail() {
   const [run, busy] = useAction();
   const q = useQuery(() => api(`/api/platform/restaurants/${id}`), [id], { interval: 30_000 });
   const d = q.data;
-  const [dialog, setDialog] = useState(null); // 'suspend' | 'password' | 'login' | 'delete' | null
+  const [dialog, setDialog] = useState(null); // 'edit' | 'suspend' | 'password' | 'login' | 'delete' | null
   useDocumentTitle(d ? `${d.name} · Owner console` : 'Restaurant · Owner console');
 
   const suspended = d?.status === 'suspended';
@@ -284,6 +285,9 @@ export default function RestaurantDetail() {
                 <div className="flex w-full flex-wrap gap-2 sm:w-auto">
                   <Button onClick={() => setDialog('login')} disabled={suspended || busy} title={suspended ? 'Reactivate it first: a suspended restaurant cannot be opened' : undefined}>
                     Log in as
+                  </Button>
+                  <Button variant="secondary" onClick={() => setDialog('edit')} disabled={busy}>
+                    Edit details
                   </Button>
                   {suspended ? (
                     <Button variant="secondary" onClick={reactivate} busy={busy}>
@@ -371,8 +375,8 @@ export default function RestaurantDetail() {
                   {d.activity.map((a, i) => (
                     <li key={`${a.at}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 px-4 py-2.5 text-sm sm:px-5">
                       <p className="font-medium text-slate-900">
-                        {ACTIVITY[a.action] ?? a.action}
-                        {a.detail?.reason ? <span className="font-normal text-slate-500">: {a.detail.reason}</span> : null}
+                        {ACTIVITY_LABELS[a.action] ?? a.action}
+                        {activityNote(a) ? <span className="font-normal text-slate-500">: {activityNote(a)}</span> : null}
                       </p>
                       <p className="text-xs text-slate-400" title={fmt.dateTime(a.at)}>
                         {a.by} · {timeAgo(a.at)}
@@ -410,6 +414,17 @@ export default function RestaurantDetail() {
         </div>
       )}
 
+      {dialog === 'edit' && d && (
+        <EditRestaurantDialog
+          restaurant={d}
+          onClose={close}
+          onDone={() => {
+            toast.success('Details saved.');
+            close();
+            q.reload();
+          }}
+        />
+      )}
       {dialog === 'suspend' && d && (
         <SuspendDialog
           restaurant={d}

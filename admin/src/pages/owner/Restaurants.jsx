@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/Badge.jsx';
 import { Button } from '../../components/Button.jsx';
 import { Card, PageHeader } from '../../components/Card.jsx';
 import { Alert, EmptyState, ErrorState } from '../../components/EmptyState.jsx';
 import { SearchInput } from '../../components/Field.jsx';
-import { OrdersIcon, RefreshIcon, ShieldIcon, TrendingIcon, UsersIcon } from '../../components/icons.jsx';
+import { OrdersIcon, PlusIcon, RefreshIcon, ShieldIcon, TrendingIcon, UsersIcon } from '../../components/icons.jsx';
 import ListSkeleton from '../../components/ListSkeleton.jsx';
 import Pagination from '../../components/Pagination.jsx';
 import { panelId, tabId, Tabs } from '../../components/Tabs.jsx';
@@ -16,6 +16,7 @@ import { cx } from '../../lib/cx.js';
 import { formatMoney, formatNumber, timeAgo } from '../../lib/format.js';
 import { useAction, useClampPage, useDebouncedValue, useDocumentTitle, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
+import AddRestaurantDialog from './AddRestaurantDialog.jsx';
 import RestaurantAvatar from './RestaurantAvatar.jsx';
 import SuspendDialog from './SuspendDialog.jsx';
 
@@ -130,6 +131,8 @@ export default function Restaurants() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [suspending, setSuspending] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const navigate = useNavigate();
   const term = useDebouncedValue(search.trim());
 
   const isOwner = Boolean(vendor?.is_super_admin);
@@ -175,12 +178,15 @@ export default function Restaurants() {
     <>
       <PageHeader
         title="Restaurants"
-        description="Every restaurant on MezMitra. Open one to see its details, help it, or suspend it."
+        description="Every restaurant on MezMitra. Add a new one, or open one to see its details, help it, or suspend it."
         actions={
           <>
             <span className="text-xs text-slate-500">{list.updatedAt ? `Updated ${fmt.clock(list.updatedAt)}` : 'Updating…'}</span>
             <Button variant="secondary" size="sm" icon={RefreshIcon} busy={list.refreshing} onClick={refreshAll}>
               Refresh
+            </Button>
+            <Button size="sm" icon={PlusIcon} onClick={() => setAdding(true)}>
+              Add restaurant
             </Button>
           </>
         }
@@ -242,11 +248,15 @@ export default function Restaurants() {
           <EmptyState
             icon={ShieldIcon}
             title={term ? 'No restaurants match' : tab === 'suspended' ? 'Nobody is suspended' : 'No restaurants yet'}
-            message={term ? `Nothing found for “${term}”.` : tab === 'suspended' ? 'Restaurants you suspend will be listed here.' : 'Restaurants that sign up will appear here.'}
+            message={term ? `Nothing found for “${term}”.` : tab === 'suspended' ? 'Restaurants you suspend will be listed here.' : 'Add the first restaurant to get started.'}
             action={
               term ? (
                 <Button variant="secondary" onClick={() => setSearch('')}>
                   Clear search
+                </Button>
+              ) : tab === 'all' ? (
+                <Button icon={PlusIcon} onClick={() => setAdding(true)}>
+                  Add restaurant
                 </Button>
               ) : undefined
             }
@@ -264,6 +274,19 @@ export default function Restaurants() {
           </>
         )}
       </Card>
+
+      {adding && (
+        <AddRestaurantDialog
+          onClose={() => setAdding(false)}
+          onCreated={() => {
+            setTab('all');
+            setSearch('');
+            setPage(1);
+            refreshAll();
+          }}
+          onOpen={(id) => navigate(`/owner/restaurants/${id}`)}
+        />
+      )}
 
       {suspending && <SuspendDialog restaurant={suspending} onClose={() => setSuspending(null)} onDone={() => changed(`${suspending.name} is suspended.`)} />}
     </>

@@ -12,6 +12,7 @@
     "migrate": "node --env-file-if-exists=.env src/migrate.js",
     "seed": "node --env-file-if-exists=.env src/seed.js",
     "reset-password": "node --env-file-if-exists=.env src/resetPassword.js",
+    "create-restaurant": "node --env-file-if-exists=.env src/createRestaurant.js",
     "db:check": "node --env-file-if-exists=.env src/dbcheck.js",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
     "demo:history": "node --env-file-if-exists=.env src/demoHistory.js",

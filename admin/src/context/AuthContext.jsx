@@ -61,7 +61,6 @@ export function AuthProvider({ children }) {
       error: state.error,
       expired: state.expired,
       login: (email, password) => startSession('/api/auth/login', { email, password }),
-      signup: (name, email, password) => startSession('/api/auth/signup', { name, email, password }),
       logout: () => {
         auth.clear();
         setState({ status: 'anon', vendor: null, error: null, expired: false });

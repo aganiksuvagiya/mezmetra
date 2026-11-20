@@ -1,6 +1,28 @@
-import { Link, Navigate, NavLink, Outlet } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronRightIcon, LogoMark, LogoutIcon } from './icons.jsx';
+
+// "Restaurants" stays lit on a restaurant's own page too.
+const NAV = [
+  { to: '/owner', label: 'Restaurants', lit: (path) => path === '/owner' || path.startsWith('/owner/restaurants') },
+  { to: '/owner/activity', label: 'Activity', lit: (path) => path.startsWith('/owner/activity') },
+];
+
+const navLink = (lit) =>
+  `inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold transition-colors ${lit ? 'bg-white/10 text-white' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`;
+
+function OwnerNav({ className }) {
+  const { pathname } = useLocation();
+  return (
+    <nav aria-label="Owner" className={className}>
+      {NAV.map((n) => (
+        <NavLink key={n.to} to={n.to} className={navLink(n.lit(pathname))} aria-current={n.lit(pathname) ? 'page' : undefined}>
+          {n.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
 
 /**
  * The owner console: a place of its own for the person who runs the whole product (every restaurant, suspend / reactivate). It is
@@ -24,18 +46,7 @@ export default function OwnerShell() {
             <span className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-brand-200 ring-1 ring-inset ring-white/20">Owner</span>
           </Link>
 
-          <nav aria-label="Owner" className="ml-3 hidden items-center sm:flex">
-            <NavLink
-              to="/owner"
-              className={({ isActive }) =>
-                `inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold transition-colors ${
-                  isActive ? 'bg-white/10 text-white' : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                }`
-              }
-            >
-              Restaurants
-            </NavLink>
-          </nav>
+          <OwnerNav className="ml-3 hidden items-center gap-1 sm:flex" />
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <span className="mr-1 hidden max-w-56 truncate text-xs text-slate-400 md:block" title={vendor.email}>
@@ -60,6 +71,8 @@ export default function OwnerShell() {
             </button>
           </div>
         </div>
+        {/* On a phone the header has no room for the links, so they get a row of their own. */}
+        <OwnerNav className="mx-auto flex w-full max-w-6xl items-center gap-1 border-t border-white/10 px-3 py-1.5 sm:hidden" />
       </header>
 
       <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8">

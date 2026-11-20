@@ -11,12 +11,6 @@ import { requireActiveVendor, requireAuth, signToken } from '../middleware/auth.
 
 const email = z.string().trim().toLowerCase().max(200).pipe(z.email('Enter a valid email address'));
 
-const signupSchema = z.object({
-  name: z.string().trim().min(2, 'Enter your restaurant name').max(100),
-  email,
-  password: z.string().min(8, 'Use at least 8 characters').max(200),
-});
-
 const loginSchema = z.object({
   email,
   password: z.string().min(1, 'Enter your password').max(200),
@@ -42,20 +36,7 @@ const hashToken = (token) => createHash('sha256').update(token).digest('hex');
 export function authRouter(db, { loginLimiter }, mailer) {
   const router = Router();
 
-  router.post('/signup', loginLimiter, async (req, res) => {
-    if (!config.allowSignup) throw new HttpError(403, 'SIGNUP_DISABLED', 'Sign up is disabled');
-    const body = parse(signupSchema, req.body);
-    const hash = await bcrypt.hash(body.password, 10);
-    const vendor = await db.tx(async (t) => {
-      const { rows } = await t.query(
-        `INSERT INTO vendors (name, email, password_hash) VALUES ($1, $2, $3) RETURNING *`,
-        [body.name, body.email, hash],
-      );
-      await t.query(`INSERT INTO vendor_payment_settings (vendor_id) VALUES ($1)`, [rows[0].id]);
-      return rows[0];
-    });
-    res.status(201).json({ data: { token: signToken(vendor.id), vendor: vendorOut(vendor) } });
-  });
+  // There is no public sign-up: a restaurant account is created by the platform owner (see routes/platform.js).
 
   router.post('/login', loginLimiter, async (req, res) => {
     const body = parse(loginSchema, req.body);

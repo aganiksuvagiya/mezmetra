@@ -62,7 +62,7 @@ async function readError(res) {
 /**
  * Low-level request. Returns the Response for 2xx, throws ApiError otherwise.
  * `body` may be a plain object (sent as JSON) or a Blob (sent raw with its own Content-Type).
- * Pass `auth: false` for the login/signup calls (a 401 there means "wrong password", not "session expired").
+ * Pass `auth: false` for the login calls (a 401 there means "wrong password", not "session expired").
  */
 async function request(path, { method = 'GET', body, query, headers = {}, auth: needsAuth = true, signal } = {}) {
   const finalHeaders = { Accept: 'application/json', ...headers };

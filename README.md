@@ -21,7 +21,7 @@ npm install
 SEED_DEMO=true npm run dev      # API :4000, admin :5180, customer menu :5174
 ```
 
-- Admin panel: http://localhost:5180 - sign in with the demo vendor from `backend/src/seed.js` (change it before real use), or sign up as a new restaurant.
+- Admin panel: http://localhost:5180 - sign in with the demo vendor from `backend/src/seed.js` (change it before real use), or create a restaurant with `NEW_PASSWORD='a-long-password' npm run create-restaurant -w backend -- "My Cafe" me@example.com` (there is no public sign-up).
 - Customer menu: in the admin go to **Tables -> QR codes**; each table has a link like `http://localhost:5174/t/<token>` (this is what the QR code contains). Open it on your phone (same Wi-Fi: use your computer's LAN address and set `CUSTOMER_APP_URL` accordingly) or paste it into the browser.
 - The customer app's start page (`http://localhost:5174/`) has a **Scan QR code** button that opens the phone camera. Browsers only allow the camera on `https://` (or `localhost`); on a plain-`http` LAN address it automatically offers "Use a photo of the QR code" instead, and there is always a paste-the-link box.
 - Without `DATABASE_URL` the API uses a file-based PGlite (a WebAssembly Postgres) in `backend/.data/pglite`. Only one process can open it at a time, which is why the demo data is seeded by the server itself (`SEED_DEMO=true`) rather than a second command. Delete that folder to start from scratch.
@@ -79,7 +79,6 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `APP_SECRET` | **Required in production**, 32+ chars. Signs login tokens and encrypts stored Razorpay secrets (AES-256-GCM). Changing it logs everyone out and invalidates saved Razorpay secrets. |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (your admin and customer URLs). |
 | `CUSTOMER_APP_URL` | Public URL of the customer app. It is the base of every table QR link. |
-| `ALLOW_SIGNUP` | `false` to stop new restaurants signing up. |
 | `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get the **Owner console** (`/owner`, linked from the sidebar): every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
 | `SMTP_URL`, `MAIL_FROM` | Email for password reset. `SMTP_URL` is any provider's SMTP address, e.g. `smtps://user:app-password@smtp.gmail.com:465` (Gmail needs an *app password*). Empty = no email is sent; in development the email is printed in the API console instead. |
 | `ADMIN_APP_URL` | Public URL of the admin site (default `http://localhost:5180`): the base of the link inside the reset email. |
@@ -125,11 +124,11 @@ Add `--email you@x.in` to use another restaurant.
 
 ## Platform owner (all restaurants)
 
-Sign up an account of your own (Admin -> Sign up), put its email in `SUPER_ADMIN_EMAILS` and restart the API. That account now has
+Create an account of your own (`NEW_PASSWORD='a-long-password' npm run create-restaurant -w backend -- "My Cafe" me@example.com`), put its email in `SUPER_ADMIN_EMAILS` and restart the API. That account now has
 the **Owner console** at `/owner` (a link above "Sign out" in the sidebar; old `/platform` links land there). It is a separate area with
 its own dark header and an "Owner" mark, not part of a restaurant's admin, and it has a link back to the account's own restaurant admin.
 It lists every restaurant with its orders, paid revenue, tables, dishes and whether it has a UPI
-ID, search and filters, and **Suspend / Reactivate**. Everyone else who opens `/owner` is sent back to their own admin. A suspended restaurant cannot sign in (it sees your optional reason), its admin
+ID, search and filters, **Add restaurant** (you type its name, email and a first password; the login is shown once so you can hand it over, because restaurants cannot sign themselves up), and **Suspend / Reactivate**. A restaurant's page has **Edit details** (fix its name or login email) and the **Activity** page lists everything done from the console, across all restaurants, with a search and a filter by kind of action. Everyone else who opens `/owner` is sent back to their own admin. A suspended restaurant cannot sign in (it sees your optional reason), its admin
 API is refused on the very next request, and its tables stop taking orders; its data is kept and reactivating restores everything.
 Platform owner accounts cannot be suspended. Removing an email from `SUPER_ADMIN_EMAILS` removes the access.
 
@@ -190,6 +189,14 @@ is tested against fakes, so do a first run with sandbox/staging keys and use *Te
 hosts, so two candidates are tried (`secure.paytmpayments.com` / `securegw.paytmpayments.in`, then `securegw.paytm.in`); set `PAYTM_THEIA_BASE`
 and `PAYTM_STATUS_BASE` if Paytm tells you otherwise.
 
+## Payment webhooks (Razorpay, PhonePe)
+
+A payment is confirmed when the gateway says so: when the diner comes back to the order page, when the gateway **calls the server** (webhook), or at the
+latest by the server's own re-check every few minutes. Webhooks make it instant even if the diner closed the page. In **Admin -> Payments** each
+restaurant sees its own private webhook address with a copy button, a few steps for the gateway's dashboard, and a box for the webhook secret
+(Razorpay) or username and password (PhonePe). The API must be reachable from the internet (set `API_PUBLIC_URL` if the address shown is wrong).
+See API.md "Payment webhooks".
+
 ## Online payments (Razorpay)
 
 Only used when `PAYMENT_METHODS` includes `razorpay`.
@@ -244,8 +251,7 @@ The free plans are fine for demos and first restaurants; for real daily use move
    `CUSTOMER_APP_URL=https://<customer>.pages.dev`; it redeploys by itself. Table QR codes use `CUSTOMER_APP_URL`, so
    **create (or re-download) the QR codes only after this step**, and use a domain you own before printing: a QR code
    breaks if the address changes. Changing a variable on Cloudflare needs a new deployment (the value is baked in at build time).
-5. **Before real restaurants:** change or delete the demo accounts from `backend/src/seed.js`, set `ALLOW_SIGNUP=false` if you
-   onboard restaurants yourself, and add your custom domains (Cloudflare Pages -> Custom domains; Render -> Custom domains).
+5. **Before real restaurants:** change or delete the demo accounts from `backend/src/seed.js`, there is no public sign-up (restaurants are added by you, from the Owner console), and add your custom domains (Cloudflare Pages -> Custom domains; Render -> Custom domains).
 
 - If you add a Content-Security-Policy header to the customer site, allow Cashfree (`script-src https://sdk.cashfree.com`, `frame-src https://sdk.cashfree.com https://payments.cashfree.com https://sandbox.cashfree.com`, `connect-src https://api.cashfree.com https://sandbox.cashfree.com`) and Razorpay Checkout: `script-src https://checkout.razorpay.com`, `frame-src https://api.razorpay.com https://checkout.razorpay.com`, `connect-src https://lumberjack.razorpay.com` plus your API origin.
 - Any other Node 22 host works for the API (`npm run start -w backend`, `NODE_ENV=production`, the variables above); any static host with a fallback to `index.html` works for the sites.

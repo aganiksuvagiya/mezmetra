@@ -80,7 +80,6 @@ export const config = {
   autoMigrate: bool(env.AUTO_MIGRATE, true),
   appSecret,
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
-  allowSignup: bool(env.ALLOW_SIGNUP, true),
   // A Set (read at request time, so tests can switch it): 'upi' | 'cash' | 'razorpay' | 'cashfree' | 'phonepe' | 'paytm'.
   paymentMethods: paymentMethods(env.PAYMENT_METHODS),
   // A Set of lower-case emails (read at request time, so tests can change it).

@@ -7,13 +7,17 @@ process.env.PAYMENT_METHODS = 'upi,cash,razorpay,cashfree,phonepe,paytm';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 const { config } = await import('../src/config.js');
 const { createDb } = await import('../src/db.js');
 const { migrate } = await import('../src/migrate.js');
 const { createApp } = await import('../src/app.js');
 const { csvCell, toCsv } = await import('../src/lib/csv.js');
+const { reconcileOnce } = await import('../src/lib/reconcile.js');
+const { createRestaurantAccount } = await import('../src/lib/accounts.js');
+const { signToken } = await import('../src/middleware/auth.js');
+const { vendorOut } = await import('../src/lib/serialize.js');
 
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -49,6 +53,15 @@ async function api(method, path, { token, body, headers = {}, raw } = {}) {
   const type = res.headers.get('content-type') || '';
   const payload = type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
   return { status: res.status, body: payload, headers: res.headers };
+}
+
+/**
+ * Restaurants are created by the platform owner only (there is no public sign-up). Tests that just need a restaurant to work with make one
+ * straight in the database and get a login for it; the owner's own way of adding one is tested in its own describe below.
+ */
+async function signupAccount({ name, email, password }) {
+  const vendor = await createRestaurantAccount(db, { name, email, password });
+  return { status: 201, body: { data: { token: signToken(vendor.id), vendor: vendorOut(vendor) } } };
 }
 
 before(async () => {
@@ -116,20 +129,15 @@ describe('auth', () => {
     assert.equal(r.body.data.status, 'ok');
   });
 
-  it('signs up, rejects weak passwords and duplicate emails', async () => {
-    const weak = await api('POST', '/api/auth/signup', { body: { name: 'Spice Hub', email: 'owner@spice.test', password: 'short' } });
-    assert.equal(weak.status, 400);
-    assert.equal(weak.body.error.code, 'VALIDATION_ERROR');
+  it('has no public sign-up: the first restaurant is created straight in the database', async () => {
+    const closed = await api('POST', '/api/auth/signup', { body: { name: 'Spice Hub', email: 'owner@spice.test', password: 'a-long-enough-password' } });
+    assert.equal(closed.status, 404);
 
-    const ok = await api('POST', '/api/auth/signup', { body: { name: 'Spice Hub', email: 'Owner@Spice.test', password: 'a-long-enough-password' } });
-    assert.equal(ok.status, 201);
+    const ok = await signupAccount({ name: 'Spice Hub', email: 'Owner@Spice.test', password: 'a-long-enough-password' });
     assert.ok(ok.body.data.token);
     assert.equal(ok.body.data.vendor.email, 'owner@spice.test');
     assert.equal(ok.body.data.vendor.password_hash, undefined);
     s.token = ok.body.data.token;
-
-    const dup = await api('POST', '/api/auth/signup', { body: { name: 'Other', email: 'owner@spice.test', password: 'another-long-password' } });
-    assert.equal(dup.status, 409);
   });
 
   it('logs in with the right password only', async () => {
@@ -213,7 +221,7 @@ describe('menu management', () => {
   });
 
   it('keeps vendors isolated from each other', async () => {
-    const other = await api('POST', '/api/auth/signup', { body: { name: 'Other Cafe', email: 'cafe@other.test', password: 'another-long-password' } });
+    const other = await signupAccount({ name: 'Other Cafe', email: 'cafe@other.test', password: 'another-long-password' });
     s.otherToken = other.body.data.token;
     assert.equal((await api('GET', `/api/admin/categories/${s.pizzaId}`, { token: s.otherToken })).status, 404);
     assert.equal((await api('PATCH', `/api/admin/items/${s.pizzaItem.id}`, { token: s.otherToken, body: { name: 'hacked' } })).status, 404);
@@ -698,7 +706,7 @@ describe('platform owner (super admin)', () => {
   const baseItems = () => [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [s.pizzaItem.option_groups[0].options[0].id] }];
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'MezMitra HQ', email: OWNER, password: 'a-long-enough-password' } });
+    const su = await signupAccount({ name: 'MezMitra HQ', email: OWNER, password: 'a-long-enough-password' });
     ownerToken = su.body.data.token;
     ownerId = su.body.data.vendor.id;
     config.superAdminEmails = new Set([OWNER]);
@@ -820,7 +828,7 @@ describe("owner console: a restaurant's page and the owner's actions", () => {
   const PASSWORD = 'a-long-enough-password';
   let ownerToken;
   let ownerId;
-  const signup = async (name, email) => (await api('POST', '/api/auth/signup', { body: { name, email, password: PASSWORD } })).body.data;
+  const signup = async (name, email) => (await signupAccount({ name, email, password: PASSWORD })).body.data;
   const ownerApi = (method, path, body) => api(method, `/api/platform${path}`, { token: ownerToken, body });
 
   before(async () => {
@@ -836,6 +844,9 @@ describe("owner console: a restaurant's page and the owner's actions", () => {
   it('is only for the owner', async () => {
     const other = await signup('Not The Owner', 'not.owner@mezmitra.test');
     for (const [method, path, body] of [
+      ['POST', '/restaurants', { name: 'Sneaky Cafe', email: 'sneaky@mezmitra.test', password: 'another-long-password' }],
+      ['GET', '/activity'],
+      ['POST', `/restaurants/${other.vendor.id}/profile`, { name: 'Renamed Cafe', email: 'renamed@mezmitra.test' }],
       ['GET', `/restaurants/${other.vendor.id}`],
       ['POST', `/restaurants/${other.vendor.id}/password`, { password: 'another-long-password' }],
       ['POST', `/restaurants/${other.vendor.id}/login-as`, {}],
@@ -844,6 +855,112 @@ describe("owner console: a restaurant's page and the owner's actions", () => {
       assert.equal((await api(method, `/api/platform${path}`, { token: other.token, body })).status, 403, `${method} ${path}`);
       assert.equal((await api(method, `/api/platform${path}`, { body })).status, 401, `${method} ${path} (signed out)`);
     }
+  });
+
+  it('adds a restaurant: it can sign in at once, shows in the list and in the owner record, and a duplicate email is refused', async () => {
+    const bad = [
+      [{ name: 'X', email: 'x.cafe@mezmitra.test', password: 'a-long-enough-password' }, 'name'],
+      [{ name: 'Added Cafe', email: 'not-an-email', password: 'a-long-enough-password' }, 'email'],
+      [{ name: 'Added Cafe', email: 'added.cafe@mezmitra.test', password: 'short' }, 'password'],
+    ];
+    for (const [body, field] of bad) {
+      const r = await ownerApi('POST', '/restaurants', body);
+      assert.equal(r.status, 400, field);
+      assert.equal(r.body.error.code, 'VALIDATION_ERROR', field);
+    }
+
+    const made = await ownerApi('POST', '/restaurants', { name: '  Added Cafe ', email: 'Added.Cafe@Mezmitra.test', password: 'a-long-enough-password' });
+    assert.equal(made.status, 201);
+    const d = made.body.data;
+    assert.equal(d.name, 'Added Cafe');
+    assert.equal(d.email, 'added.cafe@mezmitra.test');
+    assert.equal(d.status, 'active');
+    assert.equal(d.is_platform_owner, false);
+    assert.equal(JSON.stringify(made.body).includes('a-long-enough-password'), false, 'the password is never echoed back');
+    assert.equal(JSON.stringify(made.body).includes('password_hash'), false);
+
+    // The new restaurant signs in with what the owner chose, and its payment settings exist from the start.
+    const login = await api('POST', '/api/auth/login', { body: { email: 'added.cafe@mezmitra.test', password: 'a-long-enough-password' } });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.data.vendor.name, 'Added Cafe');
+    assert.equal((await api('GET', '/api/admin/payment-settings', { token: login.body.data.token })).status, 200);
+
+    const dup = await ownerApi('POST', '/restaurants', { name: 'Another', email: 'ADDED.cafe@mezmitra.test', password: 'another-long-password' });
+    assert.equal(dup.status, 409);
+    assert.equal(dup.body.error.code, 'EMAIL_TAKEN');
+
+    const found = await ownerApi('GET', '/restaurants?q=Added%20Cafe');
+    assert.deepEqual(found.body.data.map((r) => r.id), [d.id]);
+    const page = await ownerApi('GET', `/restaurants/${d.id}`);
+    assert.deepEqual(page.body.data.activity.map((a) => [a.action, a.by]), [['create', OWNER]]);
+  });
+
+  it("fixes a restaurant's name and login email; refuses a taken or reserved email and a platform owner's account; records only real changes", async () => {
+    const r = await signup('Typo Cafe', 'typo.cafe@mezmitra.test');
+    await signup('Taken Cafe', 'taken.cafe@mezmitra.test');
+    const url = `/restaurants/${r.vendor.id}/profile`;
+
+    assert.equal((await ownerApi('POST', url, { name: 'F', email: 'fixed.cafe@mezmitra.test' })).status, 400);
+    assert.equal((await ownerApi('POST', url, { name: 'Fixed Cafe', email: 'nope' })).status, 400);
+
+    const fixed = await ownerApi('POST', url, { name: ' Fixed Cafe ', email: 'Fixed.Cafe@Mezmitra.test' });
+    assert.equal(fixed.status, 200);
+    assert.equal(fixed.body.data.name, 'Fixed Cafe');
+    assert.equal(fixed.body.data.email, 'fixed.cafe@mezmitra.test');
+    // The new email signs in with the same password; the old one no longer does.
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'fixed.cafe@mezmitra.test', password: PASSWORD } })).status, 200);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'typo.cafe@mezmitra.test', password: PASSWORD } })).status, 401);
+
+    // Saving the same thing again changes nothing and adds nothing to the record.
+    assert.equal((await ownerApi('POST', url, { name: 'Fixed Cafe', email: 'fixed.cafe@mezmitra.test' })).status, 200);
+    // Only the name changes: the email is not recorded as changed.
+    await ownerApi('POST', url, { name: 'Fixed Cafe 2', email: 'fixed.cafe@mezmitra.test' });
+    const page = await ownerApi('GET', `/restaurants/${r.vendor.id}`);
+    const updates = page.body.data.activity.filter((a) => a.action === 'update');
+    assert.equal(updates.length, 2);
+    assert.deepEqual(updates[0].detail.changes, { name: { from: 'Fixed Cafe', to: 'Fixed Cafe 2' } });
+    assert.deepEqual(updates[1].detail.changes, { name: { from: 'Typo Cafe', to: 'Fixed Cafe' }, email: { from: 'typo.cafe@mezmitra.test', to: 'fixed.cafe@mezmitra.test' } });
+
+    const taken = await ownerApi('POST', url, { name: 'Fixed Cafe 2', email: 'TAKEN.cafe@mezmitra.test' });
+    assert.equal(taken.status, 409);
+    assert.equal(taken.body.error.code, 'EMAIL_TAKEN');
+
+    config.superAdminEmails = new Set([OWNER, 'second.owner@mezmitra.test']);
+    const reserved = await ownerApi('POST', url, { name: 'Fixed Cafe 2', email: 'second.owner@mezmitra.test' });
+    config.superAdminEmails = new Set([OWNER]);
+    assert.equal(reserved.status, 409);
+    assert.equal(reserved.body.error.code, 'RESERVED_EMAIL');
+
+    const own = await ownerApi('POST', `/restaurants/${ownerId}/profile`, { name: 'Hijacked HQ', email: 'hijack@mezmitra.test' });
+    assert.equal(own.status, 409);
+    assert.equal(own.body.error.code, 'CANNOT_EDIT_OWNER');
+    assert.equal((await ownerApi('POST', '/restaurants/999999/profile', { name: 'Ghost Cafe', email: 'ghost@mezmitra.test' })).status, 404);
+  });
+
+  it("lists everything the owner did across all restaurants, newest first, filterable, and still reads right after a restaurant is deleted", async () => {
+    const r = await signup('Gone Cafe', 'gone.cafe@mezmitra.test');
+    await ownerApi('POST', `/restaurants/${r.vendor.id}/profile`, { name: 'Gone Cafe', email: 'gone.cafe2@mezmitra.test' });
+    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true, reason: 'test' });
+    await ownerApi('POST', `/restaurants/${r.vendor.id}/delete`, { confirm_name: 'Gone Cafe' });
+
+    const all = await ownerApi('GET', '/activity?q=Gone%20Cafe');
+    assert.equal(all.status, 200);
+    assert.deepEqual(all.body.data.map((a) => a.action), ['delete', 'suspend', 'update']);
+    assert.ok(all.body.data.every((a) => a.by === OWNER && a.restaurant.name === 'Gone Cafe' && a.restaurant.id === null), 'a deleted restaurant has nothing to link to');
+    assert.equal(all.body.data[1].detail.reason, 'test');
+    assert.equal(all.body.meta.total, 3);
+
+    const onlyDeletes = await ownerApi('GET', '/activity?action=delete&per_page=1');
+    assert.deepEqual(onlyDeletes.body.data.map((a) => a.action), ['delete']);
+    assert.equal(onlyDeletes.body.meta.per_page, 1);
+
+    // An entry for a restaurant that still exists links to it.
+    const alive = await signup('Alive Cafe', 'alive.cafe@mezmitra.test');
+    await ownerApi('PATCH', `/restaurants/${alive.vendor.id}`, { suspended: true });
+    const first = (await ownerApi('GET', '/activity?q=alive.cafe')).body.data[0];
+    assert.equal(first.restaurant.id, alive.vendor.id);
+
+    assert.equal((await ownerApi('GET', '/activity?action=bogus')).status, 400);
   });
 
   it("shows one restaurant's profile, payments and recent orders (never a secret)", async () => {
@@ -984,7 +1101,7 @@ describe('changing your own password', () => {
   let oldSession;
 
   before(async () => {
-    oldSession = (await api('POST', '/api/auth/signup', { body: { name: 'Changer Cafe', email: EMAIL, password: OLD } })).body.data.token;
+    oldSession = (await signupAccount({ name: 'Changer Cafe', email: EMAIL, password: OLD })).body.data.token;
   });
 
   it('needs a signed-in session', async () => {
@@ -1033,7 +1150,7 @@ describe('password reset by email', () => {
   let vendorId;
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'Forgetful Cafe', email: EMAIL, password: OLD } });
+    const su = await signupAccount({ name: 'Forgetful Cafe', email: EMAIL, password: OLD });
     oldSession = su.body.data.token;
     vendorId = su.body.data.vendor.id;
   });
@@ -1162,7 +1279,7 @@ describe('sold-out dishes', () => {
   });
 
   it('puts every sold-out dish back in stock at once, and only for this restaurant', async () => {
-    const other = await api('POST', '/api/auth/signup', { body: { name: 'Other Place', email: 'other.place@example.test', password: 'a-long-enough-password' } });
+    const other = await signupAccount({ name: 'Other Place', email: 'other.place@example.test', password: 'a-long-enough-password' });
     assert.equal((await api('POST', '/api/admin/items/restock', { token: other.body.data.token })).body.data.restocked, 0);
     assert.equal((await stock()).meta.sold_out, 1, "another restaurant's restock changes nothing here");
 
@@ -1213,7 +1330,7 @@ describe('sales reports (summary, CSV, PDF)', () => {
     const wide = (await get(`summary?from=${ymd(-30)}&to=${ymd(1)}`)).body.data;
     const today = (await get('summary')).body.data;
     assert.equal(wide.sales.total, today.sales.total);
-    const other = await api('POST', '/api/auth/signup', { body: { name: 'Quiet Place', email: 'quiet.place@example.test', password: 'a-long-enough-password' } });
+    const other = await signupAccount({ name: 'Quiet Place', email: 'quiet.place@example.test', password: 'a-long-enough-password' });
     const mine = await get('summary', other.body.data.token);
     assert.deepEqual([mine.body.data.sales.orders, mine.body.data.placed.total], [0, 0]);
   });
@@ -1270,7 +1387,7 @@ describe('demo data helpers (sample prices and order history)', () => {
   const sampleRows = async () => (await db.query(`SELECT * FROM orders WHERE vendor_id = $1 AND idempotency_key LIKE 'demo-history-%'`, [vendorId])).rows;
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'Demo Helper Cafe', email: OWNER, password: 'a-long-enough-password' } });
+    const su = await signupAccount({ name: 'Demo Helper Cafe', email: OWNER, password: 'a-long-enough-password' });
     token = su.body.data.token;
     vendorId = su.body.data.vendor.id;
     await api('PATCH', '/api/admin/vendor', { token, body: { tax_percent: 5 } });
@@ -1345,7 +1462,7 @@ describe('demo data helpers (sample prices and order history)', () => {
 
   it('refuses to invent orders for a restaurant without a menu or tables', async () => {
     const { generateHistory } = await import('../src/demoHistory.js');
-    const empty = await api('POST', '/api/auth/signup', { body: { name: 'Empty Place', email: 'empty.place@example.test', password: 'a-long-enough-password' } });
+    const empty = await signupAccount({ name: 'Empty Place', email: 'empty.place@example.test', password: 'a-long-enough-password' });
     await assert.rejects(generateHistory(db, { vendorId: empty.body.data.vendor.id, days: 2, orders: 4 }), /needs a menu and at least one table/);
   });
 });
@@ -1358,7 +1475,7 @@ describe('UPI needs a UPI ID', () => {
   const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'Mobile Pay Cafe', email: 'mobile.pay@example.test', password: 'a-long-enough-password' } });
+    const su = await signupAccount({ name: 'Mobile Pay Cafe', email: 'mobile.pay@example.test', password: 'a-long-enough-password' });
     token = su.body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
@@ -1396,7 +1513,7 @@ describe('UPI app buttons (off by default)', () => {
   const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'Buttons Cafe', email: 'buttons.cafe@example.test', password: 'a-long-enough-password' } });
+    const su = await signupAccount({ name: 'Buttons Cafe', email: 'buttons.cafe@example.test', password: 'a-long-enough-password' });
     token = su.body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
@@ -1482,7 +1599,7 @@ describe('online payments (Cashfree)', () => {
     savedBase = config.cashfreeApiBase;
     config.cashfreeApiBase = `http://127.0.0.1:${mock.address().port}`;
 
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Cashfree Cafe', email: 'cashfree.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Cashfree Cafe', email: 'cashfree.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'C1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -1632,7 +1749,7 @@ describe('online payment by scanning a QR (Razorpay)', () => {
   const verifyQr = (order) => api('POST', `/api/public/orders/${order.token}/razorpay-qr/verify`);
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'QR Cafe', email: 'qr.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'QR Cafe', email: 'qr.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'Q1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -1716,7 +1833,7 @@ describe('veg / non-veg marker on dishes', () => {
   const patch = (id, body) => api('PATCH', `/api/admin/items/${id}`, { token, body });
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Diet Cafe', email: 'diet.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Diet Cafe', email: 'diet.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     categoryId = (await api('POST', '/api/admin/categories', { token, body: { name: 'Mains' } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'D1', capacity: 2 } })).body.data.qr_url.split('/').pop();
   });
@@ -1781,7 +1898,7 @@ describe('order ready (the diner is told the food is ready)', () => {
   const ready = (id) => api('POST', `/api/admin/orders/${id}/ready`, { token });
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Ready Cafe', email: 'ready.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Ready Cafe', email: 'ready.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'R1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -1820,7 +1937,7 @@ describe('order ready (the diner is told the food is ready)', () => {
     const order = await place();
     const id = await adminId(order);
     await api('PATCH', `/api/admin/orders/${id}/status`, { token, body: { status: 'accepted' } });
-    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Cafe', email: 'other.ready@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const other = (await signupAccount({ name: 'Other Cafe', email: 'other.ready@example.test', password: 'a-long-enough-password' })).body.data.token;
     assert.equal((await api('POST', `/api/admin/orders/${id}/ready`, { token: other })).status, 404);
   });
 });
@@ -1835,7 +1952,7 @@ describe('table code (fake-order guard)', () => {
   const latest = async () => (await api('GET', '/api/admin/orders?per_page=1', { token })).body.data[0];
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Code Cafe', email: 'code.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Code Cafe', email: 'code.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     table = (await api('POST', '/api/admin/tables', { token, body: { number: 'K1', capacity: 2 } })).body.data;
@@ -1921,7 +2038,7 @@ describe('table code (fake-order guard)', () => {
   });
 
   it("does not let one restaurant read or change another's table code", async () => {
-    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Code Cafe', email: 'other.code@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const other = (await signupAccount({ name: 'Other Code Cafe', email: 'other.code@example.test', password: 'a-long-enough-password' })).body.data.token;
     assert.equal((await api('POST', `/api/admin/tables/${table.id}/code`, { token: other })).status, 404);
     const list = await api('GET', '/api/admin/tables', { token: other });
     assert.ok(!JSON.stringify(list.body).includes(table.qr_url));
@@ -1938,7 +2055,7 @@ describe('call the waiter / ask for the bill', () => {
   const open = () => api('GET', '/api/admin/requests', { token });
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Call Cafe', email: 'call.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Call Cafe', email: 'call.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const t = (await api('POST', '/api/admin/tables', { token, body: { number: 'W1', capacity: 2 } })).body.data;
     tableId = t.id;
     qr = t.qr_url.split('/').pop();
@@ -1996,7 +2113,7 @@ describe('call the waiter / ask for the bill', () => {
   });
 
   it("keeps one restaurant's requests from another", async () => {
-    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Call Cafe', email: 'other.call@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const other = (await signupAccount({ name: 'Other Call Cafe', email: 'other.call@example.test', password: 'a-long-enough-password' })).body.data.token;
     assert.deepEqual((await api('GET', '/api/admin/requests', { token: other })).body.data, []);
     const [first] = (await open()).body.data;
     assert.equal((await api('POST', `/api/admin/requests/${first.id}/done`, { token: other })).status, 404);
@@ -2019,7 +2136,7 @@ describe("table bill (one payment for everything a table ordered)", () => {
   const settle = (method) => api('POST', `/api/admin/tables/${table.id}/settle`, { token, body: { method } });
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Bill Cafe', email: 'bill.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Bill Cafe', email: 'bill.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 100 } })).body.data.id;
     table = (await api('POST', '/api/admin/tables', { token, body: { number: 'B1', capacity: 4 } })).body.data;
@@ -2084,7 +2201,7 @@ describe("table bill (one payment for everything a table ordered)", () => {
 
   it("does not let another restaurant see or settle this table's bill", async () => {
     await order();
-    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Bill Cafe', email: 'other.bill@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const other = (await signupAccount({ name: 'Other Bill Cafe', email: 'other.bill@example.test', password: 'a-long-enough-password' })).body.data.token;
     assert.equal((await api('GET', `/api/admin/tables/${table.id}/bill`, { token: other })).status, 404);
     assert.equal((await api('POST', `/api/admin/tables/${table.id}/settle`, { token: other, body: { method: 'cash' } })).status, 404);
     assert.equal((await api('GET', `/api/admin/tables/${table.id}/bill`)).status, 401);
@@ -2112,7 +2229,7 @@ describe('refund of an online payment', () => {
   };
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Refund Cafe', email: 'refund.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Refund Cafe', email: 'refund.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'F1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -2173,7 +2290,7 @@ describe('refund of an online payment', () => {
     const diner = await placeOnline();
     await payOnline(diner);
     const mine = await adminOrder();
-    const other = (await api('POST', '/api/auth/signup', { body: { name: 'Other Refund Cafe', email: 'other.refund@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    const other = (await signupAccount({ name: 'Other Refund Cafe', email: 'other.refund@example.test', password: 'a-long-enough-password' })).body.data.token;
     assert.equal((await api('POST', `/api/admin/orders/${mine.id}/refund`, { token: other })).status, 404);
   });
 });
@@ -2185,11 +2302,11 @@ describe('restaurant logo', () => {
   const put = (raw, type = 'image/png', tok = token) => api('PUT', '/api/admin/vendor/logo', { token: tok, raw, headers: { 'Content-Type': type } });
 
   before(async () => {
-    const su = await api('POST', '/api/auth/signup', { body: { name: 'Logo Cafe', email: 'logo.cafe@example.test', password: 'a-long-enough-password' } });
+    const su = await signupAccount({ name: 'Logo Cafe', email: 'logo.cafe@example.test', password: 'a-long-enough-password' });
     token = su.body.data.token;
     assert.equal(su.body.data.vendor.logo_url, null, 'no logo to begin with');
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'L1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-    otherToken = (await api('POST', '/api/auth/signup', { body: { name: 'No Logo Cafe', email: 'no.logo@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    otherToken = (await signupAccount({ name: 'No Logo Cafe', email: 'no.logo@example.test', password: 'a-long-enough-password' })).body.data.token;
   });
 
   it('refuses anything that is not a real image', async () => {
@@ -2355,7 +2472,7 @@ describe('online payments (PhonePe)', () => {
     savedBase = config.phonepeApiBase;
     config.phonepeApiBase = `http://127.0.0.1:${mock.address().port}`;
 
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'PhonePe Cafe', email: 'phonepe.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'PhonePe Cafe', email: 'phonepe.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'P1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -2498,6 +2615,265 @@ describe('online payments (PhonePe)', () => {
   });
 });
 
+describe('payment webhooks (the gateway tells us a payment arrived)', () => {
+  const PASSWORD = 'a-long-enough-password';
+  const RZ_SECRET = 'whsec-razorpay-1234';
+  const PP_USER = 'hook-user';
+  const PP_PASS = 'hook-password-99';
+  const CLIENT_ID = 'TESTMERCHANT_2501';
+  const CLIENT_SECRET = 'phonepe-client-secret-value';
+  const ppOrders = new Map(); // fake PhonePe: merchantOrderId -> { amount, state, paidAmount }
+  let phonepe;
+  let savedBase;
+  let rz; // the Razorpay restaurant
+  let pp; // the PhonePe restaurant
+  const none = () => {};
+
+  const setup = async (name, email) => {
+    const token = (await signupAccount({ name, email, password: PASSWORD })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data;
+    const qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'W1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    return { token, itemId: item.id, qr, put: (body) => api('PUT', '/api/admin/payment-settings', { token, body }) };
+  };
+  const place = async (r) => {
+    const res = await api('POST', `/api/public/t/${r.qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: r.itemId, quantity: 2, option_ids: [] }] } });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.data;
+  };
+  const view = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+  const hookKey = async (r) => (await api('GET', '/api/admin/payment-settings', { token: r.token })).body.data.webhook_url_razorpay.split('/').pop();
+
+  // Razorpay signs the raw body with the webhook secret.
+  const rzHook = (key, event, { secret = RZ_SECRET, signature } = {}) => {
+    const raw = JSON.stringify(event);
+    const sig = signature ?? createHmac('sha256', secret).update(raw).digest('hex');
+    return api('POST', `/api/webhooks/razorpay/${key}`, { raw, headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': sig } });
+  };
+  const captured = (orderId, amountPaise, paymentId = 'pay_HOOK0001') => ({
+    event: 'order.paid',
+    payload: { order: { entity: { id: orderId, status: 'paid' } }, payment: { entity: { id: paymentId, order_id: orderId, amount: amountPaise, status: 'captured' } } },
+  });
+  // PhonePe sends SHA256(username:password) in the Authorization header.
+  const ppAuth = createHash('sha256').update(`${PP_USER}:${PP_PASS}`).digest('hex');
+  const ppHook = (key, merchantOrderId, event = 'checkout.order.completed', authorization = ppAuth) =>
+    api('POST', `/api/webhooks/phonepe/${key}`, { body: { event, payload: { merchantOrderId, state: 'COMPLETED' } }, headers: { Authorization: authorization } });
+  const attemptOf = async (order, provider) =>
+    (await db.query(`SELECT p.* FROM payments p JOIN orders o ON o.id = p.order_id WHERE o.public_token = $1 AND p.provider = $2 ORDER BY p.id DESC LIMIT 1`, [order.token, provider])).rows[0];
+
+  before(async () => {
+    phonepe = await new Promise((resolve) => {
+      const server = http
+        .createServer((req, res) => {
+          let data = '';
+          req.on('data', (c) => (data += c));
+          req.on('end', () => {
+            const path = req.url.split('?')[0];
+            res.setHeader('Content-Type', 'application/json');
+            const send = (code, json) => {
+              res.statusCode = code;
+              res.end(JSON.stringify(json));
+            };
+            if (path === '/v1/oauth/token') return send(200, { access_token: 'tok_hook', token_type: 'O-Bearer', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+            if (req.method === 'POST' && path === '/checkout/v2/pay') {
+              const body = JSON.parse(data);
+              ppOrders.set(body.merchantOrderId, { amount: body.amount, state: 'PENDING' });
+              return send(200, { orderId: `OMO_${body.merchantOrderId}`, state: 'PENDING', redirectUrl: `https://mercury-uat.phonepe.example/pay/${body.merchantOrderId}` });
+            }
+            const m = path.match(/^\/checkout\/v2\/order\/([^/]+)\/status$/);
+            if (req.method === 'GET' && m) {
+              const found = ppOrders.get(decodeURIComponent(m[1]));
+              if (!found) return send(404, { code: 'INVALID_MERCHANT_ORDER_ID' });
+              const amount = found.paidAmount ?? found.amount;
+              return send(200, { orderId: `OMO_${m[1]}`, state: found.state, amount, paymentDetails: found.state === 'COMPLETED' ? [{ transactionId: `TXN_${m[1]}`, state: 'COMPLETED', amount }] : [] });
+            }
+            return send(404, { code: 'NOT_FOUND' });
+          });
+        })
+        .listen(0, '127.0.0.1', () => resolve(server));
+    });
+    savedBase = config.phonepeApiBase;
+    config.phonepeApiBase = `http://127.0.0.1:${phonepe.address().port}`;
+
+    rz = await setup('Hook Razorpay Cafe', 'hook.razorpay@example.test');
+    assert.equal((await rz.put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' })).status, 200);
+    pp = await setup('Hook PhonePe Cafe', 'hook.phonepe@example.test');
+    assert.equal((await pp.put({ phonepe_enabled: true, phonepe_client_id: CLIENT_ID, phonepe_client_version: '1', phonepe_client_secret: CLIENT_SECRET })).status, 200);
+  });
+
+  after(async () => {
+    config.phonepeApiBase = savedBase;
+    await new Promise((r) => phonepe.close(r));
+  });
+
+  it("gives each restaurant its own private webhook address, and keeps the secrets write-only", async () => {
+    const a = (await api('GET', '/api/admin/payment-settings', { token: rz.token })).body.data;
+    const b = (await api('GET', '/api/admin/payment-settings', { token: pp.token })).body.data;
+    assert.match(a.webhook_url_razorpay, /\/api\/webhooks\/razorpay\/[a-f0-9]{32}$/);
+    assert.match(a.webhook_url_phonepe, /\/api\/webhooks\/phonepe\/[a-f0-9]{32}$/);
+    assert.notEqual(a.webhook_url_razorpay.split('/').pop(), b.webhook_url_razorpay.split('/').pop(), 'unguessable and different for every restaurant');
+    assert.equal(a.webhook_url_razorpay.split('/').pop(), a.webhook_url_phonepe.split('/').pop(), 'one key per restaurant');
+    assert.deepEqual([a.razorpay_webhook_set, a.phonepe_webhook_set], [false, false]);
+
+    assert.equal((await rz.put({ razorpay_webhook_secret: 'short' })).status, 400);
+    const saved = await rz.put({ razorpay_webhook_secret: RZ_SECRET });
+    assert.equal(saved.body.data.razorpay_webhook_set, true);
+    assert.ok(!JSON.stringify(saved.body).includes(RZ_SECRET), 'the secret is never returned');
+
+    assert.equal((await pp.put({ phonepe_webhook_username: PP_USER })).status, 400, 'both the username and the password');
+    assert.equal((await pp.put({ phonepe_webhook_password: PP_PASS })).status, 400);
+    const ppSaved = await pp.put({ phonepe_webhook_username: PP_USER, phonepe_webhook_password: PP_PASS });
+    assert.equal(ppSaved.body.data.phonepe_webhook_set, true);
+    assert.ok(!JSON.stringify(ppSaved.body).includes(PP_PASS));
+    const stored = await db.query(`SELECT razorpay_webhook_secret_enc, phonepe_webhook_auth_enc FROM vendor_payment_settings WHERE razorpay_webhook_secret_enc IS NOT NULL OR phonepe_webhook_auth_enc IS NOT NULL`);
+    assert.ok(stored.rows.every((row) => !String(row.razorpay_webhook_secret_enc ?? '').includes(RZ_SECRET) && !String(row.phonepe_webhook_auth_enc ?? '').includes(ppAuth)), 'encrypted at rest');
+  });
+
+  it('refuses a webhook it cannot place or trust', async () => {
+    assert.equal((await rzHook('f'.repeat(32), captured('order_X', 100))).status, 404, 'unknown address');
+    assert.equal((await rzHook('not-a-key', captured('order_X', 100))).status, 404);
+    const key = await hookKey(rz);
+    const forged = await rzHook(key, captured('order_X', 100), { secret: 'some-other-secret' });
+    assert.equal(forged.status, 400);
+    assert.equal(forged.body.error.code, 'WEBHOOK_SIGNATURE_INVALID');
+    assert.equal((await rzHook(key, captured('order_X', 100), { signature: '' })).status, 400, 'no signature at all');
+    const ppKey = await hookKey(pp);
+    const wrong = await ppHook(ppKey, 'mz_1_x', 'checkout.order.completed', 'f'.repeat(64));
+    assert.equal(wrong.status, 401);
+    assert.equal((await ppHook(ppKey, 'mz_1_x', 'checkout.order.completed', '')).status, 401);
+    // A restaurant that has not set a webhook secret up yet.
+    const fresh = await setup('Hook Fresh Cafe', 'hook.fresh@example.test');
+    const freshKey = await hookKey(fresh);
+    assert.equal((await rzHook(freshKey, captured('order_X', 100))).body.error.code, 'WEBHOOK_NOT_SET_UP');
+    assert.equal((await ppHook(freshKey, 'mz_1_x')).body.error.code, 'WEBHOOK_NOT_SET_UP');
+  });
+
+  it('marks a Razorpay order paid from the webhook, with the diner nowhere near the page', async () => {
+    const order = await place(rz);
+    assert.equal((await api('POST', `/api/public/orders/${order.token}/razorpay`)).status, 200); // the diner opened the Razorpay checkout
+    const key = await hookKey(rz);
+    const amount = Math.round(order.total * 100);
+
+    const wrongAmount = await rzHook(key, captured('order_MOCK123456', amount - 100));
+    assert.equal(wrongAmount.status, 200);
+    assert.equal(wrongAmount.body.data.mismatch, true);
+    assert.equal((await view(order)).payment_status, 'unpaid', 'a different amount is never accepted');
+    assert.equal((await rzHook(key, { event: 'payment.failed', payload: { payment: { entity: { id: 'pay_F', order_id: 'order_MOCK123456', amount, status: 'failed' } } } })).body.data.ignored, true);
+    assert.equal((await view(order)).payment_status, 'unpaid');
+
+    const paid = await rzHook(key, captured('order_MOCK123456', amount));
+    assert.equal(paid.status, 200);
+    assert.equal(paid.body.data.paid, true);
+    const after = await view(order);
+    assert.equal(after.payment_status, 'paid');
+    assert.equal(after.payment_method, 'razorpay');
+    assert.equal(after.status, 'accepted', 'paying online accepts the order');
+    const attempt = await attemptOf(order, 'razorpay');
+    assert.deepEqual([attempt.status, attempt.provider_payment_id], ['paid', 'pay_HOOK0001']);
+
+    // Razorpay may send the same event again, and the diner's own page may report it too: nothing changes twice.
+    const again = await rzHook(key, captured('order_MOCK123456', amount));
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.already, true);
+    const sig = createHmac('sha256', 'secret-value-123').update('order_MOCK123456|pay_HOOK0001').digest('hex');
+    assert.equal((await api('POST', `/api/public/orders/${order.token}/razorpay/verify`, { body: { razorpay_order_id: 'order_MOCK123456', razorpay_payment_id: 'pay_HOOK0001', razorpay_signature: sig } })).body.data.payment_status, 'paid');
+  });
+
+  it("does not let one restaurant's webhook pay another restaurant's order", async () => {
+    const order = await place(rz);
+    await api('POST', `/api/public/orders/${order.token}/razorpay`);
+    // The other restaurant has its own (valid) webhook, but this order is not its own.
+    const otherKey = await hookKey(pp);
+    assert.equal((await api('PUT', '/api/admin/payment-settings', { token: pp.token, body: { razorpay_webhook_secret: RZ_SECRET } })).status, 200);
+    const res = await rzHook(otherKey, captured('order_MOCK123456', Math.round(order.total * 100), 'pay_HOOK0002'));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.ignored, true);
+    assert.equal((await view(order)).payment_status, 'unpaid');
+  });
+
+  it('marks a Razorpay scan-to-pay (UPI QR) order paid from qr_code.credited', async () => {
+    const order = await place(rz);
+    const qr = await api('POST', `/api/public/orders/${order.token}/razorpay-qr`);
+    assert.equal(qr.status, 200);
+    const key = await hookKey(rz);
+    const amount = Math.round(order.total * 100);
+    const res = await rzHook(key, { event: 'qr_code.credited', payload: { qr_code: { entity: { id: qr.body.data.qr_id } }, payment: { entity: { id: 'pay_HOOKQR1', amount, status: 'captured' } } } });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.paid, true);
+    assert.equal((await view(order)).payment_status, 'paid');
+  });
+
+  it('marks a PhonePe order paid, but only when PhonePe itself says so (the call is just a nudge)', async () => {
+    const order = await place(pp);
+    const start = await api('POST', `/api/public/orders/${order.token}/pay/phonepe`);
+    assert.equal(start.status, 200);
+    const attempt = await attemptOf(order, 'phonepe');
+    const key = await hookKey(pp);
+
+    // The webhook says "completed", but PhonePe's own answer is still PENDING: nothing changes.
+    const early = await ppHook(key, attempt.provider_order_id);
+    assert.equal(early.status, 200);
+    assert.equal(early.body.data.state, 'pending');
+    assert.equal((await view(order)).payment_status, 'unpaid');
+
+    // A different amount than the order is never accepted.
+    ppOrders.get(attempt.provider_order_id).state = 'COMPLETED';
+    ppOrders.get(attempt.provider_order_id).paidAmount = attempt.amount_paise - 100;
+    const wrong = await ppHook(key, attempt.provider_order_id);
+    assert.equal(wrong.body.data.mismatch, true);
+    assert.equal((await view(order)).payment_status, 'unpaid');
+
+    delete ppOrders.get(attempt.provider_order_id).paidAmount;
+    const paid = await ppHook(key, attempt.provider_order_id);
+    assert.equal(paid.status, 200);
+    assert.equal(paid.body.data.paid, true);
+    const after = await view(order);
+    assert.deepEqual([after.payment_status, after.payment_method, after.status], ['paid', 'phonepe', 'accepted']);
+    assert.equal((await ppHook(key, attempt.provider_order_id)).body.data.already, true, 'the same call twice changes nothing');
+    assert.equal((await ppHook(key, 'mz_999999_unknown')).body.data.ignored, true, 'an order we never opened is ignored, not an error');
+    assert.equal((await ppHook(key, attempt.provider_order_id, 'pg.refund.completed')).body.data.ignored, true, 'other events are ignored');
+  });
+
+  it('the safety net finds payments whose webhook never came', async () => {
+    const order = await place(pp);
+    await api('POST', `/api/public/orders/${order.token}/pay/phonepe`);
+    const attempt = await attemptOf(order, 'phonepe');
+    ppOrders.get(attempt.provider_order_id).state = 'COMPLETED'; // the money arrived; nobody told us
+
+    // Too fresh: the diner's own page and the webhook get their chance first.
+    assert.equal((await reconcileOnce(db, { log: { info: none, warn: none } })).paid, 0);
+    assert.equal((await view(order)).payment_status, 'unpaid');
+
+    await db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE id = $1`, [attempt.id]);
+    const run = await reconcileOnce(db, { log: { info: none, warn: none } });
+    assert.ok(run.checked >= 1);
+    assert.ok(run.paid >= 1);
+    assert.deepEqual([(await view(order)).payment_status, (await view(order)).payment_method], ['paid', 'phonepe']);
+    assert.equal((await reconcileOnce(db, { log: { info: none, warn: none } })).paid, 0, 'nothing left to find');
+  });
+
+  it('the safety net also finds a Razorpay QR payment, and skips cancelled orders and ones PhonePe has not got', async () => {
+    const order = await place(rz);
+    const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
+    qrCodes.get(qr.qr_id).payments.push({ id: 'pay_RECON01', status: 'captured', amount: Math.round(order.total * 100) });
+
+    const cancelled = await place(pp);
+    await api('POST', `/api/public/orders/${cancelled.token}/pay/phonepe`);
+    const cancelledAttempt = await attemptOf(cancelled, 'phonepe');
+    ppOrders.get(cancelledAttempt.provider_order_id).state = 'COMPLETED';
+    await db.query(`UPDATE orders SET status = 'cancelled' WHERE public_token = $1`, [cancelled.token]);
+
+    const pending = await place(pp);
+    await api('POST', `/api/public/orders/${pending.token}/pay/phonepe`); // PhonePe still says PENDING
+    await db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE order_id IN (SELECT id FROM orders WHERE public_token = ANY($1))`, [[order.token, cancelled.token, pending.token]]);
+
+    await reconcileOnce(db, { log: { info: none, warn: none } });
+    assert.equal((await view(order)).payment_status, 'paid');
+    assert.equal((await view(cancelled)).payment_status, 'unpaid', 'a cancelled order is left alone');
+    assert.equal((await view(pending)).payment_status, 'unpaid', 'still pending at PhonePe: nothing is guessed');
+  });
+});
+
 describe('online payments (Paytm)', async () => {
   const { default: PaytmChecksum } = await import('paytmchecksum');
   const MID = 'TESTMID12345678901';
@@ -2577,7 +2953,7 @@ describe('online payments (Paytm)', async () => {
     savedStatus = config.paytmStatusBase;
     config.paytmTheiaBase = config.paytmStatusBase = `http://127.0.0.1:${mock.address().port}`;
 
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Paytm Cafe', email: 'paytm.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Paytm Cafe', email: 'paytm.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'T1', capacity: 2 } })).body.data.qr_url.split('/').pop();
@@ -2723,7 +3099,7 @@ describe('online payments (Paytm)', async () => {
 
 describe("each restaurant's own order numbers", () => {
   const mk = async (name, email) => {
-    const token = (await api('POST', '/api/auth/signup', { body: { name, email, password: 'a-long-enough-password' } })).body.data.token;
+    const token = (await signupAccount({ name, email, password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     const itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     const table = (await api('POST', '/api/admin/tables', { token, body: { number: 'N1', capacity: 2 } })).body.data;
@@ -2857,7 +3233,7 @@ describe('the diner cancels their own order', () => {
   };
 
   before(async () => {
-    token = (await api('POST', '/api/auth/signup', { body: { name: 'Cancel Cafe', email: 'cancel.cafe@example.test', password: 'a-long-enough-password' } })).body.data.token;
+    token = (await signupAccount({ name: 'Cancel Cafe', email: 'cancel.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'X1', capacity: 2 } })).body.data.qr_url.split('/').pop();

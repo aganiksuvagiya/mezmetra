@@ -15,13 +15,13 @@ import Login from './pages/Login.jsx';
 import Orders from './pages/Orders.jsx';
 import Payments from './pages/Payments.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
+import Activity from './pages/owner/Activity.jsx';
 import RestaurantDetail from './pages/owner/RestaurantDetail.jsx';
 import Restaurants from './pages/owner/Restaurants.jsx';
 import Reports from './pages/Reports.jsx';
 import QrCodes from './pages/QrCodes.jsx';
 import Appearance from './pages/Appearance.jsx';
 import Settings from './pages/Settings.jsx';
-import Signup from './pages/Signup.jsx';
 import Tables from './pages/Tables.jsx';
 
 function FullScreen({ children }) {
@@ -62,7 +62,7 @@ function RequireAuth({ children }) {
   return children;
 }
 
-/** Login/signup are only for signed-out visitors; a signed-in visitor is sent on to the app. */
+/** Login and password reset are only for signed-out visitors; a signed-in visitor is sent on to the app. */
 function GuestOnly({ children }) {
   const { status } = useAuth();
   const location = useLocation();
@@ -101,7 +101,8 @@ export default function App() {
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<GuestOnly><Login /></GuestOnly>} />
-            <Route path="/signup" element={<GuestOnly><Signup /></GuestOnly>} />
+            {/* There is no public sign-up any more; an old link or bookmark lands on the sign-in page. */}
+            <Route path="/signup" element={<Navigate to="/login" replace />} />
             <Route path="/forgot-password" element={<GuestOnly><ForgotPassword /></GuestOnly>} />
             <Route path="/reset-password" element={<GuestOnly><ResetPassword /></GuestOnly>} />
             {/* The owner console: separate from a restaurant's admin (own layout); only the platform owner gets in. */}
@@ -115,6 +116,7 @@ export default function App() {
             >
               <Route index element={<Restaurants />} />
               <Route path="restaurants/:id" element={<RestaurantDetail />} />
+              <Route path="activity" element={<Activity />} />
               <Route path="*" element={<Navigate to="/owner" replace />} />
             </Route>
             <Route

@@ -2,14 +2,16 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { createRestaurantAccount, emailField, newRestaurantSchema } from '../lib/accounts.js';
 import { conflict, HttpError, notFound, parse } from '../lib/errors.js';
 import { toRupees } from '../lib/money.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
 import { signToken } from '../middleware/auth.js';
 
 // The platform owner's console: every restaurant on the product with enough numbers to see who is active, a page per restaurant
-// (profile, how it takes payments, recent orders, what the owner did to it) and the owner's actions on it: suspend / reactivate,
-// set a new password, log in as it (to help with a problem) and delete it. Every action is written to platform_audit.
+// (profile, how it takes payments, recent orders, what the owner did to it) and the owner's actions on it: add a restaurant (the only
+// way an account comes to exist), fix its name or email, suspend / reactivate, set a new password, log in as it (to help with a problem) and delete it.
+// Every action is written to platform_audit.
 // Mounted behind requireAuth + requireActiveVendor + requireSuperAdmin.
 
 const listSchema = z.object({
@@ -23,6 +25,19 @@ const patchSchema = z.object({
   suspended: z.boolean(),
   // Shown to the restaurant when it tries to sign in.
   reason: z.string().trim().max(200).optional(),
+});
+
+// What the owner may fix on a restaurant: how it is called and the email it signs in with. (Nothing else of it is the owner's to edit.)
+const profileSchema = z.object({
+  name: z.string().trim().min(2, 'Enter the restaurant name').max(100),
+  email: emailField,
+});
+
+const activitySchema = z.object({
+  action: z.enum(['create', 'update', 'suspend', 'reactivate', 'set_password', 'login_as', 'delete']).optional(),
+  q: z.string().trim().max(60).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  per_page: z.coerce.number().int().min(1).max(100).default(30),
 });
 
 const passwordSchema = z.object({ password: z.string().min(8, 'Use at least 8 characters').max(200) });
@@ -117,6 +132,20 @@ export function platformRouter(db) {
     res.json({ data: rows.map(restaurantOut), meta: { page: q.page, per_page: q.per_page, total: Number(total.rows[0].n) } });
   });
 
+  // Add a restaurant: the owner chooses its login (email + a first password) and hands it over. There is no public sign-up.
+  router.post('/restaurants', async (req, res) => {
+    const body = parse(newRestaurantSchema, req.body ?? {});
+    const out = await db.tx(async (t) => {
+      const taken = await t.query(`SELECT 1 FROM vendors WHERE lower(email) = $1`, [body.email]);
+      if (taken.rowCount > 0) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
+      const vendor = await createRestaurantAccount(t, body);
+      await audit(t, req, 'create', vendor);
+      const { rows } = await t.query(`${SELECT_RESTAURANTS} WHERE v.id = $1`, [vendor.id]);
+      return restaurantOut(rows[0]);
+    });
+    res.status(201).json({ data: out });
+  });
+
   router.patch('/restaurants/:id', async (req, res) => {
     if (!/^\d{1,15}$/.test(req.params.id)) throw notFound('Restaurant');
     const body = parse(patchSchema, req.body ?? {});
@@ -141,6 +170,73 @@ export function platformRouter(db) {
       return restaurantOut(rows[0]);
     });
     res.json({ data: out });
+  });
+
+  // Fix a restaurant's name or its login email. Not for a platform owner's account (its email is what makes it the owner), and never to an
+  // email that is listed as a platform owner's. Only what really changed is recorded.
+  router.post('/restaurants/:id/profile', async (req, res) => {
+    const id = restaurantId(req);
+    const body = parse(profileSchema, req.body ?? {});
+    const out = await db.tx(async (t) => {
+      const { rows } = await t.query(`SELECT id, name, email FROM vendors WHERE id = $1 FOR UPDATE`, [id]);
+      const target = rows[0];
+      if (!target) throw notFound('Restaurant');
+      if (target.id === req.vendorId || isSuperAdminEmail(target.email)) {
+        throw conflict('CANNOT_EDIT_OWNER', "A platform owner's details are changed in Settings, not from here.");
+      }
+      const changes = {};
+      if (body.name !== target.name) changes.name = { from: target.name, to: body.name };
+      if (body.email !== target.email.toLowerCase()) {
+        if (isSuperAdminEmail(body.email)) throw conflict('RESERVED_EMAIL', 'That email is reserved for a platform owner.');
+        const taken = await t.query(`SELECT 1 FROM vendors WHERE lower(email) = $1 AND id <> $2`, [body.email, target.id]);
+        if (taken.rowCount > 0) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
+        changes.email = { from: target.email, to: body.email };
+      }
+      if (Object.keys(changes).length > 0) {
+        await t.query(`UPDATE vendors SET name = $2, email = $3 WHERE id = $1`, [target.id, body.name, body.email]);
+        await audit(t, req, 'update', { id: target.id, name: body.name, email: body.email }, { changes });
+      }
+      const { rows: fresh } = await t.query(`${SELECT_RESTAURANTS} WHERE v.id = $1`, [target.id]);
+      return restaurantOut(fresh[0]);
+    });
+    res.json({ data: out });
+  });
+
+  // Everything the owner has done, across all restaurants, newest first. The restaurant is kept as text in the record, so an entry for a
+  // deleted restaurant still reads right; `restaurant.id` is null once it is gone (nothing to link to).
+  router.get('/activity', async (req, res) => {
+    const q = parse(activitySchema, req.query);
+    const where = [];
+    const params = [];
+    if (q.action) {
+      params.push(q.action);
+      where.push(`a.action = $${params.length}`);
+    }
+    if (q.q) {
+      params.push(`%${q.q}%`);
+      where.push(`(a.target_name ILIKE $${params.length} OR a.target_email ILIKE $${params.length} OR a.actor_email ILIKE $${params.length})`);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await db.query(`SELECT count(*) AS n FROM platform_audit a ${clause}`, params);
+    params.push(q.per_page, (q.page - 1) * q.per_page);
+    const { rows } = await db.query(
+      `SELECT a.id, a.action, a.actor_email, a.target_name, a.target_email, a.detail, a.created_at, v.id AS restaurant_id
+         FROM platform_audit a LEFT JOIN vendors v ON v.id = a.target_vendor_id
+         ${clause}
+        ORDER BY a.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    res.json({
+      data: rows.map((a) => ({
+        id: a.id,
+        action: a.action,
+        by: a.actor_email,
+        restaurant: { id: a.restaurant_id, name: a.target_name, email: a.target_email },
+        detail: a.detail ?? {},
+        at: a.created_at,
+      })),
+      meta: { page: q.page, per_page: q.per_page, total: Number(total.rows[0].n) },
+    });
   });
 
   // One restaurant in full: profile, numbers, how it takes payments (never the secrets), recent orders and the owner's record.

@@ -7,7 +7,7 @@ Base URL: `/api` (the dev servers of both web apps proxy `/api` to `http://local
 
 - JSON in/out. Success: `{ "data": ... }` (lists add `"meta"`). Errors: `{ "error": { "code", "message", "details?" } }`
   with an HTTP status. `message` is safe to show to people. `details` (validation) is `[{ field, message }]`.
-- Auth for `/api/admin/*`: header `Authorization: Bearer <token>` (token from login/signup). A `401` means sign in again.
+- Auth for `/api/admin/*`: header `Authorization: Bearer <token>` (token from login). A `401` means sign in again.
 - **Money is a plain number of rupees** with up to 2 decimals (e.g. `499.5`). Never do float maths on it for
   totals - the server computes every total; just display what it returns. Format with
   `new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' })`.
@@ -23,7 +23,6 @@ Base URL: `/api` (the dev servers of both web apps proxy `/api` to `http://local
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/auth/signup` | `{ name, email, password (min 8) }` | 201 `{ token, vendor }` |
 | POST | `/api/auth/login` | `{ email, password }` | `{ token, vendor }` |
 | GET | `/api/auth/me` | - | `vendor` |
 
@@ -179,14 +178,33 @@ Only for accounts listed in `SUPER_ADMIN_EMAILS` (`GET /api/auth/me` has `is_sup
 - `GET /api/platform/overview` -> `{ restaurants: { total, active, suspended, new_30d }, orders_30d, revenue_30d }` (revenue = paid orders only, rupees).
 - `GET /api/platform/restaurants?q=&status=active|suspended&page=&per_page=` -> `{ data: restaurant[], meta: { page, per_page, total } }`, newest first.
   `restaurant` = `{ id, name, email, created_at, status: "active"|"suspended", suspended_at, suspended_reason, is_platform_owner, tables, items, orders_total, orders_30d, revenue_total, last_order_at, upi_ready }`.
+- `POST /api/platform/restaurants` `{ name (2-100), email, password (8-200) }` -> 201 the new `restaurant`. The only way a restaurant account comes to exist (there is no public sign-up: `POST /api/auth/signup` is gone). 400 `VALIDATION_ERROR`, 409 `EMAIL_TAKEN`.
+- `POST /api/platform/restaurants/:id/profile` `{ name (2-100), email }` -> the updated `restaurant`. Fixes a restaurant's name or login email (same password). Saving without a change adds nothing to the record. 409 `EMAIL_TAKEN`, 409 `RESERVED_EMAIL` (an email listed in `SUPER_ADMIN_EMAILS`), 409 `CANNOT_EDIT_OWNER` for a platform owner's account, 404 unknown id.
+- `GET /api/platform/activity?action=&q=&page=&per_page=` -> `{ data: entry[], meta }`, newest first, across all restaurants. `entry` = `{ id, action: create|update|suspend|reactivate|set_password|login_as|delete, by, restaurant: { id|null, name, email }, detail, at }`; `restaurant.id` is null once the restaurant has been deleted. `q` matches the restaurant's name or email or the owner's email.
 - `PATCH /api/platform/restaurants/:id` `{ suspended: boolean, reason?: string(<=200) }` -> the updated `restaurant`. 409 `CANNOT_SUSPEND` for a platform owner (or yourself); 404 unknown id.
 - `GET /api/platform/restaurants/:id` -> one restaurant in full: the `restaurant` fields plus `timezone`, `currency`, `tax_percent`, `categories`, `revenue_30d`, `payment` (per way of paying `{ key, enabled, configured, offered }`, never a secret), `recent_orders` (latest 10: `number`, `table_number`, `status`, `payment_status`, `payment_method`, `total`, `created_at`) and `activity` (the owner's latest 10 actions on it: `{ action, by, detail, at }`).
 - `POST /api/platform/restaurants/:id/password` `{ password (8-200) }` -> `{ ok }`. Sets a new password and signs the restaurant out everywhere. 409 `CANNOT_RESET_OWNER` for a platform owner (their password is changed in Settings).
 - `POST /api/platform/restaurants/:id/login-as` -> `{ token, restaurant: { id, name }, expires_in: 3600 }`. A one-hour login for that restaurant; `GET /api/auth/me` with it returns `impersonated_by_owner: true`. 409 `CANNOT_LOGIN_AS_OWNER` for a platform owner, 409 `RESTAURANT_SUSPENDED` for a suspended one.
 - `POST /api/platform/restaurants/:id/delete` `{ confirm_name }` -> `{ deleted: true }`. Deletes the restaurant and all its data. Only a suspended one (409 `SUSPEND_FIRST`), only with its exact name (400 `NAME_MISMATCH`), never a platform owner (409 `CANNOT_DELETE_OWNER`).
-- Every suspend / reactivate (when something changed), new password, log-in-as and delete is recorded in `platform_audit` (migration 019); the latest ones for a restaurant are in its `activity`.
+- Every add, change of details, suspend / reactivate (when something changed), new password, log-in-as and delete is recorded in `platform_audit` (migrations 019, 021, 022); the latest ones for a restaurant are in its `activity`.
 
 A suspended restaurant: `POST /api/auth/login` and every `/api/admin/*` call return 403 `ACCOUNT_SUSPENDED` (message includes the reason), and its public menu / order endpoints return 409 `TABLE_UNAVAILABLE`.
+
+## Payment webhooks (`/api/webhooks/*`, called by the gateways, no login)
+
+The gateway tells the server the moment a payment succeeds, so an order turns paid even when the diner has closed the page. Each restaurant has its
+own gateway account, so each has its own unguessable address (`webhook_url_razorpay` / `webhook_url_phonepe` in `GET /api/admin/payment-settings`)
+and its own secrets (write-only: `razorpay_webhook_secret`, `phonepe_webhook_username` + `phonepe_webhook_password`; stored encrypted, only
+`razorpay_webhook_set` / `phonepe_webhook_set` come back).
+
+- `POST /api/webhooks/razorpay/:key` - `order.paid`, `payment.captured` (checkout) and `qr_code.credited` (scan-to-pay). Signed: `X-Razorpay-Signature` =
+  HMAC-SHA256(raw body, webhook secret). The amount must equal the payment attempt's. 400 `WEBHOOK_SIGNATURE_INVALID`, 400 `WEBHOOK_NOT_SET_UP`.
+- `POST /api/webhooks/phonepe/:key` - `checkout.order.*`. `Authorization` = SHA256(`username:password`). The call is only a nudge: the server then asks
+  PhonePe about the order itself and marks it paid only if PhonePe says so for the right amount. 401 `WEBHOOK_UNAUTHORIZED`, 400 `WEBHOOK_NOT_SET_UP`.
+- Answers `200` to events it does not need or orders it does not know (so the gateway stops retrying), `200` with `mismatch: true` for a wrong amount
+  (not marked paid), `200` with `already: true` for a repeat, `404` for an unknown address, and `500` when it could not finish (the gateway retries).
+- Safety net: every 5 minutes the server asks the gateways about online payments still open for unpaid, uncancelled orders (2 minutes to 24 hours old)
+  and marks the ones that arrived (`src/lib/reconcile.js`), so a missed webhook costs minutes, not an unpaid order.
 
 ## Password reset
 

@@ -6,7 +6,7 @@ const POINTS = [
   'See today’s revenue and your best sellers at a glance',
 ];
 
-/** The two-column frame shared by sign in, sign up and the password reset pages: brand panel on the left, the form on the right. */
+/** The two-column frame shared by sign in and the password reset pages: brand panel on the left, the form on the right. */
 export default function AuthLayout({ title, subtitle, children }) {
   return (
     <div className="grid min-h-dvh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
