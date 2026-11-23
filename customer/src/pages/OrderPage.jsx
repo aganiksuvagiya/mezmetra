@@ -163,7 +163,7 @@ function OrderView({ orderToken }) {
             <div className="flex items-start gap-3.5">
               <span
                 className={`grid size-12 shrink-0 place-items-center rounded-2xl ${
-                  order.status === 'completed' || isReady ? 'bg-emerald-100 text-emerald-700' : 'bg-brand-600/10 text-brand-700'
+                  order.status === 'completed' || isReady ? 'bg-emerald-100 text-emerald-700' : 'bg-brand-600/10 text-link'
                 }`}
               >
                 {order.status === 'completed' || isReady ? <CheckIcon className="size-6" /> : order.status === 'accepted' ? <MenuBookIcon className="size-6" /> : <ClockIcon className="size-6 motion-safe:animate-pulse" />}

@@ -36,15 +36,15 @@ export default function StatusStepper({ status, ready = false, tone = 'default' 
               className={`relative z-10 grid size-8 place-items-center rounded-full text-sm font-bold ${
                 light
                   ? state === 'done'
-                    ? 'bg-white text-brand-700'
+                    ? 'bg-card text-link'
                     : state === 'current'
                       ? 'bg-brand-800 text-white ring-4 ring-white'
                       : 'bg-brand-800 text-white/70 ring-2 ring-white/30'
                   : state === 'done'
                     ? 'bg-brand-600 text-white'
                     : state === 'current'
-                      ? 'bg-white text-brand-700 ring-4 ring-brand-600'
-                      : 'bg-white text-ink-soft ring-2 ring-line'
+                      ? 'bg-card text-link ring-4 ring-brand-600'
+                      : 'bg-card text-ink-soft ring-2 ring-line'
               }`}
             >
               {state === 'done' ? (

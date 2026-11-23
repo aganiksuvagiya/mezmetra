@@ -26,13 +26,13 @@ Base URL: `/api` (the dev servers of both web apps proxy `/api` to `http://local
 | POST | `/api/auth/login` | `{ email, password }` | `{ token, vendor }` |
 | GET | `/api/auth/me` | - | `vendor` |
 
-`vendor` = `{ id, name, email, currency: "INR", timezone, tax_percent, theme: { primary, accent } }` - `theme` holds the restaurant's customer-menu colours as `#rrggbb` (defaults `#2f6f62` / `#e8872a`).
+`vendor` = `{ id, name, email, currency: "INR", timezone, tax_percent, theme: { primary, accent, style } }` - `theme` holds the restaurant's customer-menu colours as `#rrggbb` (defaults `#2f6f62` / `#e8872a`) and its design `style`: one of `classic` (default), `bistro`, `gallery`, `minimal`, `night` (see `shared/styles.js`; the customer app lays the menu out and colours it accordingly).
 
 ## Admin (all need the bearer token)
 
 ### Vendor settings
 - `GET /api/admin/vendor` -> vendor
-- `PATCH /api/admin/vendor` `{ name?, tax_percent? (0-100), timezone?, theme_primary? (#rrggbb), theme_accent? (#rrggbb) }` -> vendor. Colours are stored lower-case; anything that is not exactly `#rrggbb` is a 400.
+- `PATCH /api/admin/vendor` `{ name?, tax_percent? (0-100), timezone?, theme_primary? (#rrggbb), theme_accent? (#rrggbb), theme_style? (classic|bistro|gallery|minimal|night) }` -> vendor. Colours are stored lower-case; anything that is not exactly `#rrggbb`, or a design that is not one of the five, is a 400.
 - `PUT /api/admin/vendor/logo` raw image bytes (`Content-Type: image/jpeg|png|webp`, max 512 KB; the admin shrinks it to 512 px first) -> vendor with `logo_url`. `DELETE /api/admin/vendor/logo` removes it. `logo_url` is a path like `/api/public/vendors/3/logo?v=2` (prefix with the API base), `null` without a logo; it is also on the public menu's and the public order's `vendor`. `GET /api/public/vendors/:id/logo` serves the image (cached for a year; the `?v=` changes with every upload).
 
 ### Dashboard
@@ -114,7 +114,7 @@ A table's QR code opens `<customer-app>/t/<token>`. `<token>` is the 32-hex stri
 ### `GET /api/public/t/:token` - the menu for that table
 ```json
 {
-  "vendor": { "name": "Demo Kitchen", "currency": "INR", "tax_percent": 5, "theme": { "primary": "#2f6f62", "accent": "#e8872a" }, "logo_url": null },
+  "vendor": { "name": "Demo Kitchen", "currency": "INR", "tax_percent": 5, "theme": { "primary": "#2f6f62", "accent": "#e8872a", "style": "classic" }, "logo_url": null },
   "table": { "number": "T-01" },
   "payment_options": { "cash": false, "upi": true, "razorpay": false, "cashfree": false, "phonepe": false, "paytm": false },
   "categories": [{ "id": 1, "name": "Pizza", "description": "..." }],

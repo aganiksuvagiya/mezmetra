@@ -157,7 +157,7 @@ export default function UpiPayment({ order, onRefresh }) {
   return (
     <div className="mt-4 rounded-2xl bg-page p-3 ring-1 ring-line">
       <p className="flex items-center gap-2 font-extrabold text-ink">
-        <PhoneIcon className="size-5 text-brand-700" /> {buttons ? 'Pay with a UPI app' : 'Pay by UPI'}
+        <PhoneIcon className="size-5 text-link" /> {buttons ? 'Pay with a UPI app' : 'Pay by UPI'}
       </p>
       <p className="mt-0.5 text-sm text-ink-soft">
         {buttons ? (
@@ -221,7 +221,7 @@ export default function UpiPayment({ order, onRefresh }) {
       <details
         open={manualOpen}
         onToggle={(e) => setManualOpen(e.currentTarget.open)}
-        className="mt-3 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-line"
+        className="mt-3 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-line"
       >
         <summary className="cursor-pointer font-semibold text-ink">How to pay</summary>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-ink-soft">
@@ -243,7 +243,7 @@ export default function UpiPayment({ order, onRefresh }) {
                 {/* The whole ID is shown (it wraps) so a small screen never hides part of it. */}
                 <dd className="break-all text-[15px] font-semibold text-ink">{upi.vpa}</dd>
               </div>
-              <button type="button" onClick={() => copy(upi.vpa, 'UPI ID')} aria-label="Copy UPI ID" className="grid size-10 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
+              <button type="button" onClick={() => copy(upi.vpa, 'UPI ID')} aria-label="Copy UPI ID" className="grid size-10 shrink-0 place-items-center rounded-lg text-link hover:bg-tint">
                 <CopyIcon className="size-4" />
               </button>
             </div>
@@ -253,7 +253,7 @@ export default function UpiPayment({ order, onRefresh }) {
               <dt className="text-xs font-semibold text-ink-soft">Amount</dt>
               <dd className="text-[15px] font-semibold tabular-nums text-ink">{formatMoney(upi.amount)}</dd>
             </div>
-            <button type="button" onClick={() => copy(upi.amount.toFixed(2), 'Amount')} aria-label="Copy amount" className="grid size-10 shrink-0 place-items-center rounded-lg text-brand-700 hover:bg-brand-50">
+            <button type="button" onClick={() => copy(upi.amount.toFixed(2), 'Amount')} aria-label="Copy amount" className="grid size-10 shrink-0 place-items-center rounded-lg text-link hover:bg-tint">
               <CopyIcon className="size-4" />
             </button>
           </div>
@@ -262,7 +262,7 @@ export default function UpiPayment({ order, onRefresh }) {
       )}
 
       {asking ? (
-        <form onSubmit={submit} noValidate className="mt-3 rounded-2xl bg-white p-3 ring-2 ring-brand-300" aria-label="Confirm your payment">
+        <form onSubmit={submit} noValidate className="mt-3 rounded-2xl bg-card p-3 ring-2 ring-brand-300" aria-label="Confirm your payment">
           <p className="font-extrabold text-ink">Did your payment of {formatMoney(upi.amount)} go through?</p>
           <label htmlFor={refId} className="mt-2 block text-sm font-semibold text-ink">
             UPI reference number <span className="font-normal text-ink-soft">(optional, helps the restaurant)</span>

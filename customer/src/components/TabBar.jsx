@@ -5,12 +5,13 @@ import { BagIcon, BellIcon, ChevronRightIcon, MenuIcon, ReceiptIcon, SearchIcon 
 import OrdersSheet from './OrdersSheet';
 import ServiceButtons from './ServiceButtons';
 import { formatPaise } from '../lib/money';
+import { useDesign } from '../lib/theme';
 import { useRecentOrders } from '../lib/useRecentOrders';
 
 // Height of the "View cart" button that floats above the tab bar while the cart has something in it (see --cta-h in index.css).
 const CTA_HEIGHT = '4rem';
 
-const tabClass = 'relative flex h-14 w-full flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors active:bg-black/5';
+const tabClass = 'relative flex h-14 w-full flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors active:bg-fill';
 
 /**
  * The bottom bar of the menu, like an iPhone tab bar: Menu (back to top), Search (jumps to the search field), Cart (with a count),
@@ -18,6 +19,7 @@ const tabClass = 'relative flex h-14 w-full flex-col items-center justify-center
  * however far down the menu you are. While the cart has something in it a "View cart · ₹199" button floats just above the bar.
  */
 export function Dock({ token, vendorName, count, subtotalPaise }) {
+  const design = useDesign();
   const [helpOpen, setHelpOpen] = useState(false);
   const [ordersOpen, setOrdersOpen] = useState(false);
   const helpTitle = useId();
@@ -30,15 +32,22 @@ export function Dock({ token, vendorName, count, subtotalPaise }) {
   };
   const itemsLabel = count === 1 ? '1 item' : `${count} items`;
 
-  // Tell the page how much room the floating button takes, so the last dish and the toasts stay clear of it.
+  // Tell the page how much room the floating button (and a lifted bar) takes, so the last dish and the toasts stay clear of it.
+  const floating = design.dock === 'float';
   useEffect(() => {
-    if (count > 0) document.documentElement.style.setProperty('--cta-h', CTA_HEIGHT);
-    else document.documentElement.style.removeProperty('--cta-h');
-    return () => document.documentElement.style.removeProperty('--cta-h');
-  }, [count > 0]); // eslint-disable-line react-hooks/exhaustive-deps -- only whether the cart is empty matters
+    const root = document.documentElement.style;
+    if (count > 0) root.setProperty('--cta-h', CTA_HEIGHT);
+    else root.removeProperty('--cta-h');
+    if (floating) root.setProperty('--dock-extra', '0.75rem');
+    else root.removeProperty('--dock-extra');
+    return () => {
+      root.removeProperty('--cta-h');
+      root.removeProperty('--dock-extra');
+    };
+  }, [count > 0, floating]); // eslint-disable-line react-hooks/exhaustive-deps -- only whether the cart is empty matters
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md">
+    <div className={`fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md ${floating ? 'pb-[calc(0.5rem+env(safe-area-inset-bottom))]' : ''}`}>
       {count > 0 && (
         <div className="px-3 pb-2">
           <Link
@@ -56,10 +65,19 @@ export function Dock({ token, vendorName, count, subtotalPaise }) {
         </div>
       )}
 
-      <nav aria-label="Main" className="glass rounded-t-[1.25rem] pb-[env(safe-area-inset-bottom)]">
+      <nav
+        aria-label="Main"
+        className={
+          design.dock === 'flat'
+            ? 'border-t border-line bg-card pb-[env(safe-area-inset-bottom)]'
+            : floating
+              ? 'glass mx-3 rounded-[1.75rem] shadow-float'
+              : 'glass rounded-t-[1.25rem] pb-[env(safe-area-inset-bottom)]'
+        }
+      >
         <ul className="grid grid-cols-5">
           <li>
-            <button type="button" onClick={toTop} aria-current="page" className={`${tabClass} text-brand-700`}>
+            <button type="button" onClick={toTop} aria-current="page" className={`${tabClass} text-link`}>
               <MenuIcon className="size-[24px]" />
               Menu
             </button>

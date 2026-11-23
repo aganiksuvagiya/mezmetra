@@ -390,7 +390,7 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
   return (
     <Card>
       <div className="flex items-center gap-3">
-        <span className={`grid size-11 place-items-center rounded-2xl ${digital ? 'bg-brand-100 text-brand-700' : 'bg-amber-100 text-amber-900'}`}>
+        <span className={`grid size-11 place-items-center rounded-2xl ${digital ? 'bg-tint-strong text-link' : 'bg-amber-100 text-amber-900'}`}>
           {digital ? <CardIcon className="size-6" /> : <CashIcon className="size-6" />}
         </span>
         <div className="min-w-0 flex-1">
@@ -421,18 +421,18 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
               type="button"
               onClick={showQr}
               disabled={qrLoading || working}
-              className="w-full rounded-2xl px-4 py-2.5 text-center text-sm font-bold text-brand-700 transition-colors hover:bg-brand-50 disabled:opacity-60"
+              className="w-full rounded-2xl px-4 py-2.5 text-center text-sm font-bold text-link transition-colors hover:bg-tint disabled:opacity-60"
             >
               {qrLoading ? 'Making QR code…' : 'Or scan a QR code to pay'}
             </button>
           ) : (
-            <div className="rounded-2xl bg-white p-4 text-center ring-1 ring-inset ring-line">
+            <div className="rounded-2xl bg-card p-4 text-center ring-1 ring-inset ring-line">
               <img src={qr.image_url} alt={`QR code to pay ${formatMoney(order.total)}`} className="mx-auto size-56 max-w-full" />
               <p className="mt-2 text-sm font-semibold text-ink">Scan with Google Pay, PhonePe, Paytm or any UPI app</p>
               <p role="status" className="mt-1 text-sm text-ink-soft">
                 The amount is filled in. This page updates by itself once your payment is received.
               </p>
-              <button type="button" onClick={() => setQr(null)} className="mt-2 text-sm font-bold text-brand-700 underline underline-offset-2">
+              <button type="button" onClick={() => setQr(null)} className="mt-2 text-sm font-bold text-link underline underline-offset-2">
                 Hide QR code
               </button>
             </div>

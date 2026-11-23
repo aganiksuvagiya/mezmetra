@@ -82,19 +82,19 @@ export default function BottomSheet({ onClose, labelledBy, children, footer }) {
         aria-modal="true"
         aria-labelledby={labelledBy}
         tabIndex={-1}
-        className="relative flex max-h-[92dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[32px] bg-white shadow-sheet focus:outline-none motion-safe:animate-sheet-in"
+        className="relative flex max-h-[92dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[32px] bg-card shadow-sheet focus:outline-none motion-safe:animate-sheet-in"
       >
         <button
           type="button"
           onClick={() => onClose()}
           aria-label="Close"
-          className="glass absolute right-3 top-3 z-10 grid size-11 place-items-center rounded-full text-ink shadow-float hover:bg-white"
+          className="glass absolute right-3 top-3 z-10 grid size-11 place-items-center rounded-full text-ink shadow-float hover:bg-card"
         >
           <CloseIcon />
         </button>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
         {footer && (
-          <div className="border-t border-line bg-white px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3">{footer}</div>
+          <div className="border-t border-line bg-card px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3">{footer}</div>
         )}
       </div>
     </div>,

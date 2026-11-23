@@ -2348,10 +2348,10 @@ describe('restaurant logo', () => {
 describe('menu colours (theme)', () => {
   it('starts with the default colours and lets the vendor change them', async () => {
     const me = await api('GET', '/api/auth/me', { token: s.token });
-    assert.deepEqual(me.body.data.theme, { primary: '#2f6f62', accent: '#e8872a' });
+    assert.deepEqual(me.body.data.theme, { primary: '#2f6f62', accent: '#e8872a', style: 'classic' });
     const patched = await api('PATCH', '/api/admin/vendor', { token: s.token, body: { theme_primary: '#B91C1C' } });
     assert.equal(patched.status, 200);
-    assert.deepEqual(patched.body.data.theme, { primary: '#b91c1c', accent: '#e8872a' }, 'normalised to lower case; accent untouched');
+    assert.deepEqual(patched.body.data.theme, { primary: '#b91c1c', accent: '#e8872a', style: 'classic' }, 'normalised to lower case; accent and design untouched');
     assert.equal(patched.body.data.name, 'Spice Hub', 'other fields are untouched');
   });
 
@@ -2364,14 +2364,35 @@ describe('menu colours (theme)', () => {
 
   it('serves the colours to the customer menu and order pages', async () => {
     const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.deepEqual(menu.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a' });
+    assert.deepEqual(menu.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a', style: 'classic' });
     const order = await api('GET', `/api/public/orders/${s.upiOrder.token}`);
-    assert.deepEqual(order.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a' });
+    assert.deepEqual(order.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a', style: 'classic' });
   });
 
   it("does not leak one restaurant's colours into another's", async () => {
     const other = await api('GET', '/api/auth/me', { token: s.otherToken });
     assert.equal(other.body.data.theme.primary, '#2f6f62');
+  });
+
+  it('lets the vendor pick one of the five designs, and serves it to the diner', async () => {
+    const { STYLE_IDS } = await import('../../shared/styles.js');
+    assert.deepEqual(STYLE_IDS, ['classic', 'bistro', 'gallery', 'minimal', 'night'], 'the five designs, in the order the admin shows them');
+    for (const style of STYLE_IDS) {
+      const r = await api('PATCH', '/api/admin/vendor', { token: s.token, body: { theme_style: style } });
+      assert.equal(r.status, 200, style);
+      assert.equal(r.body.data.theme.style, style);
+      assert.equal(r.body.data.theme.primary, '#b91c1c', 'choosing a design keeps the colours');
+    }
+    const menu = await api('GET', `/api/public/t/${s.qrToken}`);
+    assert.equal(menu.body.data.vendor.theme.style, 'night', 'the last one chosen');
+    const order = await api('GET', `/api/public/orders/${s.upiOrder.token}`);
+    assert.equal(order.body.data.vendor.theme.style, 'night');
+    // Another restaurant is not affected, and an unknown design is refused.
+    assert.equal((await api('GET', '/api/auth/me', { token: s.otherToken })).body.data.theme.style, 'classic');
+    for (const bad of ['Classic', 'dark', '', 'neon']) {
+      assert.equal((await api('PATCH', '/api/admin/vendor', { token: s.token, body: { theme_style: bad } })).status, 400, `"${bad}" should be refused`);
+    }
+    await api('PATCH', '/api/admin/vendor', { token: s.token, body: { theme_style: 'classic' } });
   });
 });
 

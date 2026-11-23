@@ -161,7 +161,7 @@ export default function CartPage() {
   if (placed) {
     return (
       <main className="flex min-h-[60dvh] flex-col items-center justify-center gap-3 px-6 text-center">
-        <SpinnerIcon className="size-8 text-brand-600" />
+        <SpinnerIcon className="size-8 text-link" />
         <p role="status" className="font-bold text-ink">
           Order placed - opening your order…
         </p>
@@ -175,11 +175,11 @@ export default function CartPage() {
     <main className="pb-[calc(env(safe-area-inset-bottom)+8rem)]">
       <header className="px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <div className="flex items-center justify-between gap-3">
-          <Link to={`/t/${token}`} className="-ml-1 inline-flex min-h-11 items-center gap-0.5 rounded-xl pr-2 text-[17px] font-medium text-brand-700 active:opacity-60">
+          <Link to={`/t/${token}`} className="-ml-1 inline-flex min-h-11 items-center gap-0.5 rounded-xl pr-2 text-[17px] font-medium text-link active:opacity-60">
             <ArrowLeftIcon className="size-5" />
             Menu
           </Link>
-          <span className="rounded-full bg-white px-3 py-1.5 text-[13px] font-bold text-ink ring-1 ring-inset ring-black/5">Table {menu.table.number}</span>
+          <span className="rounded-full bg-card px-3 py-1.5 text-[13px] font-bold text-ink ring-1 ring-inset ring-line">Table {menu.table.number}</span>
         </div>
         <h1 className="display mt-2 text-[34px] font-extrabold leading-tight text-ink">Your cart</h1>
         <p className="truncate text-[15px] text-ink-soft">{menu.vendor.name}</p>
@@ -217,7 +217,7 @@ export default function CartPage() {
           </EmptyState>
         ) : (
           <>
-            <ul className="surface divide-y divide-black/5 overflow-hidden" aria-label="Items in your cart">
+            <ul className="surface divide-y divide-line overflow-hidden" aria-label="Items in your cart">
               {cart.lines.map((line) => (
                 <li key={line.key} className="flex gap-3.5 p-4">
                   <DishImage item={dishById.get(line.itemId) ?? { id: line.itemId, name: line.name }} className="size-[4.5rem] shrink-0 rounded-[18px]" iconClass="size-9" />
@@ -252,7 +252,7 @@ export default function CartPage() {
 
             <Link
               to={`/t/${token}`}
-              className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-dashed border-brand-300 bg-white/60 text-base font-bold text-brand-700 hover:bg-brand-50"
+              className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-dashed border-brand-300 bg-card/60 text-base font-bold text-link hover:bg-tint"
             >
               <PlusIcon className="size-5" />
               Add more
@@ -404,11 +404,11 @@ function PayOption({ checked, onSelect, icon, title, text }) {
   return (
     <label
       className={`flex min-h-16 cursor-pointer items-center gap-3 rounded-[20px] p-3.5 ring-1 ring-inset has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-brand-800 ${
-        checked ? 'bg-brand-50 ring-2 ring-brand-600' : 'bg-white ring-line hover:bg-page'
+        checked ? 'bg-tint ring-2 ring-brand-600' : 'bg-card ring-line hover:bg-page'
       }`}
     >
       <input type="radio" name="pay-pref" checked={checked} onChange={onSelect} className="size-5 shrink-0 accent-brand-600 focus-visible:outline-none" />
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-700">{icon}</span>
+      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-tint-strong text-link">{icon}</span>
       <span className="min-w-0">
         <span className="block font-bold text-ink">{title}</span>
         <span className="block text-sm text-ink-soft">{text}</span>

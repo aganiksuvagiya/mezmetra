@@ -9,7 +9,7 @@ import ConfirmSheet from './ConfirmSheet';
 export function statusOf(o) {
   if (o.status === 'cancelled') return { label: 'Cancelled', tone: 'bg-rose-100 text-rose-800' };
   if (o.status === 'completed') return o.paid ? { label: 'Completed', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Payment due', tone: 'bg-amber-100 text-amber-900' };
-  if (o.status === 'accepted') return o.ready ? { label: 'Ready', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Preparing', tone: 'bg-brand-600/10 text-brand-800' };
+  if (o.status === 'accepted') return o.ready ? { label: 'Ready', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Preparing', tone: 'bg-brand-600/10 text-link' };
   return { label: 'Received', tone: 'bg-amber-100 text-amber-900' };
 }
 
@@ -34,7 +34,7 @@ export default function RecentOrders({ orders, tableToken, vendorName }) {
             type="button"
             onClick={() => setClearing(true)}
             aria-label="Clear recent orders from this phone"
-            className="-my-3 rounded-md px-1.5 py-3 text-xs font-semibold text-brand-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            className="-my-3 rounded-md px-1.5 py-3 text-xs font-semibold text-link underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             Clear
           </button>
@@ -48,7 +48,7 @@ export default function RecentOrders({ orders, tableToken, vendorName }) {
               <Link
                 to={`/o/${o.token}`}
                 state={{ tableToken: tableToken || o.tableToken }}
-                className="surface flex h-full flex-col gap-1.5 p-3.5 transition-colors hover:bg-brand-50 active:bg-brand-100"
+                className="surface flex h-full flex-col gap-1.5 p-3.5 transition-colors hover:bg-tint active:bg-tint-strong"
               >
                 <span className="flex items-center justify-between gap-2">
                   <span className="text-[15px] font-extrabold text-ink">{o.number ? `Order #${o.number}` : 'Order'}</span>

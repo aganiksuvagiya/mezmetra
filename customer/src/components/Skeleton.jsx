@@ -7,10 +7,10 @@ export function MenuSkeleton() {
     <div role="status" aria-busy="true" aria-label="Loading menu">
       <span className="sr-only">Loading menu…</span>
       <div className="aurora px-5 pb-4 pt-6">
-        <Skeleton className="h-9 w-28 rounded-full bg-white/80" />
+        <Skeleton className="h-9 w-28 rounded-full bg-card/80" />
         <Skeleton className="mt-6 h-9 w-56 bg-black/10" />
         <Skeleton className="mt-3 h-4 w-44 bg-black/10" />
-        <Skeleton className="mt-5 h-[52px] w-full rounded-full bg-white/80" />
+        <Skeleton className="mt-5 h-[52px] w-full rounded-full bg-card/80" />
       </div>
       <div className="flex gap-2 px-4 py-3">
         {[96, 64, 88, 76].map((w, i) => (
@@ -23,7 +23,7 @@ export function MenuSkeleton() {
           <Skeleton className="aspect-[5/6] w-[68%] shrink-0 rounded-[28px]" />
           <Skeleton className="aspect-[5/6] w-[68%] shrink-0 rounded-[28px]" />
         </div>
-        <div className="surface mt-8 divide-y divide-black/5 overflow-hidden">
+        <div className="surface mt-8 divide-y divide-line overflow-hidden">
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex gap-4 p-4">
               <div className="flex-1 space-y-2 py-1">
@@ -46,14 +46,14 @@ export function OrderSkeleton() {
     <div role="status" aria-busy="true" aria-label="Loading your order">
       <span className="sr-only">Loading your order…</span>
       <div className="aurora px-5 pb-4 pt-6">
-        <Skeleton className="h-9 w-28 rounded-full bg-white/80" />
+        <Skeleton className="h-9 w-28 rounded-full bg-card/80" />
         <Skeleton className="mt-6 h-4 w-24 bg-black/10" />
         <Skeleton className="mt-2 h-9 w-52 bg-black/10" />
       </div>
       <div className="space-y-4 px-4 pt-1">
-        <Skeleton className="surface h-40 bg-white" />
-        <Skeleton className="surface h-56 bg-white" />
-        <Skeleton className="surface h-28 bg-white" />
+        <Skeleton className="surface h-40 bg-card" />
+        <Skeleton className="surface h-56 bg-card" />
+        <Skeleton className="surface h-28 bg-card" />
       </div>
     </div>
   );

@@ -39,13 +39,13 @@ export default function DishImage({ item, className = '', iconClass = 'size-10',
         loading="lazy"
         decoding="async"
         onError={() => setFailed(true)}
-        className={`bg-brand-50 object-cover ${className}`}
+        className={`bg-tint object-cover ${className}`}
       />
     );
   }
 
   // No photo: a flat tile in the restaurant's own colour with the bowl on it.
-  const tile = variant === 'hero' ? 'bg-brand-800' : 'bg-brand-50';
+  const tile = variant === 'hero' ? 'bg-brand-800' : 'bg-tint';
   return (
     <div aria-hidden="true" className={`relative grid select-none place-items-center overflow-hidden ${tile} ${className}`}>
       <Bowl className={`${iconClass} ${variant === 'hero' ? 'text-white/30' : 'text-brand-300'}`} />

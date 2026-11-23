@@ -97,7 +97,7 @@ export default function ServiceButtons({ tableToken, className = '', grid = fals
             className={`inline-flex items-center gap-1.5 font-bold transition-colors ${
               grid ? 'min-h-12 w-full justify-center rounded-2xl px-3 text-[15px]' : 'min-h-10 rounded-full px-3.5 text-[13px]'
             } ${
-              asked ? 'bg-emerald-100 text-emerald-900' : 'bg-white text-ink ring-1 ring-inset ring-black/10 hover:bg-black/[0.04] active:bg-black/[0.08]'
+              asked ? 'bg-emerald-100 text-emerald-900' : 'bg-card text-ink ring-1 ring-inset ring-line hover:bg-fill active:bg-fill-strong'
             } disabled:cursor-default`}
           >
             {busy === kind ? <SpinnerIcon className="size-4 animate-spin" /> : asked ? <CheckIcon className="size-4" /> : <Icon className={grid ? 'size-5' : 'size-4'} />}

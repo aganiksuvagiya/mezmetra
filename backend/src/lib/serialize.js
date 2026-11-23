@@ -1,8 +1,8 @@
 import { config } from '../config.js';
 import { toRupees } from './money.js';
 
-/** The restaurant's menu colours, from a row that has theme_primary / theme_accent. */
-export const themeOut = (row) => ({ primary: row.theme_primary, accent: row.theme_accent });
+/** The restaurant's menu colours and design, from a row that has theme_primary / theme_accent / theme_style. */
+export const themeOut = (row) => ({ primary: row.theme_primary, accent: row.theme_accent, style: row.theme_style ?? 'classic' });
 
 /** URL of the restaurant's logo (served publicly, versioned so a new logo is never served from cache), or null. */
 export const logoUrl = (row, vendorId = row.id) => (row.has_logo ? `/api/public/vendors/${vendorId}/logo?v=${row.logo_version}` : null);

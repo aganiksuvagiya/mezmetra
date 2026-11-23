@@ -31,6 +31,18 @@
   --color-ink-soft: #636366;
   --color-line: #d9d9de;
 
+  /* Set by the restaurant's chosen design (shared/styles.js); these are the Classic defaults. */
+  --color-card: #ffffff; /* cards, sheets and fields */
+  --color-fill: rgb(0 0 0 / 0.06); /* chips and quiet buttons */
+  --color-fill-strong: rgb(0 0 0 / 0.1);
+  --color-link: #265a50; /* brand-coloured text on the page */
+  --color-tint: #eef6f4; /* soft brand tint behind selected rows */
+  --color-tint-strong: #d6e9e4;
+  --color-inverse: #1c1c1e; /* the dark "Your order" bar */
+  --color-on-inverse: #ffffff;
+  --radius-surface: 1.125rem;
+  --radius-chip: 9999px;
+
   --shadow-soft: 0 1px 1px rgb(16 24 20 / 0.04), 0 14px 34px -16px rgb(16 24 20 / 0.2);
   --shadow-dock: 0 18px 44px -10px rgb(16 24 20 / 0.38), 0 2px 8px rgb(16 24 20 / 0.1);
   --shadow-card: 0 1px 2px rgb(29 41 38 / 0.05), 0 8px 24px -14px rgb(29 41 38 / 0.2);
@@ -121,7 +133,7 @@
 :root {
   /* Height of the bottom tab bar (plus the "View cart" button floating above it while the cart has something in it: --cta-h is
      set by the Dock), so page-level sticky bars, toasts and the last dish can sit clear of it. */
-  --tabbar-h: calc(3.5rem + env(safe-area-inset-bottom) + var(--cta-h, 0rem));
+  --tabbar-h: calc(3.5rem + env(safe-area-inset-bottom) + var(--cta-h, 0rem) + var(--dock-extra, 0rem));
 }
 
 @layer base {
@@ -181,9 +193,14 @@
 
 /* A white, softly lifted surface. */
 @utility surface {
-  border-radius: 1.125rem;
-  background: #fff;
-  box-shadow: 0 0 0 0.5px rgb(60 60 67 / 0.16), 0 1px 2px rgb(0 0 0 / 0.04);
+  border-radius: var(--radius-surface);
+  background: var(--color-card);
+  box-shadow: 0 0 0 0.5px var(--color-line), 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+/* Chips and pills: fully round, or square-cornered in the Minimal design. */
+@utility rounded-chip {
+  border-radius: var(--radius-chip);
 }
 
 /* Big, tight headings. */
@@ -194,10 +211,10 @@
 
 /* Frosted glass: floating bars and chips over scrolling content. */
 @utility glass {
-  background: rgb(250 250 252 / 0.8);
+  background: color-mix(in srgb, var(--color-card) 82%, transparent);
   -webkit-backdrop-filter: blur(24px) saturate(1.8);
   backdrop-filter: blur(24px) saturate(1.8);
-  box-shadow: 0 0 0 0.5px rgb(60 60 67 / 0.18);
+  box-shadow: 0 0 0 0.5px var(--color-line);
 }
 
 /* Soft colour wash behind page headers, tinted by the restaurant's two colours. */

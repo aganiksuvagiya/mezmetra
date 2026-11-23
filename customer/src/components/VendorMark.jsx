@@ -22,7 +22,7 @@ export default function VendorMark({ vendor, size = 'lg' }) {
         alt=""
         decoding="async"
         onError={() => setFailed(true)}
-        className={`${box} shrink-0 bg-white object-contain p-1.5 shadow-float ring-1 ring-inset ring-black/10`}
+        className={`${box} shrink-0 bg-white object-contain p-1.5 shadow-float ring-1 ring-inset ring-line`}
       />
     );
   }

@@ -8,6 +8,7 @@ import { passwordResetEmail } from '../lib/mailer.js';
 import { vendorOut } from '../lib/serialize.js';
 import { detectImageMime, IMAGE_TYPES } from '../lib/image.js';
 import { requireActiveVendor, requireAuth, signToken } from '../middleware/auth.js';
+import { STYLE_IDS } from '../../../shared/styles.js';
 
 const email = z.string().trim().toLowerCase().max(200).pipe(z.email('Enter a valid email address'));
 
@@ -148,6 +149,7 @@ const vendorPatchSchema = z
     timezone: z.string().trim().min(1).max(64),
     theme_primary: hexColour,
     theme_accent: hexColour,
+    theme_style: z.enum(STYLE_IDS),
     table_code_mode: z.enum(['off', 'optional', 'required']),
   })
   .partial();
@@ -179,9 +181,10 @@ export function vendorRouter(db) {
          timezone      = COALESCE($4, timezone),
          theme_primary = COALESCE($5, theme_primary),
          theme_accent  = COALESCE($6, theme_accent),
-         table_code_mode = COALESCE($7, table_code_mode)
+         table_code_mode = COALESCE($7, table_code_mode),
+         theme_style   = COALESCE($8, theme_style)
        WHERE id = $1 RETURNING *`,
-      [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null, body.table_code_mode ?? null],
+      [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null, body.table_code_mode ?? null, body.theme_style ?? null],
     );
     res.json({ data: vendorOut(rows[0]) });
   });

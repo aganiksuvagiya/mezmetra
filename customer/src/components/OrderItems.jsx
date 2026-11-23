@@ -11,7 +11,7 @@ export default function OrderItems({ items }) {
           <DishImage item={item} className="size-12 shrink-0 rounded-xl" iconClass="size-6" />
           <div className="min-w-0 flex-1">
             <p className="font-bold leading-snug text-ink">
-              <span className="text-brand-700 tabular-nums">
+              <span className="text-link tabular-nums">
                 {item.quantity}
                 <span className="sr-only"> ×</span>
                 <span aria-hidden="true">×</span>

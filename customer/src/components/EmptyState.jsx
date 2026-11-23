@@ -1,6 +1,6 @@
 /** Centered message block used for empty cart, invalid QR code, errors, unknown orders... */
 export default function EmptyState({ icon, title, children, action, tone = 'neutral', as: Heading = 'h1', className = '' }) {
-  const badge = tone === 'danger' ? 'bg-rose-100 text-rose-700' : 'bg-brand-100 text-brand-700';
+  const badge = tone === 'danger' ? 'bg-rose-100 text-rose-700' : 'bg-tint-strong text-link';
   return (
     <div className={`flex flex-col items-center px-6 py-14 text-center ${className}`}>
       {icon && <div className={`mb-5 grid size-16 place-items-center rounded-3xl ${badge}`}>{icon}</div>}

@@ -104,7 +104,7 @@ export default function ItemSheet({ item, onClose, onAdd }) {
                   <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-base font-extrabold text-ink">
                     {group.name}
                     {group.required ? (
-                      <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-brand-800">
+                      <span className="rounded-full bg-tint-strong px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-link">
                         Required
                       </span>
                     ) : (
@@ -117,7 +117,7 @@ export default function ItemSheet({ item, onClose, onAdd }) {
                     <button
                       type="button"
                       onClick={() => clearGroup(group)}
-                      className="min-h-11 rounded-lg px-2 text-sm font-semibold text-brand-700 underline underline-offset-2"
+                      className="min-h-11 rounded-lg px-2 text-sm font-semibold text-link underline underline-offset-2"
                       aria-label={`Clear ${group.name}`}
                     >
                       Clear
@@ -133,7 +133,7 @@ export default function ItemSheet({ item, onClose, onAdd }) {
                       <label
                         key={option.id}
                         className={`flex min-h-12 cursor-pointer items-center gap-3 px-3 py-2 has-[:focus-visible]:outline-3 has-[:focus-visible]:-outline-offset-3 has-[:focus-visible]:outline-brand-800 ${
-                          checked ? 'bg-brand-50' : 'bg-white hover:bg-page'
+                          checked ? 'bg-tint' : 'bg-card hover:bg-page'
                         }`}
                       >
                         <input

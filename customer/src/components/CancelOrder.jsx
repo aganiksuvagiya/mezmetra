@@ -52,7 +52,7 @@ export default function CancelOrder({ order, onCancelled, onRefresh }) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-white px-5 text-[15px] font-bold text-rose-700 transition-colors hover:bg-rose-50 active:bg-rose-100"
+          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-card px-5 text-[15px] font-bold text-rose-700 transition-colors hover:bg-rose-50 active:bg-rose-100"
         >
           <CloseIcon className="size-5" />
           Cancel order

@@ -1,8 +1,9 @@
-import { lazy, Suspense, useCallback, useId, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { MenuBookIcon, QrIcon } from '../components/Icons';
 import { parseTableLink } from '../lib/ids';
+import { applyClassicLook } from '../lib/theme';
 import { usePageTitle } from '../lib/usePageTitle';
 
 // The scanner (and the jsQR decoder it pulls in) is only downloaded when a diner taps "Scan".
@@ -40,6 +41,8 @@ const STEPS = [
 ];
 
 export default function Landing() {
+  // Not a restaurant's page: always the neutral Classic look, whatever the last restaurant chose.
+  useEffect(() => applyClassicLook(), []);
   const navigate = useNavigate();
   const [value, setValue] = useState('');
   const [error, setError] = useState('');

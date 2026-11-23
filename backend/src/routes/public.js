@@ -56,7 +56,7 @@ export function publicRouter(db, { orderLimiter }) {
   const tableByToken = async (q, token) => {
     if (!QR_TOKEN.test(token)) throw notFound('Table');
     const { rows } = await q.query(
-      `SELECT t.*, v.name AS vendor_name, v.currency, v.tax_percent, v.theme_primary, v.theme_accent, v.has_logo, v.logo_version, v.suspended_at, v.table_code_mode
+      `SELECT t.*, v.name AS vendor_name, v.currency, v.tax_percent, v.theme_primary, v.theme_accent, v.theme_style, v.has_logo, v.logo_version, v.suspended_at, v.table_code_mode
          FROM dining_tables t JOIN vendors v ON v.id = t.vendor_id
         WHERE t.qr_token = $1`,
       [token],
@@ -112,7 +112,7 @@ export function publicRouter(db, { orderLimiter }) {
   const publicOrder = async (q, order) => {
     const [items, vendor, settings] = await Promise.all([
       loadOrderItems(q, [order.id]),
-      q.query(`SELECT id, name, currency, theme_primary, theme_accent, has_logo, logo_version FROM vendors WHERE id = $1`, [order.vendor_id]),
+      q.query(`SELECT id, name, currency, theme_primary, theme_accent, theme_style, has_logo, logo_version FROM vendors WHERE id = $1`, [order.vendor_id]),
       paymentSettings(q, order.vendor_id),
     ]);
     const options = optionsFrom(settings);
