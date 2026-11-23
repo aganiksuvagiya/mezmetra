@@ -8,7 +8,7 @@ const SIZES = {
 
 /**
  * The restaurant's mark: its uploaded logo on a white tile, or (no logo / logo failed to load) a tile in the restaurant's
- * own colour with its first letter, like an iPhone app icon.
+ * own colour with its first letter.
  */
 export default function VendorMark({ vendor, size = 'lg' }) {
   const [failed, setFailed] = useState(false);
@@ -29,7 +29,7 @@ export default function VendorMark({ vendor, size = 'lg' }) {
   return (
     <span
       aria-hidden="true"
-      className={`${box} grid shrink-0 place-items-center bg-gradient-to-br from-brand-500 to-brand-800 font-extrabold text-white shadow-float ring-1 ring-inset ring-white/20`}
+      className={`${box} grid shrink-0 place-items-center bg-brand-700 font-extrabold text-white`}
     >
       {vendor.name.trim().charAt(0).toUpperCase() || 'M'}
     </span>

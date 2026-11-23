@@ -2,12 +2,12 @@ import { CheckIcon } from './Icons';
 
 const STEPS = [
   { key: 'pending', label: 'Received' },
-  { key: 'accepted', label: 'Accepted' },
+  { key: 'accepted', label: 'Preparing' },
   { key: 'ready', label: 'Ready' },
   { key: 'completed', label: 'Completed' },
 ];
 
-/** Received -> Accepted -> Ready -> Completed. `ready` is the kitchen saying an accepted order is done. (Cancelled orders are shown by the page itself.) */
+/** Received -> Preparing (the kitchen accepted it) -> Ready -> Completed. `ready` is the kitchen saying an accepted order is done. (Cancelled orders are shown by the page itself.) */
 export default function StatusStepper({ status, ready = false, tone = 'default' }) {
   const light = tone === 'light'; // on a dark brand card
   const key = status === 'accepted' && ready ? 'ready' : status;

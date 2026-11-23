@@ -1,54 +1,126 @@
+import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BagIcon, ChevronRightIcon, MenuBookIcon } from './Icons';
+import BottomSheet from './BottomSheet';
+import { BagIcon, BellIcon, ChevronRightIcon, MenuIcon, ReceiptIcon, SearchIcon } from './Icons';
+import OrdersSheet from './OrdersSheet';
+import ServiceButtons from './ServiceButtons';
 import { formatPaise } from '../lib/money';
+import { useRecentOrders } from '../lib/useRecentOrders';
+
+// Height of the "View cart" button that floats above the tab bar while the cart has something in it (see --cta-h in index.css).
+const CTA_HEIGHT = '4rem';
+
+const tabClass = 'relative flex h-14 w-full flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors active:bg-black/5';
 
 /**
- * Floating glass dock at the bottom of the menu: "Menu" (back to top) and one big cart control that turns into a
- * "₹199 · View cart" call-to-action as soon as the cart has something in it. One bar instead of two stacked ones.
+ * The bottom bar of the menu, like an iPhone tab bar: Menu (back to top), Search (jumps to the search field), Cart (with a count),
+ * Orders (what this phone has ordered, in a sheet) and Help (call the waiter / ask for the bill, in a sheet), so each is one tap away
+ * however far down the menu you are. While the cart has something in it a "View cart · ₹199" button floats just above the bar.
  */
-export function Dock({ token, count, subtotalPaise }) {
+export function Dock({ token, vendorName, count, subtotalPaise }) {
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
+  const helpTitle = useId();
+  const orders = useRecentOrders(vendorName);
+  const inProgress = orders.some((o) => !o.done); // an order that is still being made: a dot on the Orders tab
   const toTop = () => window.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  const goSearch = () => {
+    toTop();
+    document.getElementById('menu-search')?.focus({ preventScroll: true });
+  };
+  const itemsLabel = count === 1 ? '1 item' : `${count} items`;
+
+  // Tell the page how much room the floating button takes, so the last dish and the toasts stay clear of it.
+  useEffect(() => {
+    if (count > 0) document.documentElement.style.setProperty('--cta-h', CTA_HEIGHT);
+    else document.documentElement.style.removeProperty('--cta-h');
+    return () => document.documentElement.style.removeProperty('--cta-h');
+  }, [count > 0]); // eslint-disable-line react-hooks/exhaustive-deps -- only whether the cart is empty matters
 
   return (
-    <nav aria-label="Main" className="glass fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md rounded-t-[1.25rem] pb-[env(safe-area-inset-bottom)] motion-safe:animate-bar-in">
-      <div className="flex items-center gap-3 px-3 pb-2 pt-2">
-        <button
-          type="button"
-          onClick={toTop}
-          className="flex h-12 w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-semibold text-brand-700 transition-colors hover:bg-black/5 active:bg-black/10"
-        >
-          <MenuBookIcon className="size-[22px]" />
-          Menu
-        </button>
-
-        {count > 0 ? (
+    <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md">
+      {count > 0 && (
+        <div className="px-3 pb-2">
           <Link
             to={`/t/${token}/cart`}
-            className="flex h-12 min-w-0 flex-1 items-center justify-between gap-2 rounded-[14px] bg-brand-600 pl-3 pr-3.5 text-white transition-colors hover:bg-brand-700 active:bg-brand-800"
+            className="flex h-14 items-center justify-between gap-3 rounded-2xl bg-brand-600 pl-4 pr-3.5 text-white shadow-float transition-colors hover:bg-brand-700 active:bg-brand-800 motion-safe:animate-bar-in"
           >
-            <span className="flex min-w-0 items-center gap-2.5">
-              <span className="grid h-6 min-w-6 place-items-center rounded-full bg-white px-1.5 text-[13px] font-extrabold leading-none text-brand-700" aria-hidden="true">
-                {count}
-              </span>
-              <span className="truncate text-[15px] font-semibold">
-                View cart<span className="sr-only">, {count === 1 ? '1 item' : `${count} items`}</span>
-              </span>
+            <span className="min-w-0 truncate text-[15px] font-semibold">
+              View cart<span className="text-white/75"> · {itemsLabel}</span>
             </span>
             <span className="inline-flex shrink-0 items-center gap-0.5 text-[17px] font-bold tabular-nums">
               {formatPaise(subtotalPaise)}
               <ChevronRightIcon className="size-4 opacity-80" />
             </span>
           </Link>
-        ) : (
-          <Link
-            to={`/t/${token}/cart`}
-            className="flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-[14px] bg-black/[0.06] text-[15px] font-semibold text-ink-soft transition-colors hover:bg-black/10"
-          >
-            <BagIcon className="size-5" />
-            Your cart is empty
-          </Link>
-        )}
-      </div>
-    </nav>
+        </div>
+      )}
+
+      <nav aria-label="Main" className="glass rounded-t-[1.25rem] pb-[env(safe-area-inset-bottom)]">
+        <ul className="grid grid-cols-5">
+          <li>
+            <button type="button" onClick={toTop} aria-current="page" className={`${tabClass} text-brand-700`}>
+              <MenuIcon className="size-[24px]" />
+              Menu
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={goSearch} className={`${tabClass} text-ink-soft`}>
+              <SearchIcon className="size-[24px]" />
+              Search
+            </button>
+          </li>
+          <li>
+            <Link to={`/t/${token}/cart`} className={`${tabClass} text-ink-soft`}>
+              <span className="relative">
+                <BagIcon className="size-[24px]" />
+                {count > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -right-2.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-extrabold leading-none text-white"
+                  >
+                    {count}
+                  </span>
+                )}
+              </span>
+              Cart
+              <span className="sr-only">{count > 0 ? `, ${itemsLabel}` : ', empty'}</span>
+            </Link>
+          </li>
+          <li>
+            <button type="button" onClick={() => setOrdersOpen(true)} aria-haspopup="dialog" className={`${tabClass} text-ink-soft`}>
+              <span className="relative">
+                <ReceiptIcon className="size-[24px]" />
+                {inProgress && <span aria-hidden="true" className="absolute -right-1 -top-0.5 size-2.5 rounded-full bg-brand-600 ring-2 ring-white" />}
+              </span>
+              Orders
+              {inProgress && <span className="sr-only">, one is in progress</span>}
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={() => setHelpOpen(true)} aria-haspopup="dialog" className={`${tabClass} text-ink-soft`}>
+              <BellIcon className="size-[24px]" />
+              Help
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      {ordersOpen && <OrdersSheet orders={orders} tableToken={token} onClose={() => setOrdersOpen(false)} />}
+
+      {helpOpen && (
+        <BottomSheet onClose={() => setHelpOpen(false)} labelledBy={helpTitle}>
+          <div className="space-y-4 px-5 pb-6 pt-6">
+            <div>
+              <h2 id={helpTitle} className="display pr-12 text-[24px] font-extrabold leading-tight text-ink">
+                Need something?
+              </h2>
+              <p className="mt-1 text-[15px] text-ink-soft">We will let the staff know right away.</p>
+            </div>
+            <ServiceButtons tableToken={token} grid />
+          </div>
+        </BottomSheet>
+      )}
+    </div>
   );
 }

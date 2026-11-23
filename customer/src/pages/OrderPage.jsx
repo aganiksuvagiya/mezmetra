@@ -159,21 +159,22 @@ function OrderView({ orderToken }) {
             </div>
           </section>
         ) : (
-          <section aria-label="Order status" className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 p-5 text-white shadow-soft">
-            <span aria-hidden="true" className="pointer-events-none absolute -right-12 -top-14 size-48 rounded-full bg-saffron-300/30 blur-3xl" />
-            <div className="relative flex items-start gap-3.5">
-              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-inset ring-white/25">
+          <section aria-label="Order status" className="surface p-5">
+            <div className="flex items-start gap-3.5">
+              <span
+                className={`grid size-12 shrink-0 place-items-center rounded-2xl ${
+                  order.status === 'completed' || isReady ? 'bg-emerald-100 text-emerald-700' : 'bg-brand-600/10 text-brand-700'
+                }`}
+              >
                 {order.status === 'completed' || isReady ? <CheckIcon className="size-6" /> : order.status === 'accepted' ? <MenuBookIcon className="size-6" /> : <ClockIcon className="size-6 motion-safe:animate-pulse" />}
               </span>
               <div aria-live="polite" className="min-w-0">
-                <h2 className="display text-[22px] font-extrabold leading-tight">{headline}</h2>
-                {sub && <p className="mt-1 text-sm text-white/80">{sub}</p>}
+                <h2 className="display text-[22px] font-extrabold leading-tight text-ink">{headline}</h2>
+                {sub && <p className="mt-1 text-sm text-ink-soft">{sub}</p>}
               </div>
             </div>
-            <div className="relative">
-              <StatusStepper status={order.status} ready={isReady} tone="light" />
-              <p className="mt-4 text-xs text-white/70">This page updates automatically - no need to refresh.</p>
-            </div>
+            <StatusStepper status={order.status} ready={isReady} />
+            <p className="mt-4 text-xs text-ink-soft">This page updates automatically - no need to refresh.</p>
           </section>
         )}
 

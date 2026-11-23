@@ -119,8 +119,9 @@
 }
 
 :root {
-  /* Fixed height of the bottom tab bar, so page-level sticky bars can sit directly above it. */
-  --tabbar-h: calc(5rem + env(safe-area-inset-bottom));
+  /* Height of the bottom tab bar (plus the "View cart" button floating above it while the cart has something in it: --cta-h is
+     set by the Dock), so page-level sticky bars, toasts and the last dish can sit clear of it. */
+  --tabbar-h: calc(3.5rem + env(safe-area-inset-bottom) + var(--cta-h, 0rem));
 }
 
 @layer base {

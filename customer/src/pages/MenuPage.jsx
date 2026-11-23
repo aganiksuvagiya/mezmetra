@@ -4,10 +4,9 @@ import { DIET_LABELS } from '../components/DietMark';
 import { DishCard, PickCard } from '../components/DishCard';
 import EmptyState from '../components/EmptyState';
 import { Button } from '../components/Button';
-import { CardIcon, CashIcon, ChevronRightIcon, CloseIcon, MenuBookIcon, PhoneIcon, SearchIcon } from '../components/Icons';
+import { ChevronRightIcon, CloseIcon, MenuBookIcon, SearchIcon } from '../components/Icons';
 import ItemSheet from '../components/ItemSheet';
 import RecentOrders from '../components/RecentOrders';
-import ServiceButtons from '../components/ServiceButtons';
 import VendorMark from '../components/VendorMark';
 import { useToast } from '../components/Toast';
 import { buildLine, lineKey, MAX_LINES, MAX_QTY } from '../lib/cart';
@@ -70,9 +69,9 @@ export default function MenuPage() {
 
   // The ways of paying this restaurant takes, shown under its name so nobody is surprised at the cart.
   const payChips = [
-    menu.payment_options?.upi && { key: 'upi', label: 'UPI', Icon: PhoneIcon },
-    ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => menu.payment_options?.[name]) && { key: 'online', label: 'Card & online', Icon: CardIcon },
-    menu.payment_options?.cash && { key: 'cash', label: 'Pay at counter', Icon: CashIcon },
+    menu.payment_options?.upi && { key: 'upi', label: 'UPI' },
+    ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => menu.payment_options?.[name]) && { key: 'online', label: 'Card & online' },
+    menu.payment_options?.cash && { key: 'cash', label: 'Pay at counter' },
   ].filter(Boolean);
 
   const sections = useMemo(() => {
@@ -180,55 +179,32 @@ export default function MenuPage() {
 
   return (
     <main className="pb-[calc(var(--tabbar-h)+1.5rem)]">
-      <header className="px-5 pb-1 pt-[calc(env(safe-area-inset-top)+1.25rem)]">
-        <div className="flex items-center gap-3.5">
-          <VendorMark vendor={menu.vendor} />
-          <div className="min-w-0">
-            <h1 className="display break-words text-[30px] font-extrabold leading-[1.05] text-ink">{menu.vendor.name}</h1>
-            <p className="mt-0.5 text-[15px] text-ink-soft">What are you craving today?</p>
+      <header className="px-5 pb-1 pt-[calc(env(safe-area-inset-top)+1rem)]">
+        <div className="flex items-center gap-3">
+          <VendorMark vendor={menu.vendor} size="sm" />
+          <div className="min-w-0 flex-1">
+            <h1 className="display break-words text-[24px] font-extrabold leading-[1.1] text-ink">{menu.vendor.name}</h1>
+            {payChips.length > 0 && (
+              <p className="mt-0.5 truncate text-xs font-semibold text-ink-soft">
+                <span className="sr-only">Ways to pay: </span>
+                {payChips.map((c) => c.label).join(' · ')}
+              </p>
+            )}
           </div>
-        </div>
-
-        <ul aria-label="Your table and ways to pay" className="mt-4 flex flex-wrap gap-2">
-          <li className="inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-2.5 pr-3 text-[13px] font-bold text-ink ring-1 ring-inset ring-black/5">
-            <span className="relative flex size-2.5">
-              <span aria-hidden="true" className="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 motion-safe:animate-ping" />
-              <span aria-hidden="true" className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+          <p className="inline-flex shrink-0 items-center gap-2 rounded-full bg-white py-1.5 pl-2.5 pr-3 text-[13px] font-bold text-ink ring-1 ring-inset ring-black/5">
+            <span aria-hidden="true" className="relative flex size-2.5">
+              <span className="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 motion-safe:animate-ping" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
             </span>
             {`Table ${menu.table.number}`}
-          </li>
-          {payChips.map(({ key, label, Icon }) => (
-            <li key={key} className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-2.5 py-1.5 text-xs font-semibold text-ink-soft">
-              <Icon className="size-3.5" />
-              {label}
-            </li>
-          ))}
-        </ul>
-
-        <ServiceButtons tableToken={token} className="mt-3" />
-
-        {dietChips.length > 0 && (
-          <div role="group" aria-label="Filter by food type" className="mt-3 flex flex-wrap gap-2">
-            {[['', 'All'], ...dietChips.map((k) => [k, k === 'nonveg' ? 'Non-veg' : k === 'veg' ? 'Veg' : DIET_LABELS[k].replace('Contains egg', 'Egg')])].map(([key, label]) => (
-              <button
-                key={key || 'all'}
-                type="button"
-                aria-pressed={diet === key}
-                onClick={() => setDiet(key)}
-                className={`min-h-9 rounded-full px-3.5 text-[13px] font-bold transition-colors ${
-                  diet === key ? 'bg-brand-600 text-white' : 'bg-black/[0.06] text-ink hover:bg-black/10'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+          </p>
+        </div>
 
         {/* iOS search field: a grey rounded well, no border. */}
-        <div className="relative mt-4">
+        <div className="relative mt-3.5">
           <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 z-10 size-[18px] -translate-y-1/2 text-ink-soft" />
           <input
+            id="menu-search"
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -249,6 +225,24 @@ export default function MenuPage() {
             </button>
           )}
         </div>
+
+        {dietChips.length > 0 && (
+          <div role="group" aria-label="Filter by food type" className="mt-2.5 flex flex-wrap gap-2">
+            {[['', 'All'], ...dietChips.map((k) => [k, k === 'nonveg' ? 'Non-veg' : k === 'veg' ? 'Veg' : DIET_LABELS[k].replace('Contains egg', 'Egg')])].map(([key, label]) => (
+              <button
+                key={key || 'all'}
+                type="button"
+                aria-pressed={diet === key}
+                onClick={() => setDiet(key)}
+                className={`min-h-9 rounded-full px-3.5 text-[13px] font-bold transition-colors ${
+                  diet === key ? 'bg-brand-600 text-white' : 'bg-black/[0.06] text-ink hover:bg-black/10'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       {activeOrder && (

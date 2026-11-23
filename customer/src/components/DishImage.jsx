@@ -1,14 +1,6 @@
 import { useState } from 'react';
 import { assetUrl } from '../lib/api';
 
-// Where the colour blobs sit; picked by dish id so neighbouring dishes look different but stay on-palette.
-const SPOTS = [
-  [18, 20, 84, 86],
-  [84, 16, 12, 88],
-  [22, 86, 88, 12],
-  [80, 82, 14, 16],
-];
-
 /** A bowl with steam: a calm "no photo yet" picture that is drawn with the restaurant's own colours. */
 function Bowl({ className, style }) {
   return (
@@ -32,7 +24,7 @@ function Bowl({ className, style }) {
 }
 
 /**
- * Photo, or a tile drawn from the theme colours when there is no photo (or it fails to load).
+ * Photo, or a flat tile in the theme colour when there is no photo (or it fails to load).
  * variant="thumb" is light (list rows, cart); variant="hero" is deep, for cards with white text over the picture.
  */
 export default function DishImage({ item, className = '', iconClass = 'size-10', variant = 'thumb' }) {
@@ -52,18 +44,11 @@ export default function DishImage({ item, className = '', iconClass = 'size-10',
     );
   }
 
-  const [x1, y1, x2, y2] = SPOTS[Math.abs(Number(item.id) || 0) % SPOTS.length];
-  const background =
-    variant === 'hero'
-      ? `radial-gradient(90% 70% at ${x1}% ${y1}%, color-mix(in oklab, var(--color-saffron-500) 55%, transparent), transparent 66%),
-         radial-gradient(80% 80% at ${x2}% ${y2}%, var(--color-brand-400), transparent 72%),
-         linear-gradient(165deg, var(--color-brand-600), var(--color-brand-900))`
-      : `radial-gradient(75% 75% at ${x1}% ${y1}%, color-mix(in oklab, var(--color-saffron-300) 65%, transparent), transparent 70%),
-         linear-gradient(150deg, var(--color-brand-100), var(--color-brand-200))`;
-
+  // No photo: a flat tile in the restaurant's own colour with the bowl on it.
+  const tile = variant === 'hero' ? 'bg-brand-800' : 'bg-brand-50';
   return (
-    <div aria-hidden="true" style={{ background }} className={`relative grid select-none place-items-center overflow-hidden ${className}`}>
-      <Bowl className={`${iconClass} ${variant === 'hero' ? 'text-white/25' : 'text-brand-700/60'}`} />
+    <div aria-hidden="true" className={`relative grid select-none place-items-center overflow-hidden ${tile} ${className}`}>
+      <Bowl className={`${iconClass} ${variant === 'hero' ? 'text-white/30' : 'text-brand-300'}`} />
     </div>
   );
 }

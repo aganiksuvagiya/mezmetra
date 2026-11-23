@@ -100,7 +100,7 @@ function TableShell({ token }) {
   return (
     <>
       <Outlet context={{ token, menu: state.menu, cart, refreshMenu }} />
-      {onMenu && <Dock token={token} count={cart.count} subtotalPaise={cart.subtotalPaise} />}
+      {onMenu && <Dock token={token} vendorName={state.menu.vendor.name} count={cart.count} subtotalPaise={cart.subtotalPaise} />}
     </>
   );
 }

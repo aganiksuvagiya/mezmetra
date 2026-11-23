@@ -41,7 +41,7 @@ export function DishCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd,
 export function PickCard({ item, plainQty = 0, totalQty = 0, onOpen, onQuickAdd, onStep }) {
   const hasOptions = (item.option_groups ?? []).length > 0;
   return (
-    <article className="relative aspect-[5/6] w-[68%] max-w-[16.5rem] shrink-0 snap-start overflow-hidden rounded-[22px] text-white shadow-soft has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-800">
+    <article className="relative aspect-[6/7] w-[68%] max-w-[16.5rem] shrink-0 snap-start overflow-hidden rounded-[22px] text-white shadow-soft has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-800">
       <DishImage item={item} variant="hero" className={`pointer-events-none absolute inset-0 size-full ${item.is_sold_out ? 'grayscale' : ''}`} iconClass="size-28" />
       <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/75 via-black/30 to-transparent" />
 
