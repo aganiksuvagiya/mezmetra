@@ -1,35 +1,26 @@
-import { useMemo, useState } from 'react';
-import { Button } from './Button.jsx';
+import { useState } from 'react';
+import { Spinner } from './Spinner.jsx';
 import { useToast } from './Toast.jsx';
 import { BellIcon, CheckIcon, ReceiptIcon } from './icons.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
-
-/** How many tables are listed before the rest fold behind "Show N more", so a busy floor never pushes the page down. */
-const VISIBLE_TABLES = 3;
+import { timeAgo } from '../lib/format.js';
 
 const KIND = {
   waiter: { label: 'Waiter', icon: BellIcon },
   bill: { label: 'Bill', icon: ReceiptIcon },
 };
 
-/** Diners waiting for the waiter or the bill, one row per table. Shown on every admin page until staff tap each request done. */
+/**
+ * Diners waiting for the waiter or the bill, as one slim bar: a chip per request (oldest first) with the table, what they want and
+ * how long they have waited. Tapping a chip marks it done. The bar keeps the same height however many are waiting (the chips
+ * scroll sideways), so a busy floor never pushes the page down. Shown on every admin page until each request is done.
+ */
 export default function RequestsBanner() {
   const { requests, resolveRequest } = useLiveOrders();
   const toast = useToast();
   const [busyId, setBusyId] = useState(null);
-  const [expanded, setExpanded] = useState(false);
 
-  // Requests arrive oldest first; keep that order, but put a table's waiter call and bill request on one row.
-  const tables = useMemo(() => {
-    const byTable = new Map();
-    for (const r of requests) {
-      if (!byTable.has(r.table_number)) byTable.set(r.table_number, { number: r.table_number, items: [] });
-      byTable.get(r.table_number).items.push(r);
-    }
-    return [...byTable.values()];
-  }, [requests]);
-
-  if (tables.length === 0) return null;
+  if (requests.length === 0) return null;
 
   const done = async (id) => {
     setBusyId(id);
@@ -42,55 +33,48 @@ export default function RequestsBanner() {
     }
   };
 
-  const hidden = Math.max(0, tables.length - VISIBLE_TABLES);
-  const shown = expanded ? tables : tables.slice(0, VISIBLE_TABLES);
-
   return (
-    <section aria-label="Customers waiting" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 sm:p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-bold text-amber-900">
-          Customers need you <span className="font-semibold text-amber-800">({requests.length})</span>
-        </h2>
-        <p className="hidden text-xs text-amber-800 sm:block">Tap a request once it is handled</p>
-      </div>
-      <ul className="mt-2 space-y-2">
-        {shown.map((t) => (
-          <li key={t.number} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg bg-white px-3 py-2 shadow-xs">
-            <p className="min-w-0 break-words text-sm font-semibold text-slate-800">Table {t.number}</p>
-            <div className="flex flex-wrap gap-2">
-              {t.items.map((r) => {
-                const kind = KIND[r.kind] ?? KIND.waiter;
-                return (
-                  <Button
-                    key={r.id}
-                    size="sm"
-                    variant="secondary"
-                    icon={kind.icon}
-                    busy={busyId === r.id}
-                    disabled={busyId !== null}
-                    onClick={() => done(r.id)}
-                    aria-label={`${kind.label} for table ${t.number}: mark done`}
-                    className="!h-8 !gap-1.5 !px-2.5"
-                  >
-                    {kind.label}
-                    <CheckIcon size={14} className="text-emerald-600" />
-                  </Button>
-                );
-              })}
-            </div>
-          </li>
-        ))}
+    <section
+      aria-label="Customers waiting"
+      className="mb-3 flex flex-col gap-2 rounded-2xl border border-black/[0.05] bg-white px-3 py-2.5 sm:mb-4 sm:flex-row sm:items-center sm:gap-3"
+    >
+      <h2 className="flex shrink-0 items-center gap-2 pl-1 text-sm font-semibold text-slate-900">
+        <span aria-hidden="true" className="relative flex size-2.5">
+          <span className="absolute inline-flex size-full rounded-full bg-amber-400 opacity-60 motion-safe:animate-ping" />
+          <span className="relative inline-flex size-2.5 rounded-full bg-amber-500" />
+        </span>
+        Customers need you
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{requests.length}</span>
+      </h2>
+
+      <ul className="-mb-1 flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {requests.map((r) => {
+          const kind = KIND[r.kind] ?? KIND.waiter;
+          const Icon = kind.icon;
+          const busy = busyId === r.id;
+          return (
+            <li key={r.id} className="shrink-0">
+              <button
+                type="button"
+                onClick={() => done(r.id)}
+                disabled={busyId !== null}
+                aria-label={`${kind.label} for table ${r.table_number}: mark done`}
+                title="Tap when it is handled"
+                className="group inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white pl-3 pr-1.5 text-sm transition-colors hover:bg-slate-50 disabled:opacity-60"
+              >
+                <Icon size={16} className="shrink-0 text-amber-600" />
+                <span className="font-semibold text-slate-900">{r.table_number}</span>
+                <span className="text-slate-500">
+                  {kind.label} · {timeAgo(r.created_at)}
+                </span>
+                <span className="grid size-7 place-items-center rounded-lg bg-emerald-50 text-emerald-700 group-hover:bg-emerald-100">
+                  {busy ? <Spinner /> : <CheckIcon size={16} />}
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className="mt-2 inline-flex h-8 items-center rounded-lg px-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
-        >
-          {expanded ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'table' : 'tables'}`}
-        </button>
-      )}
     </section>
   );
 }

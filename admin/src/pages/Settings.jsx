@@ -102,77 +102,85 @@ export default function Settings() {
     });
   };
 
+  const restaurantCard = (
+    <Card as="section" aria-labelledby="restaurant">
+      <CardHeader id="restaurant" title="Restaurant" description="Shown on the bill and the diner's menu." />
+      <form onSubmit={submit} noValidate className="space-y-4 p-4 sm:p-5">
+        {formError && <Alert>{formError}</Alert>}
+        <Input label="Restaurant name" value={values.name} onChange={set('name')} error={errors.name} required maxLength={100} autoComplete="organization" />
+        <Input
+          label="Tax percent"
+          value={values.tax_percent}
+          onChange={set('tax_percent')}
+          error={errors.tax_percent}
+          inputMode="decimal"
+          required
+          suffix={<span className="pr-2 text-sm text-slate-500">%</span>}
+          hint="Added to the bill of new orders. Orders already placed keep the tax they were created with."
+          wrapperClassName="max-w-48"
+        />
+        <div>
+          <Input
+            label="Time zone"
+            list={listId}
+            value={values.timezone}
+            onChange={set('timezone')}
+            error={errors.timezone}
+            required
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            hint={clock ? `It is ${clock} there now. Dates and times across the admin use this zone.` : 'Start typing, for example Asia/Kolkata.'}
+          />
+          <datalist id={listId}>
+            {zones.map((z) => (
+              <option key={z} value={z} />
+            ))}
+          </datalist>
+        </div>
+        <p className="text-sm text-slate-500">
+          Currency: <strong className="font-semibold text-slate-700">Indian rupee (₹)</strong>
+        </p>
+        <div className="flex justify-end pt-1">
+          <Button type="submit" busy={busy} disabled={!dirty}>
+            {busy ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+
+  const accountCard = (
+    <Card as="section" aria-labelledby="account">
+      <CardHeader id="account" title="Account" description="You are signed in as" />
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
+        <p className="min-w-0 break-all font-medium text-slate-900">{vendor.email}</p>
+        <Button variant="secondary" icon={LogoutIcon} onClick={logout}>
+          Sign out
+        </Button>
+      </div>
+    </Card>
+  );
+
+  // Two columns on a wide screen: the restaurant itself on the left (who it is, how it is billed, how tables are protected),
+  // how it is run on the right (alerts, the kitchen's login, your password). One column on a phone.
   return (
-    <>
+    <div className="@container">
       <PageHeader title="Settings" description="Your restaurant’s details." />
 
-      <div className="max-w-2xl space-y-4 sm:space-y-6">
-        <LogoCard />
-
-        <Card as="section" aria-labelledby="restaurant">
-          <CardHeader id="restaurant" title="Restaurant" />
-          <form onSubmit={submit} noValidate className="space-y-4 p-4 sm:p-5">
-            {formError && <Alert>{formError}</Alert>}
-            <Input label="Restaurant name" value={values.name} onChange={set('name')} error={errors.name} required maxLength={100} autoComplete="organization" />
-            <Input
-              label="Tax percent"
-              value={values.tax_percent}
-              onChange={set('tax_percent')}
-              error={errors.tax_percent}
-              inputMode="decimal"
-              required
-              suffix={<span className="pr-2 text-sm text-slate-500">%</span>}
-              hint="Added to the bill of new orders. Orders already placed keep the tax they were created with."
-              wrapperClassName="max-w-48"
-            />
-            <div>
-              <Input
-                label="Time zone"
-                list={listId}
-                value={values.timezone}
-                onChange={set('timezone')}
-                error={errors.timezone}
-                required
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                hint={clock ? `It is ${clock} there now. Dates and times across the admin use this zone.` : 'Start typing, for example Asia/Kolkata.'}
-              />
-              <datalist id={listId}>
-                {zones.map((z) => (
-                  <option key={z} value={z} />
-                ))}
-              </datalist>
-            </div>
-            <p className="text-sm text-slate-500">
-              Currency: <strong className="font-semibold text-slate-700">Indian rupee (₹)</strong>
-            </p>
-            <div className="flex justify-end pt-1">
-              <Button type="submit" busy={busy} disabled={!dirty}>
-                {busy ? 'Saving…' : 'Save changes'}
-              </Button>
-            </div>
-          </form>
-        </Card>
-
-        <TableCodeCard />
-
-        <AlertSettingsCard />
-
-        <KitchenLoginCard />
-
-        <ChangePasswordCard />
-
-        <Card as="section" aria-labelledby="account">
-          <CardHeader id="account" title="Account" description="You are signed in as" />
-          <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
-            <p className="min-w-0 break-all font-medium text-slate-900">{vendor.email}</p>
-            <Button variant="secondary" icon={LogoutIcon} onClick={logout}>
-              Sign out
-            </Button>
-          </div>
-        </Card>
+      <div className="grid items-start gap-3 @xl:gap-4 @4xl:grid-cols-2">
+        <div className="min-w-0 space-y-3 @xl:space-y-4">
+          <LogoCard />
+          {restaurantCard}
+          <TableCodeCard />
+        </div>
+        <div className="min-w-0 space-y-3 @xl:space-y-4">
+          <AlertSettingsCard />
+          <KitchenLoginCard />
+          <ChangePasswordCard />
+          {accountCard}
+        </div>
       </div>
-    </>
+    </div>
   );
 }

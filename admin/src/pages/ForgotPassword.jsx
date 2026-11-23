@@ -59,7 +59,7 @@ export default function ForgotPassword() {
   }
 
   return (
-    <AuthLayout title="Forgot your password?" subtitle="Enter the email you signed up with and we'll send you a link to choose a new one.">
+    <AuthLayout title="Forgot your password?" subtitle="Enter your login email and we'll send you a link to choose a new one.">
       <form onSubmit={onSubmit} noValidate className="mt-6 space-y-4">
         {formError && <Alert>{formError}</Alert>}
         <Input
