@@ -1,59 +1,61 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, EmptyState, ErrorState } from '../components/EmptyState.jsx';
 import { Button } from '../components/Button.jsx';
-import { PaymentBadge, StatusBadge } from '../components/Badge.jsx';
+import { PaymentBadge } from '../components/Badge.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
-import { BagIcon, ChevronRightIcon, InfoIcon, OrdersIcon, QrIcon, RefreshIcon, RupeeIcon, TrendingIcon } from '../components/icons.jsx';
+import { BagIcon, ChevronRightIcon, ImageIcon, InfoIcon, OrdersIcon, QrIcon, RefreshIcon, RupeeIcon, TrendingIcon } from '../components/icons.jsx';
+import { DishThumb, OrderThumb, StagePill } from '../components/OrderParts.jsx';
 import RevenueChart from '../components/RevenueChart.jsx';
 import { Skeleton } from '../components/Spinner.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { api } from '../lib/api.js';
-import { formatNumber } from '../lib/format.js';
+import { formatNumber, orderItemsSummary } from '../lib/format.js';
 import { useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { canTakeOrders, methodsAvailable } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
+const REFRESH_MS = 8000;
 const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)' };
 const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500', cashfree: 'bg-sky-500', phonepe: 'bg-sky-500', paytm: 'bg-sky-500' };
 
 function StatCard({ icon: Icon, label, value, note, to, linkLabel }) {
   return (
-    <Card className="p-4 sm:p-5">
-      <div className="flex items-center gap-3">
-        <span className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
-          <Icon size={20} />
+    <div className="flex flex-col rounded-2xl border border-black/[0.05] bg-white p-3.5 @xl:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-100/70 text-brand-700">
+          <Icon size={18} />
         </span>
-        <p className="text-sm font-medium text-slate-500">{label}</p>
-      </div>
-      <p className="mt-3 text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{value}</p>
-      <div className="mt-1 flex items-center justify-between gap-2 text-sm text-slate-500">
-        <span>{note}</span>
         {to && (
-          <Link to={to} className="inline-flex items-center gap-0.5 font-medium text-brand-700 hover:underline">
+          <Link to={to} className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-brand-700 hover:underline @xl:text-sm">
             {linkLabel}
             <ChevronRightIcon size={14} />
           </Link>
         )}
       </div>
-    </Card>
+      <p className="mt-3 text-sm font-medium text-slate-500">{label}</p>
+      <p className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums @xl:text-3xl">{value}</p>
+      <p className="mt-1 text-xs text-slate-500 @xl:text-sm">{note}</p>
+    </div>
   );
 }
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-4 sm:space-y-6" role="status" aria-label="Loading dashboard">
-      <div className="grid gap-4 sm:grid-cols-2 sm:gap-6">
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-32 rounded-xl" />
+    <div className="space-y-3 @xl:space-y-4" role="status" aria-label="Loading dashboard">
+      <div className="grid grid-cols-2 gap-3 @4xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-32 rounded-2xl" />
+        ))}
       </div>
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-        <Skeleton className="h-72 rounded-xl lg:col-span-2" />
-        <Skeleton className="h-72 rounded-xl" />
+      <div className="grid gap-3 @xl:gap-4 @4xl:grid-cols-3">
+        <Skeleton className="h-72 rounded-2xl @4xl:col-span-2" />
+        <Skeleton className="h-72 rounded-2xl" />
       </div>
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-        <Skeleton className="h-64 rounded-xl lg:col-span-2" />
-        <Skeleton className="h-64 rounded-xl" />
+      <div className="grid gap-3 @xl:gap-4 @4xl:grid-cols-3">
+        <Skeleton className="h-64 rounded-2xl @4xl:col-span-2" />
+        <Skeleton className="h-64 rounded-2xl" />
       </div>
     </div>
   );
@@ -62,7 +64,7 @@ function DashboardSkeleton() {
 function PaymentSplit({ methods, days, fmt }) {
   const total = methods.reduce((n, m) => n + (Number(m.amount) || 0), 0);
   return (
-    <Card as="section" aria-labelledby="payment-split">
+    <Card as="section" aria-labelledby="payment-split" className="min-w-0">
       <CardHeader id="payment-split" title="Payment split" description={`Paid orders, last ${days} days`} />
       <div className="p-4 sm:p-5">
         {total === 0 ? (
@@ -102,8 +104,18 @@ export default function Dashboard() {
   const { vendor } = useAuth();
   const fmt = useFmt();
   const live = useLiveOrders();
-  const q = useQuery(() => api('/api/admin/dashboard/overview'), [], { interval: 30_000 });
+  // Refreshes by itself every few seconds (the same pace as the orders watcher), only while the page is in view.
+  const q = useQuery(() => api('/api/admin/dashboard/overview'), [], { interval: REFRESH_MS });
   const pay = useQuery(() => api('/api/admin/payment-settings'), []);
+
+  // The app-wide watcher saw a new order: refresh now instead of waiting for the next timer tick.
+  const arrivalsSeen = useRef(live.arrivals);
+  useEffect(() => {
+    if (live.arrivals === arrivalsSeen.current) return;
+    arrivalsSeen.current = live.arrivals;
+    q.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.arrivals]);
 
   const refresh = () => {
     q.reload();
@@ -114,8 +126,19 @@ export default function Dashboard() {
   const ranges = d?.ranges ?? {};
   const nothingYet = d && d.latest_orders.length === 0 && d.top_selling.length === 0 && Number(d.today_revenue) === 0;
 
+  const liveNote = d
+    ? [
+        [d.live_pending, 'pending'],
+        [d.live_preparing, 'preparing'],
+        [d.live_ready, 'ready'],
+      ]
+        .filter(([n]) => n > 0)
+        .map(([n, label]) => `${n} ${label}`)
+        .join(' · ') || 'Nothing waiting'
+    : '';
+
   return (
-    <>
+    <div className="@container">
       <PageHeader
         title="Dashboard"
         description={vendor ? `How ${vendor.name} is doing today.` : undefined}
@@ -134,7 +157,7 @@ export default function Dashboard() {
       />
 
       {pay.data && !canTakeOrders(pay.data) && (
-        <div className="mb-4 sm:mb-6">
+        <div className="mb-3 @xl:mb-4">
           <Alert tone="warning">
             <strong>Diners can&rsquo;t place orders yet.</strong>{' '}
             {methodsAvailable(pay.data).has('upi') ? 'Add your UPI ID and turn on UPI payments so they can pay.' : 'Turn on a payment method so they can pay.'}{' '}
@@ -149,23 +172,18 @@ export default function Dashboard() {
       {!q.loading && !d && <Card><ErrorState error={q.error} onRetry={q.reload} title="Couldn't load the dashboard" /></Card>}
 
       {d && (
-        <div className="space-y-4 sm:space-y-6">
+        <div className="space-y-3 @xl:space-y-4">
           {q.error && (
             <Alert tone="warning">
               Couldn&rsquo;t refresh just now ({q.error.message}). Showing the figures from {fmt.clock(q.updatedAt)}.
             </Alert>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2 sm:gap-6">
+          <div className="grid grid-cols-2 gap-3 @4xl:grid-cols-4">
             <StatCard icon={RupeeIcon} label="Today’s revenue" value={fmt.money(d.today_revenue)} note="Paid orders only" />
-            <StatCard
-              icon={BagIcon}
-              label="Live orders"
-              value={formatNumber(d.live_orders)}
-              note={d.live_orders === 1 ? '1 order needs attention' : 'Pending and accepted'}
-              to="/orders"
-              linkLabel="View orders"
-            />
+            <StatCard icon={OrdersIcon} label="Orders today" value={formatNumber(d.today_orders)} note="Not counting cancelled" />
+            <StatCard icon={BagIcon} label="Live orders" value={formatNumber(d.live_orders)} note={liveNote} to="/orders" linkLabel="View" />
+            <StatCard icon={TrendingIcon} label="Average order" value={fmt.money(d.average_order)} note={`Paid, last ${ranges.payment_days ?? 30} days`} />
           </div>
 
           {nothingYet && (
@@ -175,7 +193,7 @@ export default function Dashboard() {
                 title="Waiting for your first order"
                 message="Print the QR codes for your tables so diners can start ordering. New orders and revenue will show up here."
                 action={
-                  <Link to="/tables/qr" className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700">
+                  <Link to="/tables/qr" className="inline-flex h-10 items-center rounded-xl bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700">
                     Get QR codes
                   </Link>
                 }
@@ -184,12 +202,12 @@ export default function Dashboard() {
             </Card>
           )}
 
-          <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-            <Card as="section" aria-labelledby="weekly-revenue" className="lg:col-span-2">
+          <div className="grid gap-3 @xl:gap-4 @4xl:grid-cols-3">
+            <Card as="section" aria-labelledby="weekly-revenue" className="min-w-0 @4xl:col-span-2">
               <CardHeader id="weekly-revenue" title="Revenue, last 7 days" description="Hover or focus a bar for the exact amount" />
               <div className="p-4 sm:p-5">
                 <RevenueChart days={d.weekly_revenue} />
-                <p className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <p className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
                   <InfoIcon size={14} className="mt-0.5 text-slate-400" />
                   Revenue counts paid orders only. Unpaid and cancelled orders are not included.
                 </p>
@@ -199,8 +217,8 @@ export default function Dashboard() {
             <PaymentSplit methods={d.payment_methods.filter((m) => m.amount > 0 || (vendor?.payment_methods ?? [m.method]).includes(m.method))} days={ranges.payment_days ?? 30} fmt={fmt} />
           </div>
 
-          <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-            <Card as="section" aria-labelledby="latest-orders" className="lg:col-span-2">
+          <div className="grid gap-3 @xl:gap-4 @4xl:grid-cols-3">
+            <Card as="section" aria-labelledby="latest-orders" className="min-w-0 @4xl:col-span-2">
               <CardHeader
                 id="latest-orders"
                 title="Latest orders"
@@ -219,20 +237,24 @@ export default function Dashboard() {
                     <li key={o.id}>
                       <Link
                         to={`/orders?order=${o.id}`}
-                        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-slate-50 sm:px-5"
-                        aria-label={`Order ${o.id}, table ${o.table_number}, ${o.status}, ${o.payment_status}, ${fmt.money(o.total)}`}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 sm:px-5"
+                        aria-label={`Order ${o.number}, table ${o.table_number}, ${o.status}, ${o.payment_status}, ${fmt.money(o.total)}`}
                       >
-                        <div className="min-w-0 flex-1 basis-40">
-                          <p className="font-semibold text-slate-900">
+                        <OrderThumb order={o} className="size-14" iconSize={22} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-slate-900">
                             #{o.number} <span className="font-normal text-slate-500">· Table {o.table_number}</span>
                           </p>
-                          <p className="text-xs text-slate-500">{fmt.dateTime(o.created_at)}</p>
+                          <p className="line-clamp-1 text-sm text-slate-500">{orderItemsSummary(o.items)}</p>
+                          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
+                            <StagePill order={o} />
+                            {fmt.dateTime(o.created_at)}
+                          </p>
                         </div>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <StatusBadge status={o.status} ready={Boolean(o.ready_at)} />
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <p className="font-semibold text-slate-900 tabular-nums">{fmt.money(o.total)}</p>
                           <PaymentBadge status={o.payment_status} />
                         </div>
-                        <p className="ml-auto w-20 text-right font-semibold text-slate-900 tabular-nums">{fmt.money(o.total)}</p>
                       </Link>
                     </li>
                   ))}
@@ -240,7 +262,7 @@ export default function Dashboard() {
               )}
             </Card>
 
-            <Card as="section" aria-labelledby="top-selling">
+            <Card as="section" aria-labelledby="top-selling" className="min-w-0">
               <CardHeader id="top-selling" title="Top-selling dishes" description={`Last ${ranges.top_days ?? 30} days`} />
               {d.top_selling.length === 0 ? (
                 <EmptyState icon={TrendingIcon} title="No sales yet" message="Your best sellers will show up once orders are paid." className="py-10" />
@@ -248,7 +270,10 @@ export default function Dashboard() {
                 <ol className="divide-y divide-slate-100">
                   {d.top_selling.map((item, i) => (
                     <li key={`${i}-${item.name}`} className="flex items-center gap-3 px-4 py-3 sm:px-5">
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{i + 1}</span>
+                      <span className="relative shrink-0">
+                        <DishThumb url={item.photo_url} icon={ImageIcon} iconSize={20} className="size-12" />
+                        <span className="absolute -left-1 -top-1 flex size-5 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">{i + 1}</span>
+                      </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-slate-900" title={item.name}>
                           {item.name}
@@ -264,6 +289,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

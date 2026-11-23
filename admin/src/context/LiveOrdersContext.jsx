@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast.jsx';
+import { useAuth } from './AuthContext.jsx';
 import { api, apiPage } from '../lib/api.js';
 import { formatMoney } from '../lib/format.js';
 import { useQuery } from '../lib/hooks.js';
@@ -9,6 +10,9 @@ import { announceOrders, announceRequests, audioRunning, playOrderChime, readSou
 const noop = () => {};
 const LiveOrdersContext = createContext({
   count: null,
+  orders: null,
+  updatedAt: null,
+  error: null,
   pending: 0,
   arrivals: 0,
   requests: [],
@@ -34,9 +38,10 @@ const TITLE_COUNT = /^\(\d+\)\s/;
  */
 export function LiveOrdersProvider({ children }) {
   const toast = useToast();
+  const { vendor } = useAuth();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const q = useQuery(() => apiPage('/api/admin/orders', { query: { status: 'active', per_page: 20 } }), [], {
+  const q = useQuery(() => apiPage('/api/admin/orders', { query: { status: 'active', per_page: 50 } }), [], {
     interval: POLL_MS,
     pollInBackground: true,
   });
@@ -45,7 +50,8 @@ export function LiveOrdersProvider({ children }) {
   const pending = rows ? rows.filter((o) => o.status === 'pending').length : 0;
 
   // Diners calling the waiter / asking for the bill.
-  const rq = useQuery(() => api('/api/admin/requests'), [], { interval: POLL_MS, pollInBackground: true });
+  // A kitchen login does not see the floor's waiter and bill calls (and the API would refuse them).
+  const rq = useQuery(() => api('/api/admin/requests'), [], { interval: POLL_MS, pollInBackground: true, enabled: vendor?.role !== 'kitchen' });
   const requests = rq.data ?? [];
 
   // Everything that is waiting for staff right now, newest first: customers calling, orders to accept, UPI payments to confirm.
@@ -67,7 +73,7 @@ export function LiveOrdersProvider({ children }) {
 
   const latest = useRef({});
   useEffect(() => {
-    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders'), navigate };
+    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders') || pathname.startsWith('/kitchen'), navigate };
   });
 
   // New orders: anything newer than the newest order we have already seen.
@@ -211,6 +217,9 @@ export function LiveOrdersProvider({ children }) {
   const value = useMemo(
     () => ({
       count,
+      orders: rows ?? null, // the active orders themselves (newest 50), for the kitchen screen
+      updatedAt: q.updatedAt,
+      error: q.error,
       pending,
       arrivals,
       requests,
@@ -219,7 +228,7 @@ export function LiveOrdersProvider({ children }) {
       reload: q.reload,
       sound: { supported: soundSupported(), on: soundOn, ready: soundReady, toggle: toggleSound },
     }),
-    [count, pending, arrivals, requests, notifications, resolveRequest, q.reload, soundOn, soundReady, toggleSound],
+    [count, rows, q.updatedAt, q.error, pending, arrivals, requests, notifications, resolveRequest, q.reload, soundOn, soundReady, toggleSound],
   );
   return <LiveOrdersContext value={value}>{children}</LiveOrdersContext>;
 }

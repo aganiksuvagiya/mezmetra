@@ -28,7 +28,7 @@ export function Badge({ tone = 'slate', dot = true, className = '', children }) 
 
 const STATUS = {
   pending: ['amber', 'Pending'],
-  accepted: ['blue', 'Accepted'],
+  accepted: ['blue', 'Preparing'], // accepted and not yet marked ready
   completed: ['green', 'Completed'],
   cancelled: ['slate', 'Cancelled'],
 };

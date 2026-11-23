@@ -5,10 +5,11 @@ import { rateLimit } from 'express-rate-limit';
 import { config } from './config.js';
 import { errorHandler, notFound } from './lib/errors.js';
 import { createMailer } from './lib/mailer.js';
-import { requireActiveVendor, requireAuth, requireSuperAdmin } from './middleware/auth.js';
+import { kitchenGuard, requireActiveVendor, requireAuth, requireSuperAdmin } from './middleware/auth.js';
 import { authRouter, vendorRouter } from './routes/auth.js';
 import { categoriesRouter } from './routes/categories.js';
 import { itemsRouter } from './routes/items.js';
+import { kitchenLoginRouter } from './routes/kitchenLogin.js';
 import { tablesRouter } from './routes/tables.js';
 import { ordersRouter } from './routes/orders.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -66,7 +67,7 @@ export function createApp({ db, rateLimits = true, mailer = createMailer() } = {
   app.use('/api/auth', authRouter(db, limits, mailer));
 
   const admin = Router();
-  admin.use(requireAuth, requireActiveVendor(db));
+  admin.use(requireAuth, requireActiveVendor(db), kitchenGuard);
   admin.use('/vendor', vendorRouter(db));
   admin.use('/categories', categoriesRouter(db));
   admin.use('/items', itemsRouter(db));
@@ -76,6 +77,7 @@ export function createApp({ db, rateLimits = true, mailer = createMailer() } = {
   admin.use('/payment-settings', paymentSettingsRouter(db));
   admin.use('/reports', reportsRouter(db));
   admin.use('/requests', requestsRouter(db));
+  admin.use('/kitchen-login', kitchenLoginRouter(db));
   app.use('/api/admin', admin);
   app.use('/api/platform', requireAuth, requireActiveVendor(db), requireSuperAdmin, platformRouter(db));
 

@@ -2,15 +2,14 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { createRestaurantAccount, emailField, newRestaurantSchema } from '../lib/accounts.js';
+import { createRestaurantAccount, emailField, emailInUse, newRestaurantSchema } from '../lib/accounts.js';
 import { conflict, HttpError, notFound, parse } from '../lib/errors.js';
 import { toRupees } from '../lib/money.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
-import { signToken } from '../middleware/auth.js';
 
 // The platform owner's console: every restaurant on the product with enough numbers to see who is active, a page per restaurant
 // (profile, how it takes payments, recent orders, what the owner did to it) and the owner's actions on it: add a restaurant (the only
-// way an account comes to exist), fix its name or email, suspend / reactivate, set a new password, log in as it (to help with a problem) and delete it.
+// way an account comes to exist), fix its name or email, suspend / reactivate, set a new password and delete it. There is deliberately no "log in as": the owner never gets into a restaurant's admin.
 // Every action is written to platform_audit.
 // Mounted behind requireAuth + requireActiveVendor + requireSuperAdmin.
 
@@ -136,8 +135,7 @@ export function platformRouter(db) {
   router.post('/restaurants', async (req, res) => {
     const body = parse(newRestaurantSchema, req.body ?? {});
     const out = await db.tx(async (t) => {
-      const taken = await t.query(`SELECT 1 FROM vendors WHERE lower(email) = $1`, [body.email]);
-      if (taken.rowCount > 0) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
+      if (await emailInUse(t, body.email)) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
       const vendor = await createRestaurantAccount(t, body);
       await audit(t, req, 'create', vendor);
       const { rows } = await t.query(`${SELECT_RESTAURANTS} WHERE v.id = $1`, [vendor.id]);
@@ -188,8 +186,7 @@ export function platformRouter(db) {
       if (body.name !== target.name) changes.name = { from: target.name, to: body.name };
       if (body.email !== target.email.toLowerCase()) {
         if (isSuperAdminEmail(body.email)) throw conflict('RESERVED_EMAIL', 'That email is reserved for a platform owner.');
-        const taken = await t.query(`SELECT 1 FROM vendors WHERE lower(email) = $1 AND id <> $2`, [body.email, target.id]);
-        if (taken.rowCount > 0) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
+        if (await emailInUse(t, body.email, { vendorId: target.id })) throw conflict('EMAIL_TAKEN', 'A restaurant with this email already exists.');
         changes.email = { from: target.email, to: body.email };
       }
       if (Object.keys(changes).length > 0) {
@@ -308,20 +305,6 @@ export function platformRouter(db) {
       await audit(t, req, 'set_password', target);
     });
     res.json({ data: { ok: true } });
-  });
-
-  // "Log in as": a one-hour login for that restaurant, to see what it sees. The owner's own session is untouched (the admin keeps it
-  // aside and offers a way back) and the restaurant's session shows it was opened by the owner. A suspended restaurant cannot be opened.
-  router.post('/restaurants/:id/login-as', async (req, res) => {
-    const id = restaurantId(req);
-    const { rows } = await db.query(`SELECT id, name, email, suspended_at FROM vendors WHERE id = $1`, [id]);
-    const target = rows[0];
-    if (!target) throw notFound('Restaurant');
-    if (isSuperAdminEmail(target.email)) throw conflict('CANNOT_LOGIN_AS_OWNER', "A platform owner's account is opened from its own login.");
-    if (target.suspended_at) throw conflict('RESTAURANT_SUSPENDED', 'Reactivate this restaurant first: a suspended restaurant cannot be opened.');
-    await audit(db, req, 'login_as', target);
-    const expiresIn = 60 * 60;
-    res.json({ data: { token: signToken(target.id, { impersonatedBy: req.vendorId, expiresIn }), restaurant: { id: target.id, name: target.name }, expires_in: expiresIn } });
   });
 
   // Delete a restaurant and everything of it (menu, tables, orders, settings). Only a suspended one, and only when its name is typed.

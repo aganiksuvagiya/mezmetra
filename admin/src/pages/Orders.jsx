@@ -1,78 +1,98 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
-import { Badge, PaymentBadge, StatusBadge } from '../components/Badge.jsx';
 import { Button } from '../components/Button.jsx';
 import { Card, PageHeader } from '../components/Card.jsx';
 import { Alert, EmptyState, ErrorState } from '../components/EmptyState.jsx';
-import { SearchInput } from '../components/Field.jsx';
-import { OrdersIcon, RefreshIcon } from '../components/icons.jsx';
+import { ChevronRightIcon, OrdersIcon, RefreshIcon } from '../components/icons.jsx';
+import { OrderThumb, StagePill } from '../components/OrderParts.jsx';
 import ListSkeleton from '../components/ListSkeleton.jsx';
 import Pagination from '../components/Pagination.jsx';
+import SearchBox from '../components/SearchBox.jsx';
+import StatTile from '../components/StatTile.jsx';
 import { panelId, tabId, Tabs } from '../components/Tabs.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { useReserveSidePanelSpace, useSidePanelSpace } from '../context/SidePanelContext.jsx';
-import { apiPage } from '../lib/api.js';
+import { api, apiPage } from '../lib/api.js';
 import { cx } from '../lib/cx.js';
 import { orderItemsSummary } from '../lib/format.js';
 import { useClampPage, useDebouncedValue, useDocumentTitle, useMediaQuery, useQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import OrderDetailModal from './orders/OrderDetailModal.jsx';
 
-const PER_PAGE = 20;
+const PER_PAGE = 12;
 const REFRESH_MS = 8000;
-const TAB_VALUES = ['active', 'completed', 'cancelled', 'all'];
+// "Open" is every order that is not finished (pending, preparing and ready together). The others are one state each.
+const TAB_VALUES = ['active', 'pending', 'preparing', 'ready', 'completed', 'cancelled', 'all'];
+const TAB_LABELS = { active: 'Open', pending: 'Pending', preparing: 'Preparing', ready: 'Ready', completed: 'Completed', cancelled: 'Cancelled', all: 'All' };
+const COUNT_KEY = { active: 'active', pending: 'pending', preparing: 'preparing', ready: 'ready', completed: 'completed', cancelled: 'cancelled', all: 'all' };
 
 const EMPTY = {
-  active: ['No active orders', 'New orders from your tables will appear here automatically.'],
+  active: ['No open orders', 'New orders from your tables will appear here automatically.'],
+  pending: ['Nothing waiting to be accepted', 'New orders that need accepting will be listed here.'],
+  preparing: ['Nothing being prepared', 'Orders you have accepted and not yet marked ready will be listed here.'],
+  ready: ['Nothing ready to serve', 'Orders the kitchen has finished will be listed here until they are completed.'],
   completed: ['No completed orders yet', 'Orders you complete will be listed here.'],
   cancelled: ['No cancelled orders', 'Cancelled orders will be listed here.'],
   all: ['No orders yet', 'Once diners start ordering, every order will be listed here.'],
 };
 
-const countFor = async (status) => Number((await apiPage('/api/admin/orders', { query: { status, per_page: 1 } })).meta.total);
+// The figures above the list (the first one is every order; the rest are one state each).
+const FIGURES = [
+  ['all', 'Total orders'],
+  ['pending', 'Pending'],
+  ['preparing', 'Preparing'],
+  ['ready', 'Ready'],
+  ['completed', 'Completed'],
+  ['cancelled', 'Cancelled'],
+];
 
-function OrderRow({ order, fresh, fmt, onOpen, selected }) {
-  return (
-    <li
-      className={cx(
-        fresh && 'animate-flash',
-        // An order waiting to be accepted gets an amber edge, so what needs staff next stands out in the list.
-        !selected && order.status === 'pending' && 'shadow-[inset_3px_0_0_var(--color-amber-400)]',
-        selected && 'bg-brand-50/70 shadow-[inset_3px_0_0_var(--color-brand-600)]',
-      )}
-    >
+function OrderCard({ order, fresh, fmt, onOpen, selected }) {
+    return (
+    <li className={cx('rounded-2xl', fresh && 'animate-flash')}>
       <button
         type="button"
         onClick={() => onOpen(order.id)}
         aria-current={selected ? 'true' : undefined}
-        className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 px-4 py-3.5 text-left hover:bg-slate-50 sm:px-5 @2xl:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_auto_6rem] @2xl:items-center"
+        className={cx(
+          'flex w-full gap-4 rounded-2xl border bg-white p-3.5 text-left transition-colors hover:border-black/15',
+          selected ? 'border-brand-500 ring-1 ring-brand-500' : 'border-black/[0.05]',
+        )}
       >
-        <span className="block min-w-0">
-          <span className="flex flex-wrap items-center gap-x-2 font-semibold text-slate-900">
-            <span>
+        <OrderThumb order={order} className="size-24 sm:size-28" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-start justify-between gap-2">
+            <span className="font-semibold text-slate-900">
               <span className="sr-only">Order </span>#{order.number}
             </span>
-            <span className="font-normal text-slate-500">Table {order.table_number}</span>
-            {fresh && (
-              <Badge tone="orange" dot={false}>
-                New
-              </Badge>
-            )}
-            {order.table_code_verified && (
-              <Badge tone="green" dot={false}>
-                Code verified
-              </Badge>
-            )}
+            <StagePill order={order} />
           </span>
-          <span className="block text-xs text-slate-500">{fmt.dateTime(order.created_at)}</span>
-        </span>
-        <span className="block font-semibold text-slate-900 tabular-nums @2xl:order-last @2xl:text-right">{fmt.money(order.total)}</span>
-        <span className="col-span-2 line-clamp-2 text-sm text-slate-600 @2xl:col-span-1">{orderItemsSummary(order.items)}</span>
-        <span className="col-span-2 flex flex-wrap items-center gap-1.5 @2xl:col-span-1">
-          <StatusBadge status={order.status} ready={Boolean(order.ready_at)} />
-          <PaymentBadge status={order.payment_status} method={order.payment_method} claimed={Boolean(order.payment_claim)} />
+          <span className="mt-0.5 truncate text-sm text-slate-600">
+            Table {order.table_number}
+            {order.table_code_verified && <span className="text-emerald-700"> · Code verified</span>}
+          </span>
+          <span className="line-clamp-1 text-sm text-slate-500">{orderItemsSummary(order.items)}</span>
+          <span className="text-xs text-slate-400">{fmt.dateTime(order.created_at)}</span>
+          <span className="mt-auto flex items-end justify-between gap-2 pt-2">
+            <span className="flex flex-col">
+              <span className="text-lg font-semibold leading-none text-slate-900 tabular-nums">{fmt.money(order.total)}</span>
+              <span className="mt-1 text-xs text-slate-500">
+                {order.payment_status === 'paid'
+                  ? `Paid${order.payment_method === 'cash' ? ' · Cash' : order.payment_method === 'upi' ? ' · UPI' : ' · Online'}`
+                  : order.payment_status === 'refunded'
+                    ? 'Refunded'
+                    : order.payment_claim
+                      ? 'Customer says paid'
+                      : order.status === 'cancelled'
+                        ? ''
+                        : 'Unpaid'}
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-0.5 text-sm font-medium text-slate-800">
+              View details <ChevronRightIcon size={16} />
+            </span>
+          </span>
         </span>
       </button>
     </li>
@@ -129,21 +149,11 @@ export default function Orders() {
 
   const key = `${tab}|${term}|${page}`;
   const q = useQuery(
-    async () => {
-      const res = await apiPage('/api/admin/orders', { query: { status: tab === 'all' ? undefined : tab, q: term, page, per_page: PER_PAGE } });
-      return res;
-    },
+    async () => apiPage('/api/admin/orders', { query: { status: tab === 'all' ? undefined : tab, q: term, page, per_page: PER_PAGE } }),
     [tab, term, page],
     { interval: REFRESH_MS },
   );
-  const counts = useQuery(
-    async () => {
-      const [active, completed, cancelled] = await Promise.all([countFor('active'), countFor('completed'), countFor('cancelled')]);
-      return { active, completed, cancelled, all: active + completed + cancelled };
-    },
-    [],
-    { interval: 20_000 },
-  );
+  const counts = useQuery(() => api('/api/admin/orders/counts'), [], { interval: 20_000 });
 
   // The app-wide watcher saw a new order: refresh now instead of waiting for the next timer tick.
   const arrivalsSeen = useRef(live.arrivals);
@@ -170,7 +180,7 @@ export default function Orders() {
       if (added.length > 0) {
         const addedIds = added.map((o) => o.id);
         setFresh((prev) => new Set([...prev, ...addedIds]));
-        if (tab === 'active' || tab === 'all') {
+        if (tab === 'active' || tab === 'all' || tab === 'pending') {
           toast.info(added.length === 1 ? `New order #${added[0].number} from table ${added[0].table_number}.` : `${added.length} new orders.`);
         }
         setTimeout(
@@ -194,12 +204,7 @@ export default function Orders() {
     live.reload();
   };
 
-  const tabs = TAB_VALUES.map((value) => ({
-    value,
-    label: { active: 'Active', completed: 'Completed', cancelled: 'Cancelled', all: 'All' }[value],
-    count: counts.data ? counts.data[value] : undefined,
-  }));
-
+  const tabs = TAB_VALUES.map((value) => ({ value, label: TAB_LABELS[value], count: counts.data ? counts.data[COUNT_KEY[value]] : undefined }));
   const [emptyTitle, emptyMessage] = EMPTY[tab];
 
   const docked = Boolean(selectedId) && split;
@@ -226,7 +231,7 @@ export default function Orders() {
         description="Accept orders, take payment and mark them complete."
         actions={
           <>
-            <span className="text-xs text-slate-500">{q.updatedAt ? `Updated ${fmt.clock(q.updatedAt)}` : 'Updating…'}</span>
+            <span className="hidden text-xs text-slate-500 sm:inline">{q.updatedAt ? `Updated ${fmt.clock(q.updatedAt)}` : 'Updating…'}</span>
             <Button variant="secondary" size="sm" icon={RefreshIcon} busy={q.refreshing} onClick={refreshAll}>
               Refresh
             </Button>
@@ -234,29 +239,40 @@ export default function Orders() {
         }
       />
 
+      <div className="mb-4 grid grid-cols-3 gap-2 @xl:gap-3 @4xl:grid-cols-6">
+        {FIGURES.map(([k, label]) => (
+          <StatTile key={k} label={label} value={counts.data ? counts.data[k] : '—'} />
+        ))}
+      </div>
+
+      <SearchBox
+        value={search}
+        onChange={(v) => {
+          setSearch(v);
+          setPage(1);
+        }}
+        maxLength={30}
+        placeholder="Search by table or order #"
+        label="Search orders by table or order number"
+        className="mb-3 @xl:max-w-md"
+      />
+
       <Tabs idBase="orders" label="Order status" tabs={tabs} value={tab} onChange={setTab} className="mb-4" />
 
-      <Card role="tabpanel" id={panelId('orders', tab)} aria-labelledby={tabId('orders', tab)}>
-        <div className="border-b border-slate-100 p-3 sm:p-4">
-          <SearchInput
-            value={search}
-            onChange={(v) => {
-              setSearch(v);
-              setPage(1);
-            }}
-            placeholder="Search by table or order #"
-            label="Search orders by table or order number"
-            pending={search.trim() !== term}
-            maxLength={30}
-            className="sm:max-w-sm"
-          />
-        </div>
-
-        {q.loading && <ListSkeleton label="Loading orders" />}
-        {!q.loading && !rows && <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load orders" />}
+      <div role="tabpanel" id={panelId('orders', tab)} aria-labelledby={tabId('orders', tab)}>
+        {q.loading && (
+          <Card>
+            <ListSkeleton label="Loading orders" />
+          </Card>
+        )}
+        {!q.loading && !rows && (
+          <Card>
+            <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load orders" />
+          </Card>
+        )}
 
         {rows && q.error && (
-          <div className="px-4 pt-3">
+          <div className="mb-3">
             <Alert tone="warning">
               Couldn&rsquo;t refresh ({q.error.message}). Showing orders as of {fmt.clock(q.updatedAt)}.
             </Alert>
@@ -264,31 +280,33 @@ export default function Orders() {
         )}
 
         {rows && rows.length === 0 && (
-          <EmptyState
-            icon={OrdersIcon}
-            title={term ? 'No orders match' : emptyTitle}
-            message={term ? `Nothing found for “${term}”. Try a table number or order number.` : emptyMessage}
-            action={
-              term ? (
-                <Button variant="secondary" onClick={() => setSearch('')}>
-                  Clear search
-                </Button>
-              ) : undefined
-            }
-          />
+          <Card>
+            <EmptyState
+              icon={OrdersIcon}
+              title={term ? 'No orders match' : emptyTitle}
+              message={term ? `Nothing found for “${term}”. Try a table number or order number.` : emptyMessage}
+              action={
+                term ? (
+                  <Button variant="secondary" onClick={() => setSearch('')}>
+                    Clear search
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Card>
         )}
 
         {rows && rows.length > 0 && (
           <>
-            <ul className="divide-y divide-slate-100">
+            <ul className="grid gap-3 @3xl:grid-cols-2 @7xl:grid-cols-3">
               {rows.map((order) => (
-                <OrderRow key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={openOrder} selected={order.id === selectedId} />
+                <OrderCard key={order.id} order={order} fresh={fresh.has(order.id)} fmt={fmt} onOpen={openOrder} selected={order.id === selectedId} />
               ))}
             </ul>
-            <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} />
+            <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} className="mt-2 border-t-0 px-1" />
           </>
         )}
-      </Card>
+      </div>
 
       {/* On a wide screen the order opens in a panel fixed to the right edge of the screen (top to bottom); on a small one it slides in over the page. */}
       {docked ? createPortal(<div className="fixed inset-y-0 right-0 z-30 w-[22rem] xl:w-[26rem] print:hidden">{detail}</div>, document.body) : detail}

@@ -3,6 +3,7 @@ import { Button } from '../components/Button.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import AlertSettingsCard from '../components/AlertSettingsCard.jsx';
 import ChangePasswordCard from '../components/ChangePasswordCard.jsx';
+import KitchenLoginCard from '../components/KitchenLoginCard.jsx';
 import TableCodeCard from '../components/TableCodeCard.jsx';
 import { Alert } from '../components/EmptyState.jsx';
 import LogoCard from '../components/LogoCard.jsx';
@@ -157,6 +158,8 @@ export default function Settings() {
         <TableCodeCard />
 
         <AlertSettingsCard />
+
+        <KitchenLoginCard />
 
         <ChangePasswordCard />
 

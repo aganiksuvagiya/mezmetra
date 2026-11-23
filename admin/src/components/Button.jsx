@@ -2,11 +2,11 @@ import { cx } from '../lib/cx.js';
 import { Spinner } from './Spinner.jsx';
 
 const base =
-  'inline-flex items-center justify-center gap-2 rounded-lg font-semibold whitespace-nowrap transition-colors disabled:opacity-60 disabled:cursor-not-allowed';
+  'inline-flex items-center justify-center gap-2 rounded-xl font-semibold whitespace-nowrap transition-colors disabled:opacity-60 disabled:cursor-not-allowed';
 
 const variants = {
-  primary: 'bg-brand-600 text-white shadow-xs hover:bg-brand-700 active:bg-brand-800',
-  secondary: 'border border-slate-300 bg-white text-slate-700 shadow-xs hover:bg-slate-50 active:bg-slate-100',
+  primary: 'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800',
+  secondary: 'border border-black/10 bg-white text-slate-700 hover:bg-slate-50 active:bg-slate-100',
   danger: 'bg-red-600 text-white shadow-xs hover:bg-red-700 active:bg-red-800',
   'danger-outline': 'border border-red-200 bg-white text-red-700 hover:bg-red-50 active:bg-red-100',
   ghost: 'text-slate-600 hover:bg-slate-100 active:bg-slate-200',

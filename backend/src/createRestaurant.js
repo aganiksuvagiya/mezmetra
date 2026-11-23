@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { createDb } from './db.js';
-import { createRestaurantAccount, newRestaurantSchema } from './lib/accounts.js';
+import { createRestaurantAccount, emailInUse, newRestaurantSchema } from './lib/accounts.js';
 
 // `NEW_PASSWORD='...' npm run create-restaurant -w backend -- "Restaurant name" owner@example.com`
 //
@@ -30,8 +30,7 @@ console.log(`Database: ${target}`);
 const db = await createDb().catch((err) => fail(`Could not connect to the database: ${err.message}`));
 
 try {
-  const taken = await db.query(`SELECT 1 FROM vendors WHERE lower(email) = $1`, [parsed.data.email]);
-  if (taken.rowCount > 0) fail(`A restaurant with the email "${parsed.data.email}" already exists in this database.`);
+  if (await emailInUse(db, parsed.data.email)) fail(`A restaurant with the email "${parsed.data.email}" already exists in this database.`);
   const vendor = await db.tx((t) => createRestaurantAccount(t, parsed.data));
   console.log(`Done. "${vendor.name}" (${vendor.email}) can now sign in with the password you gave.`);
 } finally {

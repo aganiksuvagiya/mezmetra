@@ -11,6 +11,7 @@ import Categories from './pages/Categories.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import Items from './pages/Items.jsx';
+import Kitchen from './pages/Kitchen.jsx';
 import Login from './pages/Login.jsx';
 import Orders from './pages/Orders.jsx';
 import Payments from './pages/Payments.jsx';
@@ -29,8 +30,8 @@ function FullScreen({ children }) {
 }
 
 /** Redirects to /login (remembering where the person was going) unless a session is active. */
-function RequireAuth({ children }) {
-  const { status, error, retry, logout } = useAuth();
+function RequireAuth({ children, kitchenOk = false }) {
+  const { status, error, retry, logout, vendor } = useAuth();
   const location = useLocation();
 
   if (status === 'loading') {
@@ -59,6 +60,8 @@ function RequireAuth({ children }) {
     );
   }
   if (status === 'anon') return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
+  // The kitchen's own login opens the kitchen screen and nothing else (the API refuses the rest as well).
+  if (vendor?.role === 'kitchen' && !kitchenOk) return <Navigate to="/kitchen" replace />;
   return children;
 }
 
@@ -119,6 +122,15 @@ export default function App() {
               <Route path="activity" element={<Activity />} />
               <Route path="*" element={<Navigate to="/owner" replace />} />
             </Route>
+            {/* The kitchen screen: full screen, no sidebar, for a tablet that stays on in the kitchen. */}
+            <Route
+              path="kitchen"
+              element={
+                <RequireAuth kitchenOk>
+                  <Kitchen />
+                </RequireAuth>
+              }
+            />
             <Route
               element={
                 <RequireAuth>

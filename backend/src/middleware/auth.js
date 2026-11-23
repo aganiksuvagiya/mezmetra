@@ -4,13 +4,16 @@ import { forbidden, suspended, unauthorized } from '../lib/errors.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
 
 /**
- * A login token for a restaurant. The platform owner's "log in as" makes a short-lived one that also names the owner (`imp`), so
- * the admin can show "you are viewing this restaurant as the owner" and the owner's own session is never touched.
+ * A login token for a restaurant. Only a sign-in makes one: nobody (the platform owner included) can get a session for a restaurant they did not sign in as.
+ * A kitchen login (`staffId`) gets a token for the same restaurant that says so (`role: 'kitchen'`), and the API lets it do the kitchen's work only.
  */
-export function signToken(vendorId, { impersonatedBy, expiresIn } = {}) {
+export function signToken(vendorId, { staffId } = {}) {
   const payload = { sub: String(vendorId) };
-  if (impersonatedBy) payload.imp = String(impersonatedBy);
-  return jwt.sign(payload, config.appSecret, { expiresIn: expiresIn ?? config.jwtExpiresIn, algorithm: 'HS256' });
+  if (staffId) {
+    payload.role = 'kitchen';
+    payload.stf = String(staffId);
+  }
+  return jwt.sign(payload, config.appSecret, { expiresIn: config.jwtExpiresIn, algorithm: 'HS256' });
 }
 
 /** Requires `Authorization: Bearer <jwt>` and sets req.vendorId. */
@@ -22,7 +25,8 @@ export function requireAuth(req, _res, next) {
     const payload = jwt.verify(token, config.appSecret, { algorithms: ['HS256'] });
     req.vendorId = Number(payload.sub);
     req.tokenIssuedAt = Number(payload.iat) || 0; // seconds
-    req.impersonatedBy = payload.imp ? Number(payload.imp) : null; // set when the platform owner is looking at this restaurant
+    req.staffId = payload.role === 'kitchen' && payload.stf ? Number(payload.stf) : null; // set for a kitchen login
+    if (payload.role === 'kitchen' && !Number.isSafeInteger(req.staffId)) throw new Error('bad staff');
     if (!Number.isSafeInteger(req.vendorId)) throw new Error('bad subject');
     next();
   } catch {
@@ -46,6 +50,13 @@ export function requireActiveVendor(db) {
         throw unauthorized('Your password was changed. Please sign in again.');
       }
       req.vendorEmail = vendor.email;
+      if (req.staffId) {
+        // A kitchen login: it must still exist (removing it signs the kitchen out) and not be older than its last password change.
+        const staff = await db.query(`SELECT password_changed_at FROM vendor_staff WHERE id = $1 AND vendor_id = $2`, [req.staffId, req.vendorId]);
+        if (!staff.rows[0]) throw unauthorized('This kitchen login was removed. Please sign in again.');
+        const changed = staff.rows[0].password_changed_at;
+        if (changed && req.tokenIssuedAt < Math.floor(new Date(changed).getTime() / 1000)) throw unauthorized('The kitchen password was changed. Please sign in again.');
+      }
       next();
     } catch (err) {
       next(err);
@@ -55,6 +66,23 @@ export function requireActiveVendor(db) {
 
 /** Runs after requireActiveVendor: only the accounts listed in SUPER_ADMIN_EMAILS may continue. */
 export function requireSuperAdmin(req, _res, next) {
-  if (!isSuperAdminEmail(req.vendorEmail)) return next(forbidden('Only the platform owner can do this'));
+  // A kitchen login of the owner's own restaurant carries the owner's email, but it is not the owner.
+  if (req.staffId || !isSuperAdminEmail(req.vendorEmail)) return next(forbidden('Only the platform owner can do this'));
   return next();
+}
+
+// What a kitchen login may do in the restaurant's admin API: look at the orders, accept (or refuse) one, and mark one ready. Nothing else:
+// not the menu, tables, payments, reports or settings, and not completing an order (that is staff taking the money).
+const KITCHEN_CAN = [
+  ['GET', /^\/orders\/?$/],
+  ['GET', /^\/orders\/\d+$/],
+  ['PATCH', /^\/orders\/\d+\/status$/, (req) => ['accepted', 'cancelled'].includes(req.body?.status)],
+  ['POST', /^\/orders\/\d+\/ready$/],
+];
+
+/** Mounted after requireActiveVendor on the admin API. A normal restaurant login passes untouched. */
+export function kitchenGuard(req, _res, next) {
+  if (!req.staffId) return next();
+  const ok = KITCHEN_CAN.some(([method, path, check]) => req.method === method && path.test(req.path) && (!check || check(req)));
+  return next(ok ? undefined : forbidden('The kitchen login can only work with orders.'));
 }

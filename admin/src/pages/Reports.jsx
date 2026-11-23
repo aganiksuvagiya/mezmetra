@@ -113,7 +113,7 @@ export default function Reports() {
               </button>
             ))}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:max-w-lg sm:grid-cols-2">
             <Input label="From" type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} />
             <Input label="To" type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} />
           </div>

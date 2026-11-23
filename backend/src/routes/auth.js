@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { HttpError, notFound, parse, suspended, unauthorized } from '../lib/errors.js';
+import { forbidden, HttpError, notFound, parse, suspended, unauthorized } from '../lib/errors.js';
 import { passwordResetEmail } from '../lib/mailer.js';
 import { vendorOut } from '../lib/serialize.js';
 import { detectImageMime, IMAGE_TYPES } from '../lib/image.js';
@@ -41,11 +41,17 @@ export function authRouter(db, { loginLimiter }, mailer) {
   router.post('/login', loginLimiter, async (req, res) => {
     const body = parse(loginSchema, req.body);
     const { rows } = await db.query(`SELECT * FROM vendors WHERE lower(email) = $1`, [body.email]);
-    const vendor = rows[0];
-    const ok = await bcrypt.compare(body.password, vendor?.password_hash ?? DUMMY_HASH);
+    let vendor = rows[0];
+    // Not a restaurant's own login? It may be a restaurant's kitchen login (see routes/kitchenLogin.js).
+    let staff = null;
+    if (!vendor) {
+      staff = (await db.query(`SELECT * FROM vendor_staff WHERE lower(email) = $1`, [body.email])).rows[0] ?? null;
+      if (staff) vendor = (await db.query(`SELECT * FROM vendors WHERE id = $1`, [staff.vendor_id])).rows[0];
+    }
+    const ok = await bcrypt.compare(body.password, (staff ?? vendor)?.password_hash ?? DUMMY_HASH);
     if (!vendor || !ok) throw unauthorized('Email or password is incorrect');
     if (vendor.suspended_at) throw suspended(vendor.suspended_reason);
-    res.json({ data: { token: signToken(vendor.id), vendor: vendorOut(vendor) } });
+    res.json({ data: { token: signToken(vendor.id, staff ? { staffId: staff.id } : undefined), vendor: vendorOut(vendor, staff) } });
   });
 
   // Always answers the same way, so the form cannot be used to find out which emails have an account.
@@ -96,12 +102,14 @@ export function authRouter(db, { loginLimiter }, mailer) {
   router.get('/me', requireAuth, requireActiveVendor(db), async (req, res) => {
     const { rows } = await db.query(`SELECT * FROM vendors WHERE id = $1`, [req.vendorId]);
     if (!rows[0]) throw unauthorized('Account no longer exists');
-    // `impersonated_by_owner`: the platform owner is viewing this restaurant (the admin shows a bar with a way back).
-    res.json({ data: { ...vendorOut(rows[0]), impersonated_by_owner: Boolean(req.impersonatedBy) } });
+    const staff = req.staffId ? (await db.query(`SELECT email FROM vendor_staff WHERE id = $1`, [req.staffId])).rows[0] : null;
+    res.json({ data: vendorOut(rows[0], staff) });
   });
 
   // A signed-in restaurant changes its own password. Every older session is signed out by the change, so the answer carries a fresh token.
   router.post('/change-password', loginLimiter, requireAuth, requireActiveVendor(db), async (req, res) => {
+    // A kitchen login never changes the restaurant's password (the restaurant sets the kitchen's from its Settings).
+    if (req.staffId) throw forbidden('The kitchen login cannot change passwords.');
     const body = parse(changePasswordSchema, req.body);
     const { rows } = await db.query(`SELECT * FROM vendors WHERE id = $1`, [req.vendorId]);
     const vendor = rows[0];

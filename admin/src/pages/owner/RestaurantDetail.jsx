@@ -1,59 +1,39 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Badge, PaymentBadge, StatusBadge } from '../../components/Badge.jsx';
 import { Button } from '../../components/Button.jsx';
-import { Card, CardHeader } from '../../components/Card.jsx';
-import { Alert, EmptyState, ErrorState } from '../../components/EmptyState.jsx';
+import { Alert } from '../../components/EmptyState.jsx';
 import { Input, PasswordInput } from '../../components/Field.jsx';
-import { ChevronLeftIcon, OrdersIcon, ShieldIcon, TrendingIcon } from '../../components/icons.jsx';
+import { ChevronLeftIcon } from '../../components/icons.jsx';
 import Modal from '../../components/Modal.jsx';
-import { Skeleton } from '../../components/Spinner.jsx';
 import { useToast } from '../../components/Toast.jsx';
 import { api } from '../../lib/api.js';
-import { auth } from '../../lib/auth.js';
-import { cx } from '../../lib/cx.js';
 import { formatMoney, formatNumber, timeAgo } from '../../lib/format.js';
 import { useAction, useDocumentTitle, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
 import { ACTIVITY_LABELS, activityNote } from './activity.js';
 import EditRestaurantDialog from './EditRestaurantDialog.jsx';
-import RestaurantAvatar from './RestaurantAvatar.jsx';
 import SuspendDialog from './SuspendDialog.jsx';
+import { Avatar, buttonClass, Figures, Label, Panel, Row, Section } from './ui.jsx';
 
 const WAYS = { cash: 'Pay at counter', upi: 'UPI ID', razorpay: 'Razorpay', cashfree: 'Cashfree', phonepe: 'PhonePe', paytm: 'Paytm' };
 
 /** How one way of paying stands: on, set up but off, not set up, or hidden for everyone by the platform. */
 function wayState(w) {
-  if (!w.offered) return ['slate', 'Hidden by platform'];
+  if (!w.offered) return ['gray', 'Hidden by platform'];
   if (w.enabled && w.configured) return ['green', 'On'];
-  if (w.enabled) return ['amber', 'On, not set up'];
-  if (w.configured) return ['slate', 'Set up, off'];
-  return ['slate', 'Not set up'];
+  if (w.enabled) return ['orange', 'On, not set up'];
+  if (w.configured) return ['gray', 'Set up, off'];
+  return ['gray', 'Not set up'];
 }
 
-function Stat({ icon: Icon, label, value, note, tone = 'brand' }) {
-  const tiles = { brand: 'bg-brand-50 text-brand-600', emerald: 'bg-emerald-50 text-emerald-600', sky: 'bg-sky-50 text-sky-600' };
-  return (
-    <Card className="p-4 sm:p-5">
-      <div className="flex items-center gap-3">
-        <span className={cx('flex size-10 shrink-0 items-center justify-center rounded-lg', tiles[tone])}>
-          <Icon size={20} />
-        </span>
-        <p className="text-sm font-medium text-slate-500">{label}</p>
-      </div>
-      <p className="mt-3 text-2xl font-bold tracking-tight text-slate-900 tabular-nums sm:text-3xl">{value}</p>
-      {note && <p className="mt-1 text-sm text-slate-500">{note}</p>}
-    </Card>
-  );
-}
-
-function Fact({ label, children }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 py-2 text-sm">
-      <dt className="shrink-0 text-slate-500">{label}</dt>
-      <dd className="min-w-0 truncate text-right font-medium text-slate-900">{children}</dd>
-    </div>
-  );
+const ORDER_STATUS = { pending: ['orange', 'Pending'], accepted: ['blue', 'Accepted'], completed: ['green', 'Completed'], cancelled: ['gray', 'Cancelled'] };
+function payState(o) {
+  if (o.payment_status === 'refunded') return ['gray', 'Refunded'];
+  if (o.payment_status === 'paid') {
+    const via = o.payment_method === 'cash' ? ' · Cash' : o.payment_method === 'upi' ? ' · UPI' : o.payment_method ? ' · Online' : '';
+    return ['green', `Paid${via}`];
+  }
+  return ['red', 'Unpaid'];
 }
 
 /** The owner types a new password for a restaurant that is locked out. They are told to change it themselves afterwards. */
@@ -102,46 +82,6 @@ function SetPasswordDialog({ restaurant, onClose, onDone }) {
         <PasswordInput label="New password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" data-autofocus />
         <PasswordInput label="Type it again" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" />
       </div>
-    </Modal>
-  );
-}
-
-/** Explains what "log in as" is, then opens that restaurant's admin for up to an hour (the owner's own session waits aside). */
-function LoginAsDialog({ restaurant, onClose }) {
-  const [run, busy] = useAction();
-  const [error, setError] = useState(null);
-
-  const go = () =>
-    run(async () => {
-      setError(null);
-      try {
-        const res = await api(`/api/platform/restaurants/${restaurant.id}/login-as`, { method: 'POST' });
-        auth.startLoginAs(res.token);
-        window.location.assign('/'); // a fresh start as that restaurant: nothing of the owner's session is left on screen
-      } catch (e) {
-        setError(e.message || 'Something went wrong. Please try again.');
-      }
-    });
-
-  return (
-    <Modal
-      size="sm"
-      title={`Log in as ${restaurant.name}?`}
-      description="You will see their admin exactly as they do, for up to an hour. What you change there is real. A bar at the top takes you back to the owner console, and this is recorded in their activity."
-      onClose={onClose}
-      dismissible={!busy}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={go} busy={busy}>
-            Log in as {restaurant.name}
-          </Button>
-        </>
-      }
-    >
-      {error ? <Alert>{error}</Alert> : <p className="text-sm text-slate-600">Your own owner session is kept safe and comes back when you press &ldquo;Back to owner console&rdquo;.</p>}
     </Modal>
   );
 }
@@ -202,14 +142,16 @@ function DeleteDialog({ restaurant, onClose, onDone }) {
 
 function DetailSkeleton() {
   return (
-    <div className="space-y-4 sm:space-y-6" role="status" aria-label="Loading restaurant">
-      <Skeleton className="h-28 rounded-xl" />
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-28 rounded-xl" />
-        ))}
+    <div className="mt-4 space-y-6" role="status" aria-label="Loading restaurant">
+      <div className="flex items-center gap-4">
+        <span className="k-fill size-12 animate-pulse rounded-lg" />
+        <span className="space-y-2">
+          <span className="k-fill block h-6 w-56 animate-pulse rounded" />
+          <span className="k-fill block h-3.5 w-40 animate-pulse rounded" />
+        </span>
       </div>
-      <Skeleton className="h-64 rounded-xl" />
+      <div className="k-fill h-24 animate-pulse rounded-xl" />
+      <div className="k-fill h-48 animate-pulse rounded-xl" />
     </div>
   );
 }
@@ -223,7 +165,7 @@ export default function RestaurantDetail() {
   const [run, busy] = useAction();
   const q = useQuery(() => api(`/api/platform/restaurants/${id}`), [id], { interval: 30_000 });
   const d = q.data;
-  const [dialog, setDialog] = useState(null); // 'edit' | 'suspend' | 'password' | 'login' | 'delete' | null
+  const [dialog, setDialog] = useState(null); // 'edit' | 'suspend' | 'password' | 'delete' | null
   useDocumentTitle(d ? `${d.name} · Owner console` : 'Restaurant · Owner console');
 
   const suspended = d?.status === 'suspended';
@@ -243,172 +185,170 @@ export default function RestaurantDetail() {
 
   return (
     <>
-      <Link to="/owner" className="mb-4 inline-flex items-center gap-1 rounded-md text-sm font-medium text-slate-500 hover:text-slate-900">
+      <Link to="/owner" className={`${buttonClass.link} -ml-1.5 gap-0.5`}>
         <ChevronLeftIcon size={16} />
-        All restaurants
+        Restaurants
       </Link>
 
       {q.loading && <DetailSkeleton />}
       {!q.loading && !d && (
-        <Card>
-          {q.error?.status === 404 ? (
-            <EmptyState icon={ShieldIcon} title="Restaurant not found" message="It may have been deleted." action={<Button onClick={() => navigate('/owner')}>Back to restaurants</Button>} />
-          ) : (
-            <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load this restaurant" />
-          )}
-        </Card>
+        <Panel className="mt-4 px-4 py-12 text-center">
+          <p className="text-[0.9375rem] font-semibold">{q.error?.status === 404 ? 'Restaurant not found' : "Couldn't load this restaurant"}</p>
+          <p className="k-l2 mt-1 text-[0.875rem]">{q.error?.status === 404 ? 'It may have been deleted.' : q.error?.message || 'Please try again.'}</p>
+          <button type="button" className={`${buttonClass.gray} mt-3`} onClick={q.error?.status === 404 ? () => navigate('/owner') : q.reload}>
+            {q.error?.status === 404 ? 'Back to restaurants' : 'Try again'}
+          </button>
+        </Panel>
       )}
 
       {d && (
-        <div className="space-y-4 sm:space-y-6">
-          <Card className="p-4 sm:p-5">
-            <div className="flex flex-wrap items-start gap-x-4 gap-y-4">
-              <RestaurantAvatar name={d.name} suspended={suspended} size="lg" />
-              <div className="min-w-[12rem] flex-1">
-                <h1 className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+        <div className="mt-3 space-y-6">
+          <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <Avatar size="lg" name={d.name} muted={suspended} />
+              <div className="min-w-0">
+                <h1 className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[1.75rem] font-bold leading-tight tracking-[-0.025em]">
                   <span className="break-words">{d.name}</span>
-                  {protectedAccount && <Badge tone="blue" dot={false}>Platform owner</Badge>}
-                  <Badge tone={suspended ? 'red' : 'green'}>{suspended ? 'Suspended' : 'Active'}</Badge>
+                  {protectedAccount && <Label tone="blue">Platform owner</Label>}
+                  <Label tone={suspended ? 'red' : 'green'}>{suspended ? 'Suspended' : 'Active'}</Label>
                 </h1>
-                <p className="mt-0.5 break-all text-sm text-slate-500">{d.email}</p>
-                <p className="mt-0.5 text-xs text-slate-400">Joined {fmt.dateTime(d.created_at)}</p>
+                <p className="k-l2 break-all text-[0.9375rem]">{d.email}</p>
+                <p className="k-l3 text-[0.8125rem]">Joined {fmt.dateTime(d.created_at)}</p>
                 {suspended && (
-                  <p className="mt-2 text-sm text-red-700">
+                  <p className="k-red mt-1 text-[0.875rem]">
                     Suspended {fmt.dateTime(d.suspended_at)}
                     {d.suspended_reason ? `: ${d.suspended_reason}` : ''}
                   </p>
                 )}
               </div>
-              {protectedAccount ? (
-                <p className="max-w-xs text-sm text-slate-500">This is a platform owner account. It can&rsquo;t be suspended, deleted or logged in as from here.</p>
-              ) : (
-                <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                  <Button onClick={() => setDialog('login')} disabled={suspended || busy} title={suspended ? 'Reactivate it first: a suspended restaurant cannot be opened' : undefined}>
-                    Log in as
-                  </Button>
-                  <Button variant="secondary" onClick={() => setDialog('edit')} disabled={busy}>
-                    Edit details
-                  </Button>
-                  {suspended ? (
-                    <Button variant="secondary" onClick={reactivate} busy={busy}>
-                      Reactivate
-                    </Button>
-                  ) : (
-                    <Button variant="danger-outline" onClick={() => setDialog('suspend')} disabled={busy}>
-                      Suspend
-                    </Button>
-                  )}
-                </div>
-              )}
             </div>
-          </Card>
+            {protectedAccount ? (
+              <p className="k-l2 max-w-xs text-[0.875rem]">This is a platform owner account. It can&rsquo;t be suspended or deleted from here.</p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button type="button" className={buttonClass.gray} onClick={() => setDialog('edit')} disabled={busy}>
+                  Edit details
+                </button>
+                {suspended ? (
+                  <button type="button" className={buttonClass.primary} onClick={reactivate} disabled={busy}>
+                    Reactivate
+                  </button>
+                ) : (
+                  <button type="button" className={buttonClass.danger} onClick={() => setDialog('suspend')} disabled={busy}>
+                    Suspend
+                  </button>
+                )}
+              </div>
+            )}
+          </header>
 
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            <Stat icon={OrdersIcon} tone="sky" label="Orders · 30 days" value={formatNumber(d.orders_30d)} note={`${formatNumber(d.orders_total)} in total`} />
-            <Stat icon={TrendingIcon} tone="emerald" label="Paid · 30 days" value={formatMoney(d.revenue_30d)} note={`${formatMoney(d.revenue_total)} in total`} />
-            <Stat icon={ShieldIcon} label="Menu" value={`${formatNumber(d.items)} dishes`} note={`${formatNumber(d.categories)} categories · ${formatNumber(d.tables)} tables`} />
-            <Stat icon={OrdersIcon} label="Last order" value={d.last_order_at ? timeAgo(d.last_order_at) : 'None yet'} note={d.last_order_at ? fmt.dateTime(d.last_order_at) : 'No orders so far'} />
-          </div>
+          <Figures
+            items={[
+              { label: 'Orders · 30 days', value: formatNumber(d.orders_30d), note: `${formatNumber(d.orders_total)} in total` },
+              { label: 'Paid · 30 days', value: formatMoney(d.revenue_30d), note: `${formatMoney(d.revenue_total)} in total` },
+              { label: 'Menu', value: formatNumber(d.items), unit: d.items === 1 ? 'dish' : 'dishes', note: `${formatNumber(d.categories)} categories · ${formatNumber(d.tables)} tables` },
+              { label: 'Last order', value: d.last_order_at ? timeAgo(d.last_order_at) : 'None yet', note: d.last_order_at ? fmt.dateTime(d.last_order_at) : 'No orders so far' },
+            ]}
+          />
 
-          <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-            <Card className="overflow-hidden lg:col-span-2">
-              <CardHeader title="Recent orders" description="The latest 10, newest first." />
-              {d.recent_orders.length === 0 ? (
-                <EmptyState icon={OrdersIcon} title="No orders yet" message="Orders from this restaurant's tables will show here." />
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {d.recent_orders.map((o) => (
-                    <li key={`${o.number}-${o.created_at}`} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3 sm:px-5">
-                      <div className="w-28 shrink-0">
-                        <p className="font-semibold text-slate-900">
-                          #{o.number} <span className="font-normal text-slate-500">Table {o.table_number}</span>
-                        </p>
-                        <p className="text-xs text-slate-400">{fmt.dateTime(o.created_at)}</p>
-                      </div>
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                        <StatusBadge status={o.status} />
-                        <PaymentBadge status={o.payment_status} method={o.payment_method} />
-                      </div>
-                      <p className="font-semibold tabular-nums text-slate-900">{formatMoney(o.total)}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Section title="Recent orders" hint="Latest 10" className="lg:col-span-2">
+              <Panel divided>
+                {d.recent_orders.length === 0 ? (
+                  <p className="k-l2 px-4 py-10 text-center text-[0.9375rem]">No orders yet. Orders from this restaurant&rsquo;s tables will show here.</p>
+                ) : (
+                  d.recent_orders.map((o) => {
+                    const [st, stText] = ORDER_STATUS[o.status] ?? ['gray', o.status];
+                    const [pt, ptText] = payState(o);
+                    return (
+                      <Row
+                        key={`${o.number}-${o.created_at}`}
+                        title={
+                          <>
+                            #{o.number} <span className="k-l2 font-normal">Table {o.table_number}</span>
+                          </>
+                        }
+                        sub={fmt.dateTime(o.created_at)}
+                        right={
+                          <span className="flex flex-wrap items-center justify-end gap-1.5">
+                            <Label tone={st}>{stText}</Label>
+                            <Label tone={pt}>{ptText}</Label>
+                            <span className="ml-1 w-16 text-right font-semibold tabular-nums">{formatMoney(o.total)}</span>
+                          </span>
+                        }
+                      />
+                    );
+                  })
+                )}
+              </Panel>
+            </Section>
 
-            <div className="space-y-4 sm:space-y-6">
-              <Card>
-                <CardHeader title="Payments" description="How diners can pay here." />
-                <ul className="divide-y divide-slate-100 px-4 sm:px-5">
+            <div className="space-y-6">
+              <Section title="Payments" hint="How diners can pay">
+                <Panel divided>
                   {d.payment
                     .filter((w) => w.offered || w.enabled)
                     .map((w) => {
                       const [tone, label] = wayState(w);
-                      return (
-                        <li key={w.key} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                          <span className="font-medium text-slate-800">{WAYS[w.key]}</span>
-                          <Badge tone={tone} dot={tone !== 'slate'}>{label}</Badge>
-                        </li>
-                      );
+                      return <Row key={w.key} title={WAYS[w.key]} right={<Label tone={tone}>{label}</Label>} />;
                     })}
-                </ul>
-              </Card>
+                </Panel>
+              </Section>
 
-              <Card>
-                <CardHeader title="Account" />
-                <dl className="divide-y divide-slate-100 px-4 sm:px-5">
-                  <Fact label="Time zone">{d.timezone}</Fact>
-                  <Fact label="Currency">{d.currency}</Fact>
-                  <Fact label="Tax">{d.tax_percent}%</Fact>
-                </dl>
-              </Card>
+              <Section title="Account">
+                <Panel divided>
+                  <Row title="Time zone" right={d.timezone} />
+                  <Row title="Currency" right={d.currency} />
+                  <Row title="Tax" right={`${d.tax_percent}%`} />
+                </Panel>
+              </Section>
             </div>
           </div>
 
-          <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader title="Owner activity" description="What was done to this restaurant from the owner console." />
-              {d.activity.length === 0 ? (
-                <p className="px-4 py-5 text-sm text-slate-500 sm:px-5">Nothing yet.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {d.activity.map((a, i) => (
-                    <li key={`${a.at}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 px-4 py-2.5 text-sm sm:px-5">
-                      <p className="font-medium text-slate-900">
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Section title="Owner activity" hint="What was done from this console" className="lg:col-span-2">
+              <Panel divided>
+                {d.activity.length === 0 ? (
+                  <p className="k-l2 px-4 py-6 text-[0.9375rem]">Nothing yet.</p>
+                ) : (
+                  d.activity.map((a, i) => (
+                    <div key={`${a.at}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 px-4 py-3">
+                      <p className="min-w-0 break-words text-[0.9375rem] font-medium">
                         {ACTIVITY_LABELS[a.action] ?? a.action}
-                        {activityNote(a) ? <span className="font-normal text-slate-500">: {activityNote(a)}</span> : null}
+                        {activityNote(a) && <span className="k-l2 font-normal">: {activityNote(a)}</span>}
                       </p>
-                      <p className="text-xs text-slate-400" title={fmt.dateTime(a.at)}>
+                      <p className="k-l3 text-[0.8125rem]" title={fmt.dateTime(a.at)}>
                         {a.by} · {timeAgo(a.at)}
                       </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
+                    </div>
+                  ))
+                )}
+              </Panel>
+            </Section>
 
             {!protectedAccount && (
-              <Card>
-                <CardHeader title="Account actions" />
-                <div className="divide-y divide-slate-100 px-4 sm:px-5">
-                  <div className="py-3.5">
-                    <p className="text-sm font-semibold text-slate-900">Set a new password</p>
-                    <p className="mt-0.5 text-sm text-slate-500">For a restaurant that is locked out. They are signed out everywhere.</p>
-                    <Button variant="secondary" size="sm" className="mt-2.5" onClick={() => setDialog('password')}>
-                      Set password
-                    </Button>
-                  </div>
-                  <div className="py-3.5">
-                    <p className="text-sm font-semibold text-red-700">Delete restaurant</p>
-                    <p className="mt-0.5 text-sm text-slate-500">
-                      {suspended ? 'Removes it and all its data for good.' : 'Suspend it first. Only a suspended restaurant can be deleted.'}
-                    </p>
-                    <Button variant="danger-outline" size="sm" className="mt-2.5" disabled={!suspended} onClick={() => setDialog('delete')}>
-                      Delete…
-                    </Button>
-                  </div>
-                </div>
-              </Card>
+              <Section title="Account actions">
+                <Panel divided>
+                  <Row
+                    title="Set a new password"
+                    sub="For a restaurant that is locked out. They are signed out everywhere."
+                    right={
+                      <button type="button" className={buttonClass.link} onClick={() => setDialog('password')}>
+                        Set password
+                      </button>
+                    }
+                  />
+                  <Row
+                    title={<span className="k-red">Delete restaurant</span>}
+                    sub={suspended ? 'Removes it and all its data for good.' : 'Suspend it first. Only a suspended restaurant can be deleted.'}
+                    right={
+                      <button type="button" className={buttonClass.danger} disabled={!suspended} onClick={() => setDialog('delete')}>
+                        Delete…
+                      </button>
+                    }
+                  />
+                </Panel>
+              </Section>
             )}
           </div>
         </div>
@@ -447,7 +387,6 @@ export default function RestaurantDetail() {
           }}
         />
       )}
-      {dialog === 'login' && d && <LoginAsDialog restaurant={d} onClose={close} />}
       {dialog === 'delete' && d && (
         <DeleteDialog
           restaurant={d}

@@ -27,7 +27,7 @@ export function Tabs({ idBase, label, tabs, value, onChange, className }) {
   };
 
   return (
-    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className={cx('flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xs', className)}>
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className={cx('flex gap-1 overflow-x-auto rounded-full border border-black/[0.05] bg-white p-1', className)}>
       {tabs.map((t) => {
         const selected = t.value === value;
         return (
@@ -44,13 +44,13 @@ export function Tabs({ idBase, label, tabs, value, onChange, className }) {
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(t.value)}
             className={cx(
-              'inline-flex h-9 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors focus-visible:-outline-offset-2',
-              selected ? 'bg-brand-50 text-brand-800' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+              'inline-flex h-9 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full px-4 text-sm font-medium transition-colors focus-visible:-outline-offset-2',
+              selected ? 'bg-brand-100/70 text-brand-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
             )}
           >
             {t.label}
             {t.count !== undefined && t.count !== null && (
-              <span className={cx('min-w-5 rounded-full px-1.5 py-px text-center text-xs font-semibold', selected ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600')}>
+              <span className={cx('min-w-5 rounded-full px-1.5 py-px text-center text-xs font-semibold', selected ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500')}>
                 {t.count}
               </span>
             )}

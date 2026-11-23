@@ -6,7 +6,7 @@ export const ACTIVITY_LABELS = {
   suspend: 'Suspended',
   reactivate: 'Reactivated',
   set_password: 'Set a new password',
-  login_as: 'Logged in as the restaurant',
+  login_as: 'Logged in as the restaurant (an old entry: this was removed)',
   delete: 'Deleted the restaurant',
 };
 
@@ -18,7 +18,6 @@ export const ACTIVITY_FILTERS = [
   ['suspend', 'Suspended'],
   ['reactivate', 'Reactivated'],
   ['set_password', 'Passwords set'],
-  ['login_as', 'Logged in as'],
   ['delete', 'Deleted'],
 ];
 

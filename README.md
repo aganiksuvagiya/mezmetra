@@ -113,6 +113,22 @@ With **New-order sound** on, the admin panel chimes and reads each new order out
 text-to-speech, so nothing is shipped or called online; the voices come from the device, and a language the device has no voice for shows a warning.
 Table names are read as digits only ("T-03" is "Table 3"); dish names are not read.
 
+## Kitchen screen
+
+Admin -> **Kitchen screen** (`/kitchen`) is a full-screen view for a tablet or spare monitor in the kitchen: no sidebar, no prices. It is drawn the way
+Apple draws its own apps (system fonts and colours, a grouped grey background, white cards with modest rounded corners, hairline separators, tinted labels,
+segmented controls), in a light and a dark look (switch at the top, remembered per device); the look lives in `admin/src/index.css` under `.kitchen`, and
+everything is sized in rem so the Small / Medium / Large switch (Medium is the default) scales the whole page. A card of four figures (new, cooking, ready, longest wait) and a
+"To cook" row that adds up the open orders ("4 Masala Chaas") sit above three columns: **New**, **Preparing** and **Ready** (stays 30 minutes). Each order is a
+card with the table number, how long it has waited (grey, orange after 8 minutes, red with "Late" after 15), the dishes as a list with the diner's notes and
+dish instructions highlighted, and a small button in the corner, the way the App Store puts "Get": **Accept** on a new order, **Ready** on one being cooked.
+The rarely used "Can't make it" sits in a **...** menu next to Accept and asks before it cancels. Motion is only for what happened and uses the system easing: a
+new order opens in (with a chime that reads the table out) and is ringed in blue for a moment, and a card that moves on glides to its new column; animations
+are off for devices set to reduced motion. Tap **Start** once (browsers only allow sound and a screen that stays awake after a click). It shows "Offline" when it
+cannot reach the server, and on a phone the three columns become a segmented control. It has its own sign-in: in Admin -> Settings -> **Kitchen login** the restaurant sets an email and a password for the kitchen tablet. Signing in with it opens the
+kitchen screen and nothing else (no sidebar, menu, payments or settings, and the API refuses everything but orders), a new password signs the tablet out, and removing
+the login ends it at once. The restaurant's own login also works on the screen, with an "Admin" link back. It uses the same order feed as the admin; an order still open after 12 hours is not shown (it is counted under the figures).
+
 ## Demo data (sample orders and prices)
 
 For a client demo: `npm run demo:prices` makes every Tea Post dish Rs 1 (extras free), so a real UPI payment costs almost nothing, and

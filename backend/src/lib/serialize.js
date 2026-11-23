@@ -9,7 +9,7 @@ export const logoUrl = (row, vendorId = row.id) => (row.has_logo ? `/api/public/
 
 export const isSuperAdminEmail = (email) => config.superAdminEmails.has(String(email ?? '').toLowerCase());
 
-export const vendorOut = (v) => ({
+export const vendorOut = (v, kitchen = null) => ({
   id: v.id,
   name: v.name,
   email: v.email,
@@ -23,7 +23,10 @@ export const vendorOut = (v) => ({
   // Ways of paying the product offers right now ('upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm'); the admin hides the rest.
   payment_methods: [...config.paymentMethods],
   // True for the platform owner's account (SUPER_ADMIN_EMAILS): the admin then shows the Platform section.
-  is_super_admin: isSuperAdminEmail(v.email),
+  is_super_admin: kitchen ? false : isSuperAdminEmail(v.email),
+  // 'owner' for the restaurant's own login, 'kitchen' for the kitchen's: the admin then shows the kitchen screen only.
+  role: kitchen ? 'kitchen' : 'owner',
+  ...(kitchen ? { email: kitchen.email } : {}),
 });
 
 export const categoryOut = (c) => ({
@@ -109,8 +112,10 @@ export async function loadOrderItems(q, orderIds) {
   const byOrder = new Map();
   if (orderIds.length === 0) return byOrder;
   const { rows } = await q.query(
-    `SELECT id, order_id, name, unit_price_paise, quantity, instructions, options, line_total_paise
-       FROM order_items WHERE order_id = ANY($1::bigint[]) ORDER BY id`,
+    `SELECT oi.id, oi.order_id, oi.name, oi.unit_price_paise, oi.quantity, oi.instructions, oi.options, oi.line_total_paise,
+            i.id AS dish_id, i.has_photo, i.photo_version
+       FROM order_items oi LEFT JOIN items i ON i.id = oi.item_id
+      WHERE oi.order_id = ANY($1::bigint[]) ORDER BY oi.id`,
     [orderIds],
   );
   for (const r of rows) {
@@ -118,6 +123,8 @@ export async function loadOrderItems(q, orderIds) {
     byOrder.get(r.order_id).push({
       id: r.id,
       name: r.name,
+      // The dish's photo, while the dish still exists and has one (an order card shows the first one).
+      photo_url: r.dish_id ? photoUrl({ id: r.dish_id, has_photo: r.has_photo, photo_version: r.photo_version }) : null,
       quantity: r.quantity,
       unit_price: toRupees(r.unit_price_paise),
       instructions: r.instructions,

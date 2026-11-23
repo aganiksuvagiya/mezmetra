@@ -400,7 +400,13 @@ describe('ordering', () => {
     assert.equal(d.body.data.weekly_revenue.at(-1).revenue, 1419);
     const cash = d.body.data.payment_methods.find((m) => m.method === 'cash');
     assert.deepEqual([cash.amount, cash.percent], [1419, 100]);
-    assert.deepEqual(d.body.data.top_selling[0], { name: 'Margherita', quantity: 2, revenue: 1419 });
+    const { photo_url, ...topDish } = d.body.data.top_selling[0];
+    assert.deepEqual(topDish, { name: 'Margherita', quantity: 2, revenue: 1419 });
+    assert.match(photo_url, /^\/api\/public\/items\/\d+\/photo\?v=\d+$/, 'the dish had a photo uploaded earlier');
+    // Two orders placed today (the paid one and this unpaid one); the open one is waiting to be accepted.
+    assert.equal(d.body.data.today_orders, 2);
+    assert.equal(d.body.data.average_order, 1419);
+    assert.deepEqual([d.body.data.live_pending, d.body.data.live_preparing, d.body.data.live_ready], [1, 0, 0]);
     s.secondOrderToken = second.body.data.token;
   });
 });
@@ -849,7 +855,6 @@ describe("owner console: a restaurant's page and the owner's actions", () => {
       ['POST', `/restaurants/${other.vendor.id}/profile`, { name: 'Renamed Cafe', email: 'renamed@mezmitra.test' }],
       ['GET', `/restaurants/${other.vendor.id}`],
       ['POST', `/restaurants/${other.vendor.id}/password`, { password: 'another-long-password' }],
-      ['POST', `/restaurants/${other.vendor.id}/login-as`, {}],
       ['POST', `/restaurants/${other.vendor.id}/delete`, { confirm_name: 'Not The Owner' }],
     ]) {
       assert.equal((await api(method, `/api/platform${path}`, { token: other.token, body })).status, 403, `${method} ${path}`);
@@ -1018,31 +1023,20 @@ describe("owner console: a restaurant's page and the owner's actions", () => {
     assert.equal((await ownerApi('POST', '/restaurants/999999/password', { password: 'brand-new-password-1' })).status, 404);
   });
 
-  it('logs in as a restaurant for an hour, and says so', async () => {
-    const r = await signup('Support Cafe', 'support.cafe@mezmitra.test');
-    const res = await ownerApi('POST', `/restaurants/${r.vendor.id}/login-as`, {});
-    assert.equal(res.status, 200);
-    assert.equal(res.body.data.restaurant.name, 'Support Cafe');
-    assert.equal(res.body.data.expires_in, 3600);
-    const token = res.body.data.token;
-    const me = (await api('GET', '/api/auth/me', { token })).body.data;
-    assert.equal(me.email, 'support.cafe@mezmitra.test');
-    assert.equal(me.impersonated_by_owner, true);
-    assert.equal((await api('GET', '/api/auth/me', { token: r.token })).body.data.impersonated_by_owner, false, "the restaurant's own login is not marked");
-    assert.equal((await api('GET', '/api/admin/tables', { token })).status, 200, 'it can use the restaurant admin');
-    assert.equal((await api('GET', '/api/platform/overview', { token })).status, 403, 'it is not an owner session');
-    assert.equal((await api('GET', '/api/auth/me', { token: ownerToken })).body.data.email, OWNER, "the owner's own session is untouched");
+  it("has no way to log in as a restaurant: the owner never gets into a restaurant's admin", async () => {
+    const r = await signup('Private Cafe', 'private.cafe@mezmitra.test');
+    // The old route is gone: not found for the owner, and still closed to anybody else.
+    assert.equal((await ownerApi('POST', `/restaurants/${r.vendor.id}/login-as`, {})).status, 404);
+    assert.equal((await api('POST', `/api/platform/restaurants/${r.vendor.id}/login-as`, { token: r.token, body: {} })).status, 403);
+    // And the owner's own session sees only the owner's own restaurant in /api/admin, never this one's data.
+    await api('POST', '/api/admin/tables', { token: r.token, body: { number: 'PRIVATE-1', capacity: 2 } });
+    const ownerTables = (await api('GET', '/api/admin/tables', { token: ownerToken })).body.data;
+    assert.equal(ownerTables.some((t) => t.number === 'PRIVATE-1'), false);
+    const me = (await api('GET', '/api/auth/me', { token: r.token })).body.data;
+    assert.equal('impersonated_by_owner' in me, false);
+    // Nothing in the owner's record is called "login_as" any more.
     const detail = (await ownerApi('GET', `/restaurants/${r.vendor.id}`)).body.data;
-    assert.deepEqual(detail.activity.map((a) => a.action), ['login_as']);
-
-    const own = await ownerApi('POST', `/restaurants/${ownerId}/login-as`, {});
-    assert.equal(own.status, 409);
-    assert.equal(own.body.error.code, 'CANNOT_LOGIN_AS_OWNER');
-    await ownerApi('PATCH', `/restaurants/${r.vendor.id}`, { suspended: true, reason: 'test' });
-    const closed = await ownerApi('POST', `/restaurants/${r.vendor.id}/login-as`, {});
-    assert.equal(closed.status, 409);
-    assert.equal(closed.body.error.code, 'RESTAURANT_SUSPENDED');
-    assert.equal((await ownerApi('POST', '/restaurants/999999/login-as', {})).status, 404);
+    assert.deepEqual(detail.activity, []);
   });
 
   it('records suspend and reactivate in the restaurant\'s activity (only when something changed)', async () => {
@@ -3290,5 +3284,236 @@ describe('the diner cancels their own order', () => {
   it('answers 404 for an order that does not exist', async () => {
     assert.equal((await api('POST', '/api/public/orders/00000000-0000-4000-8000-000000000000/cancel')).status, 404);
     assert.equal((await api('POST', '/api/public/orders/not-a-token/cancel')).status, 404);
+  });
+});
+
+describe("kitchen login: the kitchen's own sign-in that opens the kitchen screen and nothing else", () => {
+  const PASSWORD = 'a-long-enough-password';
+  const KITCHEN = 'kitchen.pass@mezmitra.test';
+  let owner; // the restaurant's own login
+  let kitchen; // the kitchen's token
+  let tableQr;
+  let itemId;
+  const placeOrder = async () => (await api('POST', `/api/public/t/${tableQr}/orders`, { body: { items: [{ item_id: itemId, quantity: 2, option_ids: [] }], note: '', pay_pref: 'counter' }, headers: { 'Idempotency-Key': `k-${Math.random()}` } })).body.data;
+
+  before(async () => {
+    owner = (await signupAccount({ name: 'Pass Cafe', email: 'pass.cafe@mezmitra.test', password: PASSWORD })).body.data;
+    const cat = (await api('POST', '/api/admin/categories', { token: owner.token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token: owner.token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    tableQr = (await api('POST', '/api/admin/tables', { token: owner.token, body: { number: 'K1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('is set up, changed and removed by the restaurant, with the same rules as any login', async () => {
+    const start = await api('GET', '/api/admin/kitchen-login', { token: owner.token });
+    assert.deepEqual(start.body.data, { configured: false, email: null, created_at: null });
+
+    const noPassword = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: KITCHEN } });
+    assert.equal(noPassword.status, 409);
+    assert.equal(noPassword.body.error.code, 'PASSWORD_REQUIRED');
+    assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: KITCHEN, password: 'short' } })).status, 400);
+    assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'not-an-email', password: PASSWORD } })).status, 400);
+    // The restaurant's own address, and another restaurant's, are taken.
+    const own = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'PASS.cafe@mezmitra.test', password: PASSWORD } });
+    assert.equal(own.status, 409);
+    assert.equal(own.body.error.code, 'EMAIL_TAKEN');
+    assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'owner@spice.test', password: PASSWORD } })).status, 409);
+
+    const made = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'Kitchen.Pass@Mezmitra.test', password: PASSWORD } });
+    assert.equal(made.status, 200);
+    assert.equal(made.body.data.configured, true);
+    assert.equal(made.body.data.email, KITCHEN);
+    assert.equal(JSON.stringify(made.body).includes(PASSWORD), false, 'the password is never echoed back');
+    assert.equal((await api('GET', '/api/admin/kitchen-login', { token: owner.token })).body.data.email, KITCHEN);
+
+    // One address is one login: nobody else can take the kitchen's address, even by making a restaurant with it.
+    const { emailInUse } = await import('../src/lib/accounts.js');
+    assert.equal(await emailInUse(db, KITCHEN), true);
+    assert.equal(await emailInUse(db, 'nobody.at.all@mezmitra.test'), false);
+    const other = (await signupAccount({ name: 'Second Cafe', email: 'second.pass@mezmitra.test', password: PASSWORD })).body.data;
+    const clash = await api('PUT', '/api/admin/kitchen-login', { token: other.token, body: { email: KITCHEN, password: PASSWORD } });
+    assert.equal(clash.status, 409);
+  });
+
+  it('signs in as the kitchen, and the sign-in says so', async () => {
+    const wrong = await api('POST', '/api/auth/login', { body: { email: KITCHEN, password: 'wrong-password-1' } });
+    assert.equal(wrong.status, 401);
+    const login = await api('POST', '/api/auth/login', { body: { email: KITCHEN, password: PASSWORD } });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.data.vendor.role, 'kitchen');
+    assert.equal(login.body.data.vendor.email, KITCHEN);
+    assert.equal(login.body.data.vendor.name, 'Pass Cafe');
+    assert.equal(login.body.data.vendor.is_super_admin, false);
+    kitchen = login.body.data.token;
+    const me = (await api('GET', '/api/auth/me', { token: kitchen })).body.data;
+    assert.equal(me.role, 'kitchen');
+    // The restaurant's own login still works and is the owner kind.
+    const own = await api('POST', '/api/auth/login', { body: { email: 'pass.cafe@mezmitra.test', password: PASSWORD } });
+    assert.equal(own.body.data.vendor.role, 'owner');
+  });
+
+  it('can work with orders and nothing else', async () => {
+    const o1 = await placeOrder();
+    const list = await api('GET', '/api/admin/orders?status=active', { token: kitchen });
+    assert.equal(list.status, 200);
+    const id = list.body.data.find((o) => o.number === o1.number).id;
+    assert.equal((await api('GET', `/api/admin/orders/${id}`, { token: kitchen })).status, 200);
+    assert.equal((await api('PATCH', `/api/admin/orders/${id}/status`, { token: kitchen, body: { status: 'accepted' } })).status, 200);
+    assert.equal((await api('POST', `/api/admin/orders/${id}/ready`, { token: kitchen })).status, 200);
+    // Completing an order is staff taking the money: not the kitchen's.
+    assert.equal((await api('PATCH', `/api/admin/orders/${id}/status`, { token: kitchen, body: { status: 'completed' } })).status, 403);
+    // The kitchen may refuse an order it has not made yet.
+    const o2 = await placeOrder();
+    const id2 = (await api('GET', '/api/admin/orders?status=active', { token: kitchen })).body.data.find((o) => o.number === o2.number).id;
+    assert.equal((await api('PATCH', `/api/admin/orders/${id2}/status`, { token: kitchen, body: { status: 'cancelled' } })).status, 200);
+
+    for (const [method, path, body] of [
+      ['GET', '/api/admin/categories'],
+      ['GET', '/api/admin/items'],
+      ['POST', '/api/admin/items', { category_id: 1, name: 'X', price: 1 }],
+      ['GET', '/api/admin/tables'],
+      ['GET', '/api/admin/payment-settings'],
+      ['PUT', '/api/admin/payment-settings', { cash_enabled: false }],
+      ['GET', '/api/admin/dashboard'],
+      ['GET', '/api/admin/reports/summary'],
+      ['GET', '/api/admin/vendor'],
+      ['PATCH', '/api/admin/vendor', { name: 'Hijacked' }],
+      ['GET', '/api/admin/requests'],
+      ['GET', `/api/admin/orders/${id}/receipt.pdf`],
+      ['POST', `/api/admin/orders/${id}/refund`, {}],
+      ['GET', '/api/admin/kitchen-login'],
+      ['PUT', '/api/admin/kitchen-login', { email: 'x.kitchen@mezmitra.test', password: PASSWORD }],
+      ['DELETE', '/api/admin/kitchen-login'],
+      ['POST', '/api/auth/change-password', { current_password: PASSWORD, new_password: 'another-long-password' }],
+      ['GET', '/api/platform/overview'],
+    ]) {
+      const r = await api(method, path, { token: kitchen, body });
+      assert.equal(r.status, 403, `${method} ${path} must be closed to the kitchen login (got ${r.status})`);
+    }
+    // Even when the restaurant is the platform owner's own: the kitchen login is not the owner.
+    config.superAdminEmails = new Set(['pass.cafe@mezmitra.test']);
+    try {
+      assert.equal((await api('GET', '/api/platform/overview', { token: kitchen })).status, 403);
+      assert.equal((await api('GET', '/api/platform/overview', { token: owner.token })).status, 200, 'while the restaurant login is the owner');
+    } finally {
+      config.superAdminEmails = new Set();
+    }
+  });
+
+  it('is signed out by a new password, keeps its session when only the email changes, and stops when removed', async () => {
+    // Only the email changes: the password and the open session stay.
+    const moved = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'kitchen.pass2@mezmitra.test' } });
+    assert.equal(moved.status, 200);
+    assert.equal((await api('GET', '/api/admin/orders', { token: kitchen })).status, 200, 'the open session is not signed out by an email change');
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: KITCHEN, password: PASSWORD } })).status, 401, 'the old address no longer signs in');
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'kitchen.pass2@mezmitra.test', password: PASSWORD } })).status, 200);
+
+    // A new password signs the kitchen out everywhere.
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'kitchen.pass2@mezmitra.test', password: 'brand-new-kitchen-pass' } })).status, 200);
+    assert.equal((await api('GET', '/api/admin/orders', { token: kitchen })).status, 401);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'kitchen.pass2@mezmitra.test', password: PASSWORD } })).status, 401);
+    const again = await api('POST', '/api/auth/login', { body: { email: 'kitchen.pass2@mezmitra.test', password: 'brand-new-kitchen-pass' } });
+    assert.equal(again.status, 200);
+    kitchen = again.body.data.token;
+
+    // A suspended restaurant's kitchen is turned away too.
+    await db.query(`UPDATE vendors SET suspended_at = now() WHERE id = $1`, [owner.vendor.id]);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'kitchen.pass2@mezmitra.test', password: 'brand-new-kitchen-pass' } })).status, 403);
+    assert.equal((await api('GET', '/api/admin/orders', { token: kitchen })).status, 403);
+    await db.query(`UPDATE vendors SET suspended_at = NULL WHERE id = $1`, [owner.vendor.id]);
+
+    // Removing the login ends it at once.
+    assert.equal((await api('DELETE', '/api/admin/kitchen-login', { token: owner.token })).status, 200);
+    assert.equal((await api('GET', '/api/admin/orders', { token: kitchen })).status, 401);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'kitchen.pass2@mezmitra.test', password: 'brand-new-kitchen-pass' } })).status, 401);
+    assert.equal((await api('DELETE', '/api/admin/kitchen-login', { token: owner.token })).status, 404);
+    assert.equal((await api('GET', '/api/admin/kitchen-login', { token: owner.token })).body.data.configured, false);
+  });
+
+  it('goes away with the restaurant', async () => {
+    const r = (await signupAccount({ name: 'Short Lived Cafe', email: 'short.lived@mezmitra.test', password: PASSWORD })).body.data;
+    await api('PUT', '/api/admin/kitchen-login', { token: r.token, body: { email: 'short.lived.kitchen@mezmitra.test', password: PASSWORD } });
+    assert.equal((await db.query(`SELECT 1 FROM vendor_staff WHERE vendor_id = $1`, [r.vendor.id])).rowCount, 1);
+    await db.query(`DELETE FROM vendors WHERE id = $1`, [r.vendor.id]);
+    assert.equal((await db.query(`SELECT 1 FROM vendor_staff WHERE vendor_id = $1`, [r.vendor.id])).rowCount, 0);
+  });
+});
+
+describe('the orders page figures: counts by state, the preparing and ready filters, and the dish photo on an order', () => {
+  let token;
+  let qr;
+  let dishId;
+  const order = async (qty = 1) => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: dishId, quantity: qty, option_ids: [] }], note: '', pay_pref: 'counter' }, headers: { 'Idempotency-Key': `k-${Math.random()}` } })).body.data;
+  const idOf = async (number) => (await api('GET', '/api/admin/orders?per_page=100', { token })).body.data.find((o) => o.number === number).id;
+
+  before(async () => {
+    token = (await signupAccount({ name: 'Counts Cafe', email: 'counts.cafe@mezmitra.test', password: 'a-long-enough-password' })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    dishId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'C1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('counts every state, and the two halves of an accepted order are told apart', async () => {
+    const zero = (await api('GET', '/api/admin/orders/counts', { token })).body.data;
+    assert.deepEqual(zero, { all: 0, pending: 0, preparing: 0, ready: 0, completed: 0, cancelled: 0, active: 0 });
+
+    // One table holds one open order, so finish one before the next is placed.
+    const cancelled = await order();
+    await api('PATCH', `/api/admin/orders/${await idOf(cancelled.number)}/status`, { token, body: { status: 'cancelled' } });
+    const done = await order();
+    const doneId = await idOf(done.number);
+    await api('PATCH', `/api/admin/orders/${doneId}/status`, { token, body: { status: 'accepted' } });
+    await api('POST', `/api/admin/orders/${doneId}/cash-payment`, { token });
+    await api('PATCH', `/api/admin/orders/${doneId}/status`, { token, body: { status: 'completed' } });
+    const ready = await order();
+    const readyId = await idOf(ready.number);
+    await api('PATCH', `/api/admin/orders/${readyId}/status`, { token, body: { status: 'accepted' } });
+    await api('POST', `/api/admin/orders/${readyId}/ready`, { token });
+    // Other tables for the open ones.
+    const mk = async (n) => (await api('POST', '/api/admin/tables', { token, body: { number: n, capacity: 2 } })).body.data.qr_url.split('/').pop();
+    const place = async (tableQr) => (await api('POST', `/api/public/t/${tableQr}/orders`, { body: { items: [{ item_id: dishId, quantity: 1, option_ids: [] }], note: '', pay_pref: 'counter' }, headers: { 'Idempotency-Key': `k-${Math.random()}` } })).body.data;
+    const cooking = await place(await mk('C2'));
+    await api('PATCH', `/api/admin/orders/${await idOf(cooking.number)}/status`, { token, body: { status: 'accepted' } });
+    const pending = await place(await mk('C3')); // stays pending
+
+    assert.deepEqual((await api('GET', '/api/admin/orders/counts', { token })).body.data, { all: 5, pending: 1, preparing: 1, ready: 1, completed: 1, cancelled: 1, active: 3 });
+    const numbers = async (status) => (await api('GET', `/api/admin/orders?status=${status}`, { token })).body.data.map((o) => o.number).sort();
+    assert.deepEqual(await numbers('pending'), [pending.number]);
+    assert.deepEqual(await numbers('preparing'), [cooking.number]);
+    assert.deepEqual(await numbers('ready'), [ready.number]);
+    assert.deepEqual(await numbers('completed'), [done.number]);
+    assert.deepEqual(await numbers('cancelled'), [cancelled.number]);
+    assert.equal((await api('GET', '/api/admin/orders?status=active', { token })).body.data.length, 3);
+    assert.equal((await api('GET', '/api/admin/orders?status=bogus', { token })).status, 400);
+    // Only this restaurant's orders are counted.
+    const other = (await signupAccount({ name: 'Counts Other', email: 'counts.other@mezmitra.test', password: 'a-long-enough-password' })).body.data.token;
+    assert.equal((await api('GET', '/api/admin/orders/counts', { token: other })).body.data.all, 0);
+    assert.equal((await api('GET', '/api/admin/orders/counts')).status, 401);
+  });
+
+  it('puts the dish photo on the order items, and none while the dish has no photo', async () => {
+    const any = (await api('GET', '/api/admin/orders?per_page=5', { token })).body.data[0];
+    assert.equal(any.items[0].photo_url, null);
+    const up = await api('PUT', `/api/admin/items/${dishId}/photo`, { token, raw: PNG_1X1, headers: { 'Content-Type': 'image/png' } });
+    assert.equal(up.status, 200);
+    const after = (await api('GET', `/api/admin/orders/${any.id}`, { token })).body.data;
+    assert.match(after.items[0].photo_url, /^\/api\/public\/items\/\d+\/photo\?v=1$/);
+  });
+
+  it('shows the dashboard figures: orders today, the live split, the average paid order, and photos on latest orders and top sellers', async () => {
+    const d = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
+    // Five orders were placed, one of them cancelled.
+    assert.equal(d.today_orders, 4);
+    assert.deepEqual([d.live_pending, d.live_preparing, d.live_ready, d.live_orders], [1, 1, 1, 3]);
+    const completed = (await api('GET', '/api/admin/orders?status=completed', { token })).body.data[0];
+    assert.equal(d.average_order, completed.total, 'the average of the only paid order is that order');
+    assert.equal(d.latest_orders.length, 5);
+    for (const o of d.latest_orders) assert.match(o.items[0].photo_url, /^\/api\/public\/items\/\d+\/photo\?v=1$/);
+    assert.equal(d.latest_orders.filter((o) => o.ready_at).length, 1, 'only the ready order carries a ready time');
+    assert.match(d.top_selling[0].photo_url, /^\/api\/public\/items\/\d+\/photo\?v=1$/);
+    // Another restaurant sees none of it.
+    const other = (await signupAccount({ name: 'Dash Other', email: 'dash.other@mezmitra.test', password: 'a-long-enough-password' })).body.data.token;
+    const o = (await api('GET', '/api/admin/dashboard/overview', { token: other })).body.data;
+    assert.deepEqual([o.today_orders, o.average_order, o.live_orders, o.latest_orders.length, o.top_selling.length], [0, 0, 0, 0, 0]);
   });
 });

@@ -978,27 +978,30 @@ export default function Payments() {
   return (
     <>
       <PageHeader title="Payments" description="Control how diners pay for their orders." />
-      {q.loading && (
-        <div role="status" aria-label="Loading payment settings" className="space-y-4">
-          <Skeleton className="h-44 rounded-xl" />
-          <Skeleton className="h-72 rounded-xl" />
-        </div>
-      )}
-      {!q.loading && !q.data && (
-        <Card>
-          <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load payment settings" />
-        </Card>
-      )}
-      {q.data && (
-        <PaymentsForm
-          key={version}
-          settings={q.data}
-          onSaved={(saved) => {
-            q.setData(saved);
-            setVersion((v) => v + 1); // re-seed the form from what the server now has (and clear the secret field)
-          }}
-        />
-      )}
+      {/* A settings form reads better narrow than stretched across the whole screen. */}
+      <div className="max-w-3xl">
+        {q.loading && (
+          <div role="status" aria-label="Loading payment settings" className="space-y-4">
+            <Skeleton className="h-44 rounded-xl" />
+            <Skeleton className="h-72 rounded-xl" />
+          </div>
+        )}
+        {!q.loading && !q.data && (
+          <Card>
+            <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load payment settings" />
+          </Card>
+        )}
+        {q.data && (
+          <PaymentsForm
+            key={version}
+            settings={q.data}
+            onSaved={(saved) => {
+              q.setData(saved);
+              setVersion((v) => v + 1); // re-seed the form from what the server now has (and clear the secret field)
+            }}
+          />
+        )}
+      </div>
     </>
   );
 }

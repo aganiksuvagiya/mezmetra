@@ -1,4 +1,3 @@
-import ImpersonationBar from './ImpersonationBar.jsx';
 import NotificationsPanel from './NotificationsPanel.jsx';
 import RequestsBanner from './RequestsBanner.jsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -28,6 +27,7 @@ import {
   TrendingIcon,
   VolumeIcon,
   VolumeOffIcon,
+  FlameIcon,
 } from './icons.jsx';
 
 const NAV = [
@@ -47,6 +47,7 @@ const NAV = [
     ],
   },
   { to: '/orders', label: 'Orders', icon: OrdersIcon, live: true },
+  { to: '/kitchen', label: 'Kitchen screen', icon: FlameIcon },
   { to: '/payments', label: 'Payments', icon: CardIcon },
   { to: '/reports', label: 'Reports', icon: TrendingIcon },
   { to: '/appearance', label: 'Appearance', icon: PaletteIcon },
@@ -61,19 +62,17 @@ function NavItem({ to, label, icon: Icon, live }) {
       end
       className={({ isActive }) =>
         cx(
-          'group relative flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors lg:h-10',
-          isActive
-            ? 'bg-brand-50 font-semibold text-brand-800 before:absolute before:inset-y-2 before:-left-3 before:w-1 before:rounded-r-full before:bg-brand-600'
-            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+          'group relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors',
+          isActive ? 'bg-brand-600 font-semibold text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
         )
       }
     >
       {({ isActive }) => (
         <>
-          <Icon size={19} className={isActive ? 'text-brand-600' : 'text-slate-400 group-hover:text-slate-600'} />
+          <Icon size={19} className={isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'} />
           <span className="flex-1">{label}</span>
           {live && count > 0 && (
-            <span className="min-w-6 rounded-full bg-brand-600 px-1.5 py-0.5 text-center text-xs font-semibold text-white">
+            <span className={cx('min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold', isActive ? 'bg-white text-brand-700' : 'bg-brand-600 text-white')}>
               {count}
               <span className="sr-only"> live {count === 1 ? 'order' : 'orders'}</span>
             </span>
@@ -189,7 +188,7 @@ function Sidebar({ onClose, showClose }) {
         {NAV.map((entry) =>
           entry.items ? (
             <div key={entry.heading} className="pt-3">
-              <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">{entry.heading}</p>
+              <p className="px-3 pb-1 text-xs font-medium text-slate-400">{entry.heading}</p>
               <div className="space-y-1">
                 {entry.items.map((item) => (
                   <NavItem key={item.to} {...item} />
@@ -202,9 +201,9 @@ function Sidebar({ onClose, showClose }) {
         )}
       </nav>
 
-      <div className="shrink-0 border-t border-slate-200 p-3">
+      <div className="shrink-0 border-t border-black/[0.06] p-3">
         <div className="mb-2 flex items-center gap-3 rounded-xl bg-slate-50 p-2.5">
-          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+          <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-sm font-bold text-white">
             {(vendor?.name ?? '?').trim().charAt(0).toUpperCase()}
           </span>
           <div className="min-w-0">
@@ -321,8 +320,9 @@ function Shell() {
         ref={drawerRef}
         inert={!isDesktop && !open}
         className={cx(
-          'fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] border-r border-slate-200 shadow-xl transition-transform duration-200 ease-out print:hidden',
-          'lg:z-30 lg:w-64 lg:max-w-none lg:translate-x-0 lg:shadow-none',
+          'fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-hidden border-r border-slate-200 shadow-xl transition-transform duration-200 ease-out print:hidden',
+          // On a wide screen the sidebar is a white card that floats on the grey page, with a gap all round.
+          'lg:inset-y-3 lg:left-3 lg:z-30 lg:w-64 lg:max-w-none lg:translate-x-0 lg:rounded-2xl lg:border lg:border-black/[0.05] lg:shadow-none',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
@@ -331,11 +331,10 @@ function Shell() {
 
       <div
         inert={drawerOpenOnMobile}
-        className={'transition-[padding] duration-200 lg:pl-64 print:pl-0' + (panelDocked ? ' lg:pr-[22rem] xl:pr-[26rem]' : '')}
+        className={'transition-[padding] duration-200 lg:pl-[17.5rem] print:pl-0' + (panelDocked ? ' lg:pr-[22rem] xl:pr-[26rem]' : '')}
       >
-        {/* One sticky strip: the "viewing as owner" bar (when it applies), then the phone header or the wide top bar. */}
-        <div className="sticky top-0 z-20 print:static">
-        <ImpersonationBar />
+        {/* One sticky strip: the phone header or the wide top bar. */}
+        <div className="sticky top-0 z-20 bg-[#eeeef0]/90 backdrop-blur print:static">
         <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white/95 px-3 backdrop-blur lg:hidden print:hidden">
           <button
             ref={hamburgerRef}
@@ -371,7 +370,7 @@ function Shell() {
         </header>
 
         {/* On a wide screen there is no top bar (the sidebar carries the menu), so the bell gets a slim one of its own. */}
-        <div className="hidden h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-6 backdrop-blur lg:flex print:hidden">
+        <div className="hidden h-14 items-center gap-2 px-6 lg:flex print:hidden">
           <p className="min-w-0 truncate text-sm font-medium text-slate-500">{today}</p>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {count > 0 && (
@@ -390,7 +389,7 @@ function Shell() {
 
         </div>
 
-        <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-5 outline-none sm:px-6 sm:py-8 print:max-w-none print:p-0">
+        <main id="main-content" tabIndex={-1} className="w-full px-4 pb-8 pt-2 outline-none sm:px-6 print:p-0">
           <div key={location.pathname} className="animate-fade-in">
             <RequestsBanner />
             <Outlet />

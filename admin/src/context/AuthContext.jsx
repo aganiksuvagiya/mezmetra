@@ -22,11 +22,6 @@ export function AuthProvider({ children }) {
   useEffect(
     () =>
       onUnauthorized(() => {
-        // A "log in as" session that ran out (they last an hour): the owner goes back to their own console, not to a sign-in page.
-        if (auth.returnToOwner()) {
-          window.location.assign('/owner');
-          return;
-        }
         setState({ status: 'anon', vendor: null, error: null, expired: true });
       }),
     [],
@@ -49,7 +44,6 @@ export function AuthProvider({ children }) {
 
   const startSession = useCallback(async (path, body) => {
     const { token, vendor } = await api(path, { method: 'POST', body, auth: false });
-    auth.forgetOwnerBackup();
     auth.setToken(token);
     setState({ status: 'authed', vendor, error: null, expired: false });
   }, []);

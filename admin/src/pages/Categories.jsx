@@ -4,19 +4,20 @@ import { Button, IconButton } from '../components/Button.jsx';
 import { Card, PageHeader } from '../components/Card.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { Alert, EmptyState, ErrorState } from '../components/EmptyState.jsx';
-import { focusFirstInvalid, Input, SearchInput, Select, SwitchField, Switch, Textarea } from '../components/Field.jsx';
+import { focusFirstInvalid, Input, SwitchField, Switch, Textarea } from '../components/Field.jsx';
+import FilterSelect from '../components/FilterSelect.jsx';
 import { PencilIcon, PlusIcon, TagIcon, TrashIcon } from '../components/icons.jsx';
 import ListSkeleton from '../components/ListSkeleton.jsx';
 import Modal from '../components/Modal.jsx';
 import Pagination from '../components/Pagination.jsx';
+import SearchBox from '../components/SearchBox.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { api, apiPage, splitFieldErrors } from '../lib/api.js';
 import { changedFields } from '../lib/forms.js';
 import { plural } from '../lib/format.js';
 import { useAction, useClampPage, useDebouncedValue, useDocumentTitle, useQuery } from '../lib/hooks.js';
 
-const PER_PAGE = 20;
-const GRID = 'md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_6rem_5rem_9.5rem]';
+const PER_PAGE = 24;
 
 function CategoryFormModal({ category, onClose, onSaved }) {
   const isEdit = Boolean(category);
@@ -167,7 +168,7 @@ export default function Categories() {
   };
 
   return (
-    <>
+    <div className="@container">
       <PageHeader
         title="Categories"
         description="Group your dishes so diners can find them quickly."
@@ -178,33 +179,64 @@ export default function Categories() {
         }
       />
 
-      <Card>
-        <div className="flex flex-col gap-3 border-b border-slate-100 p-3 sm:flex-row sm:p-4">
-          <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search categories" label="Search categories" pending={search.trim() !== term} className="sm:max-w-xs sm:flex-1" />
-          <Select label="Status" labelHidden value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} wrapperClassName="sm:w-44">
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </Select>
+      <div className="mb-4 flex flex-col gap-3 @xl:flex-row">
+        <SearchBox
+          value={search}
+          onChange={(v) => {
+            setSearch(v);
+            setPage(1);
+          }}
+          placeholder="Search categories"
+          className="@xl:max-w-md"
+        />
+        <FilterSelect
+          className="@xl:w-48"
+          label="Status"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </FilterSelect>
+      </div>
+
+      {q.loading && (
+        <Card>
+          <ListSkeleton label="Loading categories" />
+        </Card>
+      )}
+      {!q.loading && !rows && (
+        <Card>
+          <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load categories" />
+        </Card>
+      )}
+
+      {rows && q.error && (
+        <div className="mb-3">
+          <Alert tone="warning">Couldn&rsquo;t refresh the list: {q.error.message}</Alert>
         </div>
+      )}
 
-        {q.loading && <ListSkeleton label="Loading categories" />}
-        {!q.loading && !rows && <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load categories" />}
-
-        {rows && q.error && (
-          <div className="px-4 pt-3">
-            <Alert tone="warning">Couldn&rsquo;t refresh the list: {q.error.message}</Alert>
-          </div>
-        )}
-
-        {rows && rows.length === 0 && (
+      {rows && rows.length === 0 && (
+        <Card>
           <EmptyState
             icon={TagIcon}
             title={filtered ? 'No categories match' : 'No categories yet'}
             message={filtered ? 'Try a different search or status filter.' : 'Create your first category, like Starters or Desserts, then add dishes to it.'}
             action={
               filtered ? (
-                <Button variant="secondary" onClick={() => { setSearch(''); setStatus(''); setPage(1); }}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearch('');
+                    setStatus('');
+                    setPage(1);
+                  }}
+                >
                   Clear filters
                 </Button>
               ) : (
@@ -214,53 +246,40 @@ export default function Categories() {
               )
             }
           />
-        )}
+        </Card>
+      )}
 
-        {rows && rows.length > 0 && (
-          <>
-            <div aria-hidden="true" className={`hidden gap-4 border-b border-slate-100 bg-slate-50 px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid ${GRID}`}>
-              <span>Name</span>
-              <span>Description</span>
-              <span>Status</span>
-              <span>Items</span>
-              <span className="text-right">Actions</span>
-            </div>
-            <ul className="divide-y divide-slate-100">
-              {rows.map((c) => (
-                <li key={c.id} className={`grid gap-x-4 gap-y-2 px-4 py-3.5 sm:px-5 md:items-center ${GRID}`}>
-                  <div className="flex min-w-0 items-center justify-between gap-3 md:block">
+      {rows && rows.length > 0 && (
+        <>
+          <ul className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4">
+            {rows.map((c) => (
+              <li key={c.id} className="flex flex-col rounded-2xl border border-black/[0.05] bg-white p-4">
+                <div className="flex items-start gap-3">
+                  <span className={`grid size-11 shrink-0 place-items-center rounded-xl ${c.is_active ? 'bg-brand-100/70 text-brand-700' : 'bg-slate-100 text-slate-400'}`}>
+                    <TagIcon size={20} />
+                  </span>
+                  <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold text-slate-900" title={c.name}>
                       {c.name}
                     </p>
-                    <span className="md:hidden">
-                      <ActiveBadge active={c.is_active} />
-                    </span>
+                    <p className="text-sm text-slate-500">{plural(c.item_count, 'item')}</p>
                   </div>
-                  <p className="line-clamp-2 min-w-0 text-sm text-slate-500">{c.description || <span className="text-slate-400">No description</span>}</p>
-                  <span className="hidden md:block">
-                    <ActiveBadge active={c.is_active} />
-                  </span>
-                  <p className="text-sm text-slate-600">{plural(c.item_count, 'item')}</p>
-                  <div className="flex items-center justify-between gap-1 md:justify-end">
-                    <Switch
-                      checked={c.is_active}
-                      onChange={() => toggleActive(c)}
-                      busy={togglingIds.has(c.id)}
-                      ariaLabel={`Active: ${c.name}`}
-                      className="mr-1"
-                    />
-                    <div className="flex items-center">
-                      <IconButton label={`Edit ${c.name}`} icon={PencilIcon} onClick={() => setEditing(c)} />
-                      <IconButton label={`Delete ${c.name}`} icon={TrashIcon} variant="danger" onClick={() => setDeleting(c)} />
-                    </div>
+                  <ActiveBadge active={c.is_active} />
+                </div>
+                <p className="mt-3 line-clamp-2 min-h-10 text-sm text-slate-500">{c.description || <span className="text-slate-400">No description</span>}</p>
+                <div className="mt-3 flex items-center justify-between gap-1 border-t border-slate-100 pt-3">
+                  <Switch checked={c.is_active} onChange={() => toggleActive(c)} busy={togglingIds.has(c.id)} ariaLabel={`Active: ${c.name}`} />
+                  <div className="flex items-center">
+                    <IconButton label={`Edit ${c.name}`} icon={PencilIcon} onClick={() => setEditing(c)} />
+                    <IconButton label={`Delete ${c.name}`} icon={TrashIcon} variant="danger" onClick={() => setDeleting(c)} />
                   </div>
-                </li>
-              ))}
-            </ul>
-            <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} />
-          </>
-        )}
-      </Card>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} className="mt-2 border-t-0 px-1" />
+        </>
+      )}
 
       {editing && <CategoryFormModal category={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={q.reload} />}
 
@@ -282,6 +301,6 @@ export default function Categories() {
           await q.reload();
         }}
       />
-    </>
+    </div>
   );
 }

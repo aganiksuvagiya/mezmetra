@@ -10,7 +10,7 @@ import { writeReceipt } from '../lib/receipt.js';
 import { UPI_REFERENCE_RE } from '../lib/upi.js';
 
 const listSchema = z.object({
-  status: z.enum(['pending', 'accepted', 'completed', 'cancelled', 'active']).optional(),
+  status: z.enum(['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled', 'active']).optional(),
   payment: z.enum(['paid', 'unpaid']).optional(),
   q: z.string().trim().max(30).optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -40,6 +40,9 @@ export function ordersRouter(db) {
     const where = ['o.vendor_id = $1'];
     const params = [req.vendorId];
     if (q.status === 'active') where.push(`o.status IN ('pending', 'accepted')`);
+    // "preparing" and "ready" are the two halves of an accepted order: the kitchen has not, or has, marked it ready.
+    else if (q.status === 'preparing') where.push(`o.status = 'accepted' AND o.ready_at IS NULL`);
+    else if (q.status === 'ready') where.push(`o.status = 'accepted' AND o.ready_at IS NOT NULL`);
     else if (q.status) {
       params.push(q.status);
       where.push(`o.status = $${params.length}`);
@@ -70,6 +73,25 @@ export function ordersRouter(db) {
     res.json({
       data: rows.map((r) => adminOrderOut(r, items.get(r.id) ?? [])),
       meta: { page: q.page, per_page: q.per_page, total: total.rows[0].n },
+    });
+  });
+
+  // How many orders are in each state, for the figures and tabs above the list. (Before /:id, which would read "counts" as an id.)
+  router.get('/counts', async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT count(*) AS total,
+              count(*) FILTER (WHERE status = 'pending') AS pending,
+              count(*) FILTER (WHERE status = 'accepted' AND ready_at IS NULL) AS preparing,
+              count(*) FILTER (WHERE status = 'accepted' AND ready_at IS NOT NULL) AS ready,
+              count(*) FILTER (WHERE status = 'completed') AS completed,
+              count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+         FROM orders WHERE vendor_id = $1`,
+      [req.vendorId],
+    );
+    const r = rows[0];
+    const n = (v) => Number(v);
+    res.json({
+      data: { all: n(r.total), pending: n(r.pending), preparing: n(r.preparing), ready: n(r.ready), completed: n(r.completed), cancelled: n(r.cancelled), active: n(r.pending) + n(r.preparing) + n(r.ready) },
     });
   });
 

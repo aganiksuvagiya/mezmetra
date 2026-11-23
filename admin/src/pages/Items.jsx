@@ -1,34 +1,110 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ActiveBadge, Badge } from '../components/Badge.jsx';
 import DietMark from '../components/DietMark.jsx';
 import { Button, IconButton } from '../components/Button.jsx';
 import { Card, PageHeader } from '../components/Card.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { Alert, EmptyState, ErrorState } from '../components/EmptyState.jsx';
-import { SearchInput, Select, Switch } from '../components/Field.jsx';
+import FilterSelect from '../components/FilterSelect.jsx';
+import { Switch } from '../components/Field.jsx';
 import { ImageIcon, ListIcon, PencilIcon, PlusIcon, StarIcon, TrashIcon } from '../components/icons.jsx';
 import ListSkeleton from '../components/ListSkeleton.jsx';
 import Pagination from '../components/Pagination.jsx';
+import SearchBox from '../components/SearchBox.jsx';
+import { panelId, tabId, Tabs } from '../components/Tabs.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { api, apiPage, apiUrl } from '../lib/api.js';
+import { cx } from '../lib/cx.js';
 import { useClampPage, useDebouncedValue, useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import ItemFormModal from './items/ItemFormModal.jsx';
 
-const PER_PAGE = 20;
-const GRID = 'md:grid-cols-[3rem_minmax(0,3fr)_minmax(0,1.4fr)_5.5rem_6rem_10.5rem]';
+const PER_PAGE = 24;
+const ALL = 'all';
 
-function Thumb({ item }) {
+/** The dish photo, or a quiet placeholder when it has none (or it fails to load). */
+function Photo({ item }) {
   const [failed, setFailed] = useState(false);
+  if (item.photo_url && !failed) {
+    return <img src={apiUrl(item.photo_url)} alt="" loading="lazy" onError={() => setFailed(true)} className="size-full object-cover" />;
+  }
   return (
-    <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-slate-400">
-      {item.photo_url && !failed ? (
-        <img src={apiUrl(item.photo_url)} alt="" loading="lazy" onError={() => setFailed(true)} className="size-full object-cover" />
-      ) : (
-        <ImageIcon size={20} />
-      )}
-    </div>
+    <span className="grid size-full place-items-center text-slate-300">
+      <ImageIcon size={36} />
+    </span>
+  );
+}
+
+function ItemCard({ item, busy, fmt, onPatch, onEdit, onDelete }) {
+  const soldOut = item.is_active && item.is_sold_out;
+  return (
+    <li className="flex flex-col rounded-2xl border border-black/[0.05] bg-white p-2">
+      <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">
+        <div className={cx('size-full', !item.is_active && 'opacity-50 grayscale')}>
+          <Photo key={item.photo_url ?? 'none'} item={item} />
+        </div>
+        {item.diet && (
+          <span className="absolute left-2 top-2 inline-flex rounded-md bg-white p-0.5 shadow-sm">
+            <DietMark diet={item.diet} size={14} />
+          </span>
+        )}
+        <button
+          type="button"
+          aria-pressed={item.is_featured}
+          aria-label={`Feature ${item.name}`}
+          title={item.is_featured ? 'Featured: tap to remove' : 'Feature this dish'}
+          disabled={busy}
+          onClick={() => onPatch(item, { is_featured: !item.is_featured }, item.is_featured ? `${item.name} is no longer featured.` : `${item.name} is now featured.`)}
+          className={cx(
+            'absolute right-2 top-2 grid size-9 place-items-center rounded-full bg-white shadow-sm transition-colors disabled:opacity-50',
+            item.is_featured ? 'text-amber-500' : 'text-slate-400 hover:text-slate-700',
+          )}
+        >
+          <StarIcon size={16} filled={item.is_featured} />
+        </button>
+        {(soldOut || !item.is_active) && (
+          <span className={cx('absolute inset-x-0 bottom-0 py-1 text-center text-xs font-semibold text-white', soldOut ? 'bg-amber-600/90' : 'bg-slate-800/75')}>
+            {soldOut ? 'Sold out' : 'Unavailable'}
+          </span>
+        )}
+      </div>
+
+      <div className="flex-1 px-1.5 pt-2.5">
+        <p className="truncate text-sm font-semibold text-slate-900" title={item.name}>
+          {item.name}
+        </p>
+        <p className="truncate text-xs text-slate-500" title={item.category_name}>
+          {item.category_name}
+        </p>
+        <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">{fmt.money(item.price)}</p>
+        <button
+          type="button"
+          aria-pressed={item.is_sold_out}
+          aria-label={`Sold out: ${item.name}`}
+          disabled={busy}
+          onClick={() => onPatch(item, { is_sold_out: !item.is_sold_out }, item.is_sold_out ? `${item.name} is back in stock.` : `${item.name} is marked sold out.`)}
+          className={cx(
+            'mt-2 inline-flex h-8 items-center rounded-full px-3 text-xs font-semibold ring-1 ring-inset disabled:opacity-50',
+            item.is_sold_out ? 'bg-amber-100 text-amber-900 ring-amber-300 hover:bg-amber-200' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50',
+          )}
+        >
+          {item.is_sold_out ? 'Back in stock' : 'Mark sold out'}
+        </button>
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-1 border-t border-slate-100 px-1 pt-2">
+        <Switch
+          checked={item.is_active}
+          busy={busy}
+          onChange={() => onPatch(item, { is_active: !item.is_active }, `${item.name} is now ${item.is_active ? 'unavailable' : 'available'}.`)}
+          ariaLabel={`Available: ${item.name}`}
+        />
+        <div className="flex items-center">
+          <IconButton label={`Edit ${item.name}`} icon={PencilIcon} onClick={() => onEdit(item)} />
+          <IconButton label={`Delete ${item.name}`} icon={TrashIcon} variant="danger" onClick={() => onDelete(item)} />
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -65,6 +141,7 @@ export default function Items() {
       await api(`/api/admin/items/${item.id}`, { method: 'PATCH', body });
       toast.success(successMessage);
       await q.reload();
+      cats.reload();
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -99,8 +176,15 @@ export default function Items() {
     setPage(1);
   };
 
+  // One tab per category, with how many dishes it holds; the first tab is every dish.
+  const tabs = [
+    { value: ALL, label: 'All', count: cats.data ? categories.reduce((sum, c) => sum + Number(c.item_count ?? 0), 0) : undefined },
+    ...categories.map((c) => ({ value: String(c.id), label: c.name, count: c.item_count })),
+  ];
+  const tab = categoryId === '' ? ALL : String(categoryId);
+
   return (
-    <>
+    <div className="@container">
       <PageHeader
         title="Menu items"
         description="The dishes diners see when they scan a table’s QR code."
@@ -135,142 +219,106 @@ export default function Items() {
         </Alert>
       )}
 
-      <Card>
-        <div className="grid gap-3 border-b border-slate-100 p-3 sm:grid-cols-[minmax(0,1fr)_12rem_10rem] sm:p-4">
-          <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search dishes" label="Search dishes" pending={search.trim() !== term} />
-          <Select label="Category" labelHidden value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setPage(1); }}>
-            <option value="">All categories</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          <Select label="Status" labelHidden value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-            <option value="">All statuses</option>
-            <option value="active">Available</option>
-            <option value="inactive">Unavailable</option>
-            <option value="sold_out">Sold out</option>
-          </Select>
-        </div>
+      <div className="mb-3 flex flex-col gap-3 @xl:flex-row">
+        <SearchBox
+          value={search}
+          onChange={(v) => {
+            setSearch(v);
+            setPage(1);
+          }}
+          placeholder="Search dishes"
+          className="@xl:max-w-md"
+        />
+        <FilterSelect
+          className="@xl:w-48"
+          label="Status"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          <option value="active">Available</option>
+          <option value="inactive">Unavailable</option>
+          <option value="sold_out">Sold out</option>
+        </FilterSelect>
+      </div>
 
-        {q.loading && <ListSkeleton label="Loading menu items" />}
-        {!q.loading && !rows && <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load menu items" />}
+      {categories.length > 0 && (
+        <Tabs
+          idBase="items"
+          label="Menu category"
+          tabs={tabs}
+          value={tab}
+          onChange={(value) => {
+            setCategoryId(value === ALL ? '' : value);
+            setPage(1);
+          }}
+          className="mb-4"
+        />
+      )}
+
+      <div role="tabpanel" id={panelId('items', tab)} aria-labelledby={tabId('items', tab)}>
+        {q.loading && (
+          <Card>
+            <ListSkeleton label="Loading menu items" />
+          </Card>
+        )}
+        {!q.loading && !rows && (
+          <Card>
+            <ErrorState error={q.error} onRetry={q.reload} title="Couldn't load menu items" />
+          </Card>
+        )}
 
         {rows && q.error && (
-          <div className="px-4 pt-3">
+          <div className="mb-3">
             <Alert tone="warning">Couldn&rsquo;t refresh the list: {q.error.message}</Alert>
           </div>
         )}
 
         {rows && rows.length === 0 && (
-          <EmptyState
-            icon={ListIcon}
-            title={filtered ? 'No dishes match' : 'No dishes yet'}
-            message={filtered ? 'Try a different search or clear the filters.' : 'Add your first dish to start building the menu.'}
-            action={
-              filtered ? (
-                <Button variant="secondary" onClick={clearFilters}>
-                  Clear filters
-                </Button>
-              ) : (
-                <Button icon={PlusIcon} disabled={noCategories} onClick={() => setEditing('new')}>
-                  Add item
-                </Button>
-              )
-            }
-          />
+          <Card>
+            <EmptyState
+              icon={ListIcon}
+              title={filtered ? 'No dishes match' : 'No dishes yet'}
+              message={filtered ? 'Try a different search or clear the filters.' : 'Add your first dish to start building the menu.'}
+              action={
+                filtered ? (
+                  <Button variant="secondary" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                ) : (
+                  <Button icon={PlusIcon} disabled={noCategories} onClick={() => setEditing('new')}>
+                    Add item
+                  </Button>
+                )
+              }
+            />
+          </Card>
         )}
 
         {rows && rows.length > 0 && (
           <>
-            <div aria-hidden="true" className={`hidden gap-4 border-b border-slate-100 bg-slate-50 px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid ${GRID}`}>
-              <span />
-              <span>Item</span>
-              <span>Category</span>
-              <span>Price</span>
-              <span>Status</span>
-              <span className="text-right">Actions</span>
-            </div>
-            <ul className="divide-y divide-slate-100">
-              {rows.map((item) => {
-                const busy = busyIds.has(item.id);
-                return (
-                  <li key={item.id} className={`grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3.5 sm:px-5 md:items-center md:gap-x-4 ${GRID}`}>
-                    <Thumb key={item.photo_url ?? 'none'} item={item} />
-                    <div className="min-w-0">
-                      <p className="flex items-center gap-1.5 font-semibold text-slate-900">
-                        <DietMark diet={item.diet} />
-                        <span className="truncate" title={item.name}>
-                          {item.name}
-                        </span>
-                        {item.is_featured && (
-                          <>
-                            <StarIcon size={14} filled className="text-amber-500" />
-                            <span className="sr-only">Featured</span>
-                          </>
-                        )}
-                      </p>
-                      {item.description && <p className="line-clamp-1 text-sm text-slate-500">{item.description}</p>}
-                      <button
-                        type="button"
-                        aria-pressed={item.is_sold_out}
-                        aria-label={`Sold out: ${item.name}`}
-                        disabled={busy}
-                        onClick={() =>
-                          patchItem(item, { is_sold_out: !item.is_sold_out }, item.is_sold_out ? `${item.name} is back in stock.` : `${item.name} is marked sold out.`)
-                        }
-                        className={`mt-1.5 inline-flex h-8 items-center rounded-full px-3 text-xs font-semibold ring-1 ring-inset disabled:opacity-50 ${
-                          item.is_sold_out ? 'bg-amber-100 text-amber-900 ring-amber-300 hover:bg-amber-200' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        {item.is_sold_out ? 'Sold out · tap for back in stock' : 'Mark sold out'}
-                      </button>
-                    </div>
-                    <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600 md:contents">
-                      <span className="truncate" title={item.category_name}>
-                        {item.category_name}
-                      </span>
-                      <span className="font-semibold text-slate-900 tabular-nums">{fmt.money(item.price)}</span>
-                      <span>
-                        {item.is_active && item.is_sold_out ? <Badge tone="amber">Sold out</Badge> : <ActiveBadge active={item.is_active} on="Available" off="Unavailable" />}
-                      </span>
-                    </div>
-                    <div className="col-span-2 flex items-center justify-between gap-1 md:col-span-1 md:justify-end">
-                      <Switch
-                        checked={item.is_active}
-                        busy={busy}
-                        onChange={() => patchItem(item, { is_active: !item.is_active }, `${item.name} is now ${item.is_active ? 'unavailable' : 'available'}.`)}
-                        ariaLabel={`Available: ${item.name}`}
-                      />
-                      <div className="flex items-center">
-                        <IconButton
-                          label={`Feature ${item.name}`}
-                          icon={StarIcon}
-                          variant={item.is_featured ? 'starOn' : 'default'}
-                          aria-pressed={item.is_featured}
-                          disabled={busy}
-                          onClick={() => patchItem(item, { is_featured: !item.is_featured }, item.is_featured ? `${item.name} is no longer featured.` : `${item.name} is now featured.`)}
-                        />
-                        <IconButton label={`Edit ${item.name}`} icon={PencilIcon} onClick={() => setEditing(item)} />
-                        <IconButton label={`Delete ${item.name}`} icon={TrashIcon} variant="danger" onClick={() => setDeleting(item)} />
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
+            <ul className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @4xl:grid-cols-4 @6xl:grid-cols-5">
+              {rows.map((item) => (
+                <ItemCard key={item.id} item={item} busy={busyIds.has(item.id)} fmt={fmt} onPatch={patchItem} onEdit={setEditing} onDelete={setDeleting} />
+              ))}
             </ul>
-            <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} />
+            <Pagination page={page} perPage={PER_PAGE} total={total} onPageChange={setPage} className="mt-2 border-t-0 px-1" />
           </>
         )}
-      </Card>
+      </div>
 
       {editing && (
         <ItemFormModal
           item={editing === 'new' ? null : editing}
           categories={categories}
           onClose={() => setEditing(null)}
-          onSaved={q.reload}
+          onSaved={() => {
+            q.reload();
+            cats.reload();
+          }}
         />
       )}
 
@@ -285,8 +333,9 @@ export default function Items() {
           toast.success(`${deleting.name} deleted.`);
           setDeleting(null);
           await q.reload();
+          cats.reload();
         }}
       />
-    </>
+    </div>
   );
 }

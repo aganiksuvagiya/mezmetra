@@ -50,6 +50,102 @@
   100% { background-color: transparent; }
 }
 
+/*
+ * The kitchen screen's look: system fonts and the system palette, in the manner of Apple's own apps (grouped grey background, white cards with
+ * large rounded corners, hairline separators, tinted capsules, filled system-blue buttons). Everything that changes between the light and the
+ * dark look is a variable here, so the page itself uses one set of classes.
+ */
+.kitchen,
+.sys {
+  --k-bg: #f2f2f7;
+  --k-bar: rgba(242, 242, 247, 0.8);
+  --k-card: #ffffff;
+  --k-fill: rgba(120, 120, 128, 0.12);
+  --k-thumb: #ffffff;
+  --k-label: #1c1c1e;
+  --k-label2: #6c6c70;
+  --k-label3: #8e8e93;
+  --k-sep: rgba(60, 60, 67, 0.14);
+  /* Bright system colours for dots; the -t ones are for text and the -f ones for fills that carry white text (each reaches 4.5:1 on its ground). */
+  --k-blue: #0071e3;
+  --k-blue-f: #0071e3;
+  --k-green: #34c759;
+  --k-green-t: #1f7a35;
+  --k-green-f: #1f7a35;
+  --k-orange: #ff9500;
+  --k-orange-t: #b25000;
+  --k-red: #ff3b30;
+  --k-red-t: #d70015;
+  --k-red-f: #d70015;
+  --k-note-bg: #fff6cc;
+  --k-note-fg: #5b4700;
+  --k-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 28px -12px rgba(0, 0, 0, 0.12);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.011em;
+  color: var(--k-label);
+  background: var(--k-bg);
+}
+.kitchen[data-look="dark"] {
+  --k-bg: #000000;
+  --k-bar: rgba(0, 0, 0, 0.72);
+  --k-card: #1c1c1e;
+  --k-fill: rgba(120, 120, 128, 0.32);
+  --k-thumb: #636366;
+  --k-label: #ffffff;
+  --k-label2: rgba(235, 235, 245, 0.62);
+  --k-label3: rgba(235, 235, 245, 0.4);
+  --k-sep: rgba(84, 84, 88, 0.65);
+  --k-blue: #0a84ff;
+  --k-blue-f: #0a6cdc;
+  --k-green: #30d158;
+  --k-green-t: #30d158;
+  --k-green-f: #1f7a35;
+  --k-orange: #ff9500;
+  --k-orange-t: #ff9f0a;
+  --k-red: #ff453a;
+  --k-red-t: #ff453a;
+  --k-red-f: #d70015;
+  --k-note-bg: #3a3416;
+  --k-note-fg: #f3e3a0;
+  --k-shadow: none;
+}
+.k-bar { background: var(--k-bar); border-bottom: 0.5px solid var(--k-sep); -webkit-backdrop-filter: saturate(180%) blur(22px); backdrop-filter: saturate(180%) blur(22px); }
+.k-card { background: var(--k-card); box-shadow: var(--k-shadow); }
+.k-surface { background: var(--k-card); }
+.k-shadow { box-shadow: var(--k-shadow); }
+.k-fill { background: var(--k-fill); }
+.k-thumb { background: var(--k-thumb); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.04); }
+.k-l1 { color: var(--k-label); }
+.k-l2 { color: var(--k-label2); }
+.k-l3 { color: var(--k-label3); }
+.k-sep-b { border-bottom: 0.5px solid var(--k-sep); }
+.k-sep-t { border-top: 0.5px solid var(--k-sep); }
+.k-divide > * + * { border-top: 0.5px solid var(--k-sep); }
+.k-grid-lines { background: var(--k-sep); }
+.k-note { background: var(--k-note-bg); color: var(--k-note-fg); }
+.k-blue { color: var(--k-blue); }
+.k-green { color: var(--k-green-t); }
+.k-orange { color: var(--k-orange-t); }
+.k-red { color: var(--k-red-t); }
+.k-bg-blue { background: var(--k-blue); }
+.k-bg-green { background: var(--k-green); }
+.k-bg-orange { background: var(--k-orange); }
+.k-bg-red { background: var(--k-red); }
+.k-fill-blue { background: var(--k-blue-f); }
+.k-fill-green { background: var(--k-green-f); }
+.k-fill-red { background: var(--k-red-f); }
+.k-pill-gray { background: var(--k-fill); color: var(--k-label2); }
+.k-pill-orange { background: color-mix(in srgb, var(--k-orange) 16%, transparent); color: var(--k-orange-t); }
+.k-pill-red { background: color-mix(in srgb, var(--k-red) 16%, transparent); color: var(--k-red-t); }
+.k-pill-green { background: color-mix(in srgb, var(--k-green) 18%, transparent); color: var(--k-green-t); }
+.k-pill-blue { background: color-mix(in srgb, var(--k-blue) 14%, transparent); color: var(--k-blue); }
+/* A new ticket is ringed in blue for a moment, like a focused field fading out. */
+@keyframes k-fresh {
+  0% { box-shadow: var(--k-shadow), 0 0 0 3px color-mix(in srgb, var(--k-blue) 60%, transparent); }
+  100% { box-shadow: var(--k-shadow), 0 0 0 3px transparent; }
+}
+.k-fresh { animation: k-fresh 2.6s ease-out both; }
+
 @layer base {
   *, ::after, ::before, ::backdrop, ::file-selector-button {
     border-color: var(--color-slate-200);
@@ -60,7 +156,7 @@
   }
   body {
     margin: 0;
-    background-color: var(--color-slate-100);
+    background-color: #eeeef0;
     color: var(--color-slate-800);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
