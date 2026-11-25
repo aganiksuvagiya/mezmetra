@@ -461,7 +461,15 @@ function PaymentsForm({ settings, onSaved }) {
               inputMode="email"
               hint="Find it in your UPI app under your profile. Diners see it when they pay."
             />
-            <UpiQrBox initialUrl={settings.upi_qr_url} />
+            <UpiQrBox
+              initialUrl={settings.upi_qr_url}
+              upiId={upiId}
+              onUseUpiId={(id) => {
+                setUpiId(id);
+                setErrors((p) => ({ ...p, upiId: undefined }));
+                clearFeedback();
+              }}
+            />
             <SwitchField
               label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
               description="Turn this on only if your UPI ID is a business ID that accepts payment links (some bank business IDs do). A PhonePe Business or Paytm for Business ID does not: upload its QR above instead. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID."
