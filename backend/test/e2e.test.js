@@ -1523,9 +1523,24 @@ describe('UPI app buttons (off by default)', () => {
     assert.ok(off.upi.query, 'the link still exists, for the QR code');
     assert.equal(off.upi.vpa, 'buttons.cafe@okaxis');
 
+    // A personal UPI ID's link carries no merchant-only parameters.
+    const personal = new URLSearchParams(off.upi.query);
+    assert.equal(personal.get('mc'), null);
+    assert.equal(personal.get('tr'), null);
+
     const set = await put({ upi_pay_buttons: true });
     assert.equal(set.body.data.upi_pay_buttons, true);
-    assert.equal((await order()).upi.pay_buttons, true);
+    const business = (await order()).upi;
+    assert.equal(business.pay_buttons, true);
+    // A business UPI ID is paid as a merchant: without the category code and a reference Google Pay and PhonePe say "security reasons".
+    const q = new URLSearchParams(business.query);
+    assert.equal(q.get('mc'), '5812');
+    assert.match(q.get('tr'), /^MZ\d+$/, 'one reference per order, letters and digits only');
+    assert.equal(q.get('pa'), 'buttons.cafe@okaxis');
+    assert.equal(q.get('cu'), 'INR');
+    assert.match(q.get('am'), /^\d+\.\d{2}$/);
+    const another = new URLSearchParams((await order()).upi?.query ?? '');
+    assert.notEqual(another.get('tr') ?? 'x', q.get('tr'), 'a different order gets a different reference');
     assert.equal((await put({ upi_pay_buttons: 'yes' })).status, 400);
     assert.equal((await put({ upi_pay_buttons: false })).body.data.upi_pay_buttons, false);
     assert.equal((await order()).upi.pay_buttons, false);

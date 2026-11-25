@@ -125,7 +125,8 @@ export function publicRouter(db, { orderLimiter }) {
       upi: payable
         ? {
             vpa: settings.upi_id,
-            // Whether to show the Google Pay / PhonePe / Paytm buttons (off for a personal UPI ID: the apps refuse such links).
+            // Whether to show the Google Pay / PhonePe / Paytm buttons, which also marks the ID as a business (merchant) one: the link then
+            // carries the merchant category code and a transaction reference. Off for a personal UPI ID (the apps refuse such links).
             pay_buttons: Boolean(settings.upi_pay_buttons),
             payee_name: vendor.rows[0].name,
             amount: toRupees(order.total_paise),
@@ -134,6 +135,9 @@ export function publicRouter(db, { orderLimiter }) {
               payeeName: vendor.rows[0].name,
               amountPaise: order.total_paise,
               note: `Table ${order.table_number} order`,
+              // A business UPI ID (the restaurant turned the app buttons on) is paid as a merchant: it needs `mc` and `tr`.
+              merchant: Boolean(settings.upi_pay_buttons),
+              reference: `MZ${order.id}`,
             }),
           }
         : null,
