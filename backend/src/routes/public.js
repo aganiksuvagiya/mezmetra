@@ -125,9 +125,12 @@ export function publicRouter(db, { orderLimiter }) {
       upi: payable
         ? {
             vpa: settings.upi_id,
+            // The restaurant's own UPI QR image, when it has uploaded one. A business ID from PhonePe Business / Paytm for Business
+            // accepts money only through that QR, so the diner is shown it instead of a payment link or the app buttons.
+            qr_url: settings.has_upi_qr ? `/api/public/vendors/${order.vendor_id}/upi-qr?v=${settings.upi_qr_version}` : null,
             // Whether to show the Google Pay / PhonePe / Paytm buttons, which also marks the ID as a business (merchant) one: the link then
             // carries the merchant category code and a transaction reference. Off for a personal UPI ID (the apps refuse such links).
-            pay_buttons: Boolean(settings.upi_pay_buttons),
+            pay_buttons: Boolean(settings.upi_pay_buttons) && !settings.has_upi_qr,
             payee_name: vendor.rows[0].name,
             amount: toRupees(order.total_paise),
             query: upiQuery({
@@ -186,6 +189,20 @@ export function publicRouter(db, { orderLimiter }) {
     res.set({
       'Content-Type': rows[0].mime,
       // The URL carries ?v=<logo_version>, so a changed logo always has a new URL.
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.send(Buffer.from(rows[0].data));
+  });
+
+  // The restaurant's own UPI QR image, shown on the order page while it pays by UPI.
+  router.get('/vendors/:id/upi-qr', async (req, res) => {
+    if (!/^\d{1,18}$/.test(req.params.id)) throw notFound('QR code');
+    const { rows } = await db.query(`SELECT mime, data FROM vendor_upi_qr WHERE vendor_id = $1`, [req.params.id]);
+    if (!rows[0]) throw notFound('QR code');
+    res.set({
+      'Content-Type': rows[0].mime,
+      // The URL carries ?v=<upi_qr_version>, so a changed QR always has a new URL.
       'Cache-Control': 'public, max-age=31536000, immutable',
       'X-Content-Type-Options': 'nosniff',
     });

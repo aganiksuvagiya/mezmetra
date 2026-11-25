@@ -1499,6 +1499,72 @@ describe('UPI needs a UPI ID', () => {
   });
 });
 
+describe("the restaurant's own UPI QR (PhonePe Business / Paytm for Business accept money only through it)", () => {
+  let token;
+  let qr;
+  let itemId;
+  let vendorId;
+  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
+  const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+  const upload = (raw, type = 'image/png') => api('PUT', '/api/admin/payment-settings/upi-qr', { token, raw, headers: { 'Content-Type': type } });
+
+  before(async () => {
+    const su = await signupAccount({ name: 'Merchant QR Cafe', email: 'merchant.qr@example.test', password: 'a-long-enough-password' });
+    token = su.body.data.token;
+    vendorId = (await api('GET', '/api/auth/me', { token })).body.data.id;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'Q1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    assert.equal((await put({ upi_enabled: true, upi_id: 'merchant.qr@ybl', upi_pay_buttons: true })).status, 200);
+  });
+
+  it('has no QR to begin with, and the diner is shown the payment link and the app buttons', async () => {
+    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_qr_url, null);
+    const o = await order();
+    assert.equal(o.upi.qr_url, null);
+    assert.equal(o.upi.pay_buttons, true);
+  });
+
+  it('stores an uploaded QR, serves it publicly, and shows it to the diner instead of the app buttons', async () => {
+    const up = await upload(PNG_1X1);
+    assert.equal(up.status, 200);
+    assert.match(up.body.data.upi_qr_url, new RegExp(`^/api/public/vendors/${vendorId}/upi-qr\\?v=1$`));
+    const img = await fetch(`${base}${up.body.data.upi_qr_url}`);
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await img.arrayBuffer()), PNG_1X1);
+
+    const o = await order();
+    assert.equal(o.upi.qr_url, up.body.data.upi_qr_url, 'the diner gets the same image URL');
+    assert.equal(o.upi.pay_buttons, false, 'a link is refused for such an ID, so no app buttons while the QR is set');
+    // Replacing it changes the URL (so no stale copy is shown).
+    assert.match((await upload(PNG_1X1)).body.data.upi_qr_url, /v=2$/);
+  });
+
+  it('refuses anything that is not a JPEG, PNG or WebP image, and an empty body', async () => {
+    assert.equal((await upload(Buffer.from('not an image at all'))).status, 415);
+    assert.equal((await upload(Buffer.alloc(0))).status, 415);
+    assert.equal((await upload(PNG_1X1, 'application/pdf')).status, 415);
+    assert.equal((await api('PUT', '/api/admin/payment-settings/upi-qr', { raw: PNG_1X1, headers: { 'Content-Type': 'image/png' } })).status, 401);
+  });
+
+  it('removes the QR, so the app buttons come back and the image is gone', async () => {
+    const gone = await api('DELETE', '/api/admin/payment-settings/upi-qr', { token });
+    assert.equal(gone.status, 200);
+    assert.equal(gone.body.data.upi_qr_url, null);
+    const o = await order();
+    assert.equal(o.upi.qr_url, null);
+    assert.equal(o.upi.pay_buttons, true);
+    assert.equal((await fetch(`${base}/api/public/vendors/${vendorId}/upi-qr`)).status, 404);
+  });
+
+  it("does not show one restaurant's QR on another's order", async () => {
+    await upload(PNG_1X1);
+    const other = (await signupAccount({ name: 'Other QR Cafe', email: 'other.qr@example.test', password: 'a-long-enough-password' })).body.data.token;
+    assert.equal((await api('GET', '/api/admin/payment-settings', { token: other })).body.data.upi_qr_url, null);
+  });
+});
+
 describe('UPI app buttons (off by default)', () => {
   let token;
   let qr;

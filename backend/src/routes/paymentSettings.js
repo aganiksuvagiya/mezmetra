@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { HttpError, conflict, parse } from '../lib/errors.js';
@@ -8,9 +8,13 @@ import { GATEWAYS } from '../lib/gateways.js';
 import { CLIENT_ID_RE, CLIENT_VERSION_RE, phonepeWebhookAuth, pingPhonepe } from '../lib/phonepe.js';
 import { MERCHANT_KEY_LENGTH, MID_RE, pingPaytm, WEBSITE_RE } from '../lib/paytm.js';
 import { pingRazorpay } from '../lib/razorpay.js';
+import { detectImageMime, IMAGE_TYPES } from '../lib/image.js';
 import { VPA_RE } from '../lib/upi.js';
 
 const KEY_ID = /^rzp_(test|live)_[A-Za-z0-9]{6,40}$/;
+
+// The restaurant's own UPI QR: a screenshot or photo, so a megabyte is plenty (the admin shrinks it first).
+const MAX_QR_BYTES = 1024 * 1024;
 
 const putSchema = z.object({
   cash_enabled: z.boolean().optional(),
@@ -54,6 +58,8 @@ const out = (s, apiBase = '') => ({
   upi_enabled: s.upi_enabled,
   upi_id: s.upi_id,
   upi_pay_buttons: s.upi_pay_buttons,
+  // The restaurant's own UPI QR image (see migration 025), or null. The ?v= makes a replaced image a new URL.
+  upi_qr_url: s.has_upi_qr ? `/api/public/vendors/${s.vendor_id}/upi-qr?v=${s.upi_qr_version}` : null,
   razorpay_enabled: s.razorpay_enabled,
   razorpay_key_id: s.razorpay_key_id,
   razorpay_secret_set: Boolean(s.razorpay_key_secret_enc),
@@ -191,6 +197,43 @@ export function paymentSettingsRouter(db) {
           req.vendorId, cashEnabled, razorpayEnabled, keyId, secretEnc, upiEnabled, upiId, upiPayButtons, cashfreeEnabled, cfAppId, cfSecretEnc,
           ppEnabled, ppClientId, ppVersion, ppSecretEnc, ppEnv, ptEnabled, ptMid, ptKeyEnc, ptWebsite, ptEnv, rzWebhookEnc, ppWebhookEnc,
         ],
+      );
+      return rows[0];
+    });
+    res.json({ data: out(saved, apiBaseOf(req)) });
+  });
+
+  // The restaurant's own UPI QR (PhonePe Business / Paytm for Business accept money only through it): send the raw image bytes as
+  // the body with Content-Type image/jpeg|png|webp.
+  router.put('/upi-qr', express.raw({ type: IMAGE_TYPES, limit: MAX_QR_BYTES }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'Send a JPEG, PNG or WebP image as the request body');
+    }
+    const mime = detectImageMime(req.body);
+    if (!mime) throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'File is not a valid JPEG, PNG or WebP image');
+    const saved = await db.tx(async (t) => {
+      await loadSettings(t, req.vendorId);
+      await t.query(
+        `INSERT INTO vendor_upi_qr (vendor_id, mime, data) VALUES ($1, $2, $3)
+         ON CONFLICT (vendor_id) DO UPDATE SET mime = EXCLUDED.mime, data = EXCLUDED.data`,
+        [req.vendorId, mime, req.body],
+      );
+      const { rows } = await t.query(
+        `UPDATE vendor_payment_settings SET has_upi_qr = true, upi_qr_version = upi_qr_version + 1, updated_at = now() WHERE vendor_id = $1 RETURNING *`,
+        [req.vendorId],
+      );
+      return rows[0];
+    });
+    res.json({ data: out(saved, apiBaseOf(req)) });
+  });
+
+  router.delete('/upi-qr', async (req, res) => {
+    const saved = await db.tx(async (t) => {
+      await loadSettings(t, req.vendorId);
+      await t.query(`DELETE FROM vendor_upi_qr WHERE vendor_id = $1`, [req.vendorId]);
+      const { rows } = await t.query(
+        `UPDATE vendor_payment_settings SET has_upi_qr = false, upi_qr_version = upi_qr_version + 1, updated_at = now() WHERE vendor_id = $1 RETURNING *`,
+        [req.vendorId],
       );
       return rows[0];
     });

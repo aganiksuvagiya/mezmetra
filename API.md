@@ -244,6 +244,8 @@ All take `from` and `to` (`YYYY-MM-DD`, the restaurant's own days; both default 
 ## UPI app buttons
 
 - `upi_pay_buttons` (boolean, default `false`) in `GET`/`PUT /api/admin/payment-settings`: show the Google Pay / PhonePe / Paytm buttons. Turn it on only for a business (merchant) UPI ID: Google Pay and PhonePe usually refuse these pre-filled links for a personal UPI ID ("bank limit exceeded", "security reasons").
+  A business ID's link also carries `mc=5812` (merchant category code) and `tr=MZ<order id>` (transaction reference); a personal ID's link does not.
+- The restaurant's own UPI QR: a business UPI ID from **PhonePe Business** or **Paytm for Business** accepts money only through its own QR (a payment link is answered with "as per UPI guidelines, payment through a link is not allowed for this merchant"). `PUT /api/admin/payment-settings/upi-qr` (raw image bytes, `Content-Type: image/jpeg|png|webp`, up to 1 MB; 415 for anything else) stores it, `DELETE` removes it; both return the settings, whose `upi_qr_url` is the image's address or `null`. `GET /api/public/vendors/:id/upi-qr?v=N` serves the image (public, cacheable). While a QR is saved the public order's `upi` block has `qr_url` (the diner scans it) and `pay_buttons` is `false`.
 - The public order's `upi` is `{ vpa, pay_buttons, payee_name, amount, query }`; `query` is always sent, because the order page uses it for the QR code. With the buttons off the page shows how to pay by typing the UPI ID.
 
 - `POST /api/public/orders/:token/pay/:provider` and `.../verify` (`phonepe` | `paytm`): see README, "Online payments (PhonePe and Paytm)".

@@ -3,7 +3,7 @@ import Alert from './Alert';
 import { Button, buttonClass } from './Button';
 import { CheckIcon, ClockIcon, CopyIcon, PhoneIcon } from './Icons';
 import { useToast } from './Toast';
-import { claimUpiPayment, errorMessage } from '../lib/api';
+import { assetUrl, claimUpiPayment, errorMessage } from '../lib/api';
 import { formatMoney } from '../lib/money';
 
 const REFERENCE_RE = /^[A-Za-z0-9]{6,30}$/;
@@ -63,10 +63,13 @@ export default function UpiPayment({ order, onRefresh }) {
   // hasVpa: there is a payment link to turn into a QR code. buttons: also show the Google Pay / PhonePe / Paytm buttons, which the
   // restaurant turns on only for a business UPI ID (apps refuse such links for a personal one, so by default diners pay by hand).
   const hasVpa = Boolean(upi.vpa && upi.query);
-  const buttons = Boolean(upi.pay_buttons && hasVpa);
+  // merchantQr: the restaurant's own UPI QR image. A business ID from PhonePe Business / Paytm for Business accepts money only
+  // through it (a link is refused), so then that is all the diner is shown.
+  const merchantQr = upi.qr_url ? assetUrl(upi.qr_url) : null;
+  const buttons = Boolean(upi.pay_buttons && hasVpa && !merchantQr);
   const [manualOpen, setManualOpen] = useState(!buttons && (touch || !hasVpa));
 
-  const genericLink = hasVpa ? `upi://pay?${upi.query}` : null;
+  const genericLink = hasVpa && !merchantQr ? `upi://pay?${upi.query}` : null;
 
   // When the diner comes back from the UPI app, ask whether it worked.
   useEffect(() => {
@@ -157,10 +160,14 @@ export default function UpiPayment({ order, onRefresh }) {
   return (
     <div className="mt-4 rounded-2xl bg-page p-3 ring-1 ring-line">
       <p className="flex items-center gap-2 font-extrabold text-ink">
-        <PhoneIcon className="size-5 text-link" /> {buttons ? 'Pay with a UPI app' : 'Pay by UPI'}
+        <PhoneIcon className="size-5 text-link" /> {merchantQr ? 'Pay by scanning the QR' : buttons ? 'Pay with a UPI app' : 'Pay by UPI'}
       </p>
       <p className="mt-0.5 text-sm text-ink-soft">
-        {buttons ? (
+        {merchantQr ? (
+          <>
+            Scan the restaurant&apos;s QR with any UPI app and pay exactly <strong className="text-ink">{formatMoney(upi.amount)}</strong>, then come back to this page.
+          </>
+        ) : buttons ? (
           <>
             Opens your UPI app with <strong className="text-ink">{formatMoney(upi.amount)}</strong> already filled in. Pay there, then come back to this page.
           </>
@@ -171,7 +178,26 @@ export default function UpiPayment({ order, onRefresh }) {
         )}
       </p>
 
-      {touch && buttons ? (
+      {merchantQr ? (
+        <div className="mt-3 flex flex-col items-center gap-3 text-center">
+          <div className="grid size-56 max-w-full place-items-center rounded-2xl bg-white p-2 ring-1 ring-line">
+            <img src={merchantQr} alt="The restaurant's UPI QR code" className="size-full object-contain" />
+          </div>
+          <p className="text-sm text-ink-soft">
+            <strong className="text-ink">Scan this QR code</strong> with Google Pay, PhonePe, Paytm or any UPI app on another phone, then enter the amount.
+            {touch ? ' Paying from this phone? Take a screenshot, then use “Scan from gallery” (or “Upload QR”) in your UPI app.' : ''}
+          </p>
+          <div className="flex w-full items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-left ring-1 ring-line">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-ink-soft">Amount to enter</p>
+              <p className="text-[15px] font-semibold tabular-nums text-ink">{formatMoney(upi.amount)}</p>
+            </div>
+            <button type="button" onClick={() => copy(upi.amount.toFixed(2), 'Amount')} aria-label="Copy amount" className="grid size-10 shrink-0 place-items-center rounded-lg text-link hover:bg-tint">
+              <CopyIcon className="size-4" />
+            </button>
+          </div>
+        </div>
+      ) : touch && buttons ? (
         <div className="mt-3 space-y-2">
           {ios ? (
             // iPhone: open the chosen app directly.
@@ -217,7 +243,7 @@ export default function UpiPayment({ order, onRefresh }) {
         </div>
       ) : null}
 
-      {!buttons && (
+      {!buttons && !merchantQr && (
       <details
         open={manualOpen}
         onToggle={(e) => setManualOpen(e.currentTarget.open)}

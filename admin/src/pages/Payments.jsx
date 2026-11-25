@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Badge } from '../components/Badge.jsx';
 import { Button } from '../components/Button.jsx';
+import UpiQrBox from '../components/UpiQrBox.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import { Alert, ErrorState } from '../components/EmptyState.jsx';
 import { focusFirstInvalid, Input, PasswordInput, Select, SwitchField } from '../components/Field.jsx';
@@ -460,9 +461,10 @@ function PaymentsForm({ settings, onSaved }) {
               inputMode="email"
               hint="Find it in your UPI app under your profile. Diners see it when they pay."
             />
+            <UpiQrBox initialUrl={settings.upi_qr_url} />
             <SwitchField
               label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
-              description="Turn this on only if your UPI ID is a business (merchant) ID. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID, which always works."
+              description="Turn this on only if your UPI ID is a business ID that accepts payment links (some bank business IDs do). A PhonePe Business or Paytm for Business ID does not: upload its QR above instead. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID."
               checked={payButtons}
               onChange={(v) => {
                 setPayButtons(v);
@@ -472,7 +474,7 @@ function PaymentsForm({ settings, onSaved }) {
             <Alert tone="warning">
               A plain UPI link can’t tell us whether the payment went through, so each UPI order shows “Customer says paid” and you press
               <strong> Confirm payment</strong> after you see the money in your bank or UPI app. Some UPI apps may refuse a pre-filled amount for a
-              personal UPI ID: <strong>Google Pay in particular blocks them</strong> with a “bank limit exceeded” message, while PhonePe and Paytm usually work. Diners can always pay manually (UPI ID + amount). {showRazorpay || showCashfree ? 'A merchant (business) UPI ID or online payments (below) is' : 'A merchant (business) UPI ID is'} the reliable fix.
+              personal UPI ID: <strong>Google Pay in particular blocks them</strong> with a “bank limit exceeded” message, while PhonePe and Paytm usually work. A PhonePe Business or Paytm for Business ID accepts money only through its own QR (upload it above). {showRazorpay || showCashfree ? 'Online payments (below) are' : 'An online payment gateway is'} the way to have orders marked paid by themselves.
             </Alert>
           </div>
         </Card>
