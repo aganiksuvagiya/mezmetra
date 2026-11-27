@@ -13,12 +13,11 @@ import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { api } from '../lib/api.js';
 import { formatNumber, orderItemsSummary } from '../lib/format.js';
 import { useDocumentTitle, useQuery } from '../lib/hooks.js';
-import { canTakeOrders, methodsAvailable } from '../lib/payments.js';
+import { canTakeOrders, METHOD_LABEL } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
 const REFRESH_MS = 8000;
-const METHOD_LABEL = { cash: 'Cash at counter', upi: 'UPI apps', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)' };
-const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500', razorpay: 'bg-sky-500', cashfree: 'bg-sky-500', phonepe: 'bg-sky-500', paytm: 'bg-sky-500' };
+const METHOD_BAR = { cash: 'bg-brand-500', upi: 'bg-violet-500' }; // online gateways share the blue bar
 
 function StatCard({ icon: Icon, label, value, note, to, linkLabel }) {
   return (
@@ -88,7 +87,7 @@ function PaymentSplit({ methods, days, fmt }) {
                   aria-valuetext={`${m.percent}% of paid revenue`}
                   className="h-2.5 overflow-hidden rounded-full bg-slate-100"
                 >
-                  <div className={`h-full rounded-full ${METHOD_BAR[m.method] ?? 'bg-slate-400'}`} style={{ width: `${m.percent}%` }} />
+                  <div className={`h-full rounded-full ${METHOD_BAR[m.method] ?? 'bg-sky-500'}`} style={{ width: `${m.percent}%` }} />
                 </div>
               </li>
             ))}
@@ -160,7 +159,7 @@ export default function Dashboard() {
         <div className="mb-3 @xl:mb-4">
           <Alert tone="warning">
             <strong>Diners can&rsquo;t place orders yet.</strong>{' '}
-            {methodsAvailable(pay.data).has('upi') ? 'Add your UPI ID and turn on UPI payments so they can pay.' : 'Turn on a payment method so they can pay.'}{' '}
+            Turn on a payment method so they can pay.{' '}
             <Link to="/payments" className="font-semibold text-brand-700 underline underline-offset-2">
               Set up payments
             </Link>

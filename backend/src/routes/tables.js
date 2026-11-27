@@ -137,13 +137,13 @@ export function tablesRouter(db) {
     });
   });
 
-  // One payment at the table for everything ordered so far: all its unpaid orders are marked paid together (cash, or UPI that the
-  // staff have seen arrive). Orders that come in later get their own bill.
-  const settleSchema = z.object({ method: z.enum(['cash', 'upi']) });
+  // One cash payment at the table for everything ordered so far: all its unpaid orders are marked paid together. Orders that come in
+  // later get their own bill.
+  const settleSchema = z.object({ method: z.enum(['cash']) });
   router.post('/:id/settle', async (req, res) => {
     const { method } = parse(settleSchema, req.body ?? {});
     if (!config.paymentMethods.has(method)) {
-      throw conflict('METHOD_NOT_AVAILABLE', method === 'cash' ? "Cash payments aren't available right now." : "UPI payments aren't available right now.");
+      throw conflict('METHOD_NOT_AVAILABLE', "Cash payments aren't available right now.");
     }
     const result = await db.tx(async (t) => {
       const table = await t.query(`SELECT id FROM dining_tables WHERE id = $1 AND vendor_id = $2`, [req.params.id, req.vendorId]);

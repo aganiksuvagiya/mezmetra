@@ -1,4 +1,5 @@
 import { cx } from '../lib/cx.js';
+import { paidVia } from '../lib/payments.js';
 
 const tones = {
   slate: 'bg-slate-100 text-slate-700 ring-slate-200',
@@ -39,14 +40,9 @@ export function StatusBadge({ status, ready = false }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
-export function PaymentBadge({ status, method, claimed = false }) {
+export function PaymentBadge({ status, method }) {
   if (status === 'refunded') return <Badge tone="slate">Refunded</Badge>;
-  if (status === 'paid') {
-    const via = method === 'cash' ? ' · Cash' : ['razorpay', 'cashfree', 'phonepe', 'paytm'].includes(method) ? ' · Online' : method === 'upi' ? ' · UPI' : '';
-    return <Badge tone="green">{`Paid${via}`}</Badge>;
-  }
-  // The diner says they paid by UPI; it only counts once staff confirm the money arrived.
-  if (claimed) return <Badge tone="amber">Customer says paid</Badge>;
+  if (status === 'paid') return <Badge tone="green">{`Paid${paidVia(method)}`}</Badge>;
   return <Badge tone="red">Unpaid</Badge>;
 }
 

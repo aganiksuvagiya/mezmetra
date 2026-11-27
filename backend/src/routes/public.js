@@ -1,14 +1,12 @@
-import express, { Router } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { HttpError, conflict, notFound, parse } from '../lib/errors.js';
 import { decryptSecret } from '../lib/crypto.js';
 import { safeEqual } from '../lib/crypto.js';
-import { cashfreeMode, createCashfreeOrder, getCashfreeOrder, getCashfreePayments } from '../lib/cashfree.js';
 import { attemptId, GATEWAYS, isRedirectGateway } from '../lib/gateways.js';
-import { createRazorpayOrder, createRazorpayQr, fetchRazorpayQr, fetchRazorpayQrPayments, verifyCheckoutSignature } from '../lib/razorpay.js';
+import { createRazorpayOrder, createRazorpayQr, fetchRazorpayQr, fetchRazorpayQrPayments, razorpayReady, verifyCheckoutSignature } from '../lib/razorpay.js';
 import { toRupees } from '../lib/money.js';
-import { UPI_REFERENCE_RE, upiQuery } from '../lib/upi.js';
 import { itemOut, loadOptionGroups, loadOrderItems, logoUrl, publicOrderOut, themeOut } from '../lib/serialize.js';
 import { PAID_ONLINE_SQL } from '../lib/onlinePayments.js';
 
@@ -28,15 +26,10 @@ const orderSchema = z.object({
     .min(1, 'Your cart is empty')
     .max(40, 'Too many items in one order'),
   note: z.string().trim().max(300).default(''),
-  // Optional: when omitted, the first method the restaurant offers is used (counter, then UPI, then online).
-  pay_pref: z.enum(['counter', 'online', 'upi']).optional(),
+  // Optional: when omitted, the first method the restaurant offers is used (counter, then online).
+  pay_pref: z.enum(['counter', 'online']).optional(),
   // The 4 digits printed on the table; only checked when the restaurant requires it.
   table_code: z.string().trim().max(10).optional(),
-});
-
-const claimSchema = z.object({
-  // The UPI transaction / reference number shown by the diner's app. Optional, but it makes staff confirmation easy.
-  reference: z.union([z.literal(''), z.string().trim().regex(UPI_REFERENCE_RE, 'The reference should be 6-30 letters or digits')]).optional(),
 });
 
 const verifySchema = z.object({
@@ -77,12 +70,8 @@ export function publicRouter(db, { orderLimiter }) {
   // What a diner can use: the restaurant must have switched the method on AND the product must offer it (config.paymentMethods).
   const optionsFrom = (s) => ({
     cash: config.paymentMethods.has('cash') && (s ? s.cash_enabled : true),
-    razorpay: config.paymentMethods.has('razorpay') && Boolean(s && s.razorpay_enabled && s.razorpay_key_id && s.razorpay_key_secret_enc),
-    cashfree: config.paymentMethods.has('cashfree') && Boolean(s && s.cashfree_enabled && s.cashfree_app_id && s.cashfree_secret_enc),
+    razorpay: config.paymentMethods.has('razorpay') && Boolean(s?.razorpay_enabled) && razorpayReady(s),
     phonepe: config.paymentMethods.has('phonepe') && Boolean(s && GATEWAYS.phonepe.enabled(s) && GATEWAYS.phonepe.configured(s)),
-    paytm: config.paymentMethods.has('paytm') && Boolean(s && GATEWAYS.paytm.enabled(s) && GATEWAYS.paytm.configured(s)),
-    // UPI needs the restaurant's UPI ID (it is behind the QR code, the pay buttons and the "pay manually" steps).
-    upi: config.paymentMethods.has('upi') && Boolean(s && s.upi_enabled && s.upi_id),
   });
 
   const paymentOptions = async (q, vendorId) => optionsFrom(await paymentSettings(q, vendorId));
@@ -96,14 +85,13 @@ export function publicRouter(db, { orderLimiter }) {
 
   /**
    * Why a diner cannot cancel this order themselves (a sentence for them), or null when they can. It is theirs to cancel only while nothing has
-   * happened to it yet: the kitchen has not accepted it, nothing is paid, and no payment is under way (a UPI "I've paid" claim, or an online
-   * payment that was opened). Anything else needs a member of staff, who can also refund.
+   * happened to it yet: the kitchen has not accepted it, nothing is paid, and no online payment has been opened. Anything else needs a
+   * member of staff, who can also refund.
    */
   const cancelBlocker = async (q, order) => {
     if (order.status === 'cancelled') return 'This order is already cancelled.';
     if (order.payment_status !== 'unpaid') return 'This order is already paid. Please ask a member of staff.';
     if (order.status !== 'pending') return 'The kitchen has already started on your order. Please ask a member of staff to cancel it.';
-    if (order.claimed_at) return 'You told us you paid for this order. Please ask a member of staff to check it and cancel it.';
     const started = await q.query(`SELECT 1 FROM payments WHERE order_id = $1 AND status IN ('created', 'paid') LIMIT 1`, [order.id]);
     if (started.rowCount > 0) return 'A payment for this order was started. Please ask a member of staff to cancel it.';
     return null;
@@ -115,35 +103,10 @@ export function publicRouter(db, { orderLimiter }) {
       q.query(`SELECT id, name, currency, theme_primary, theme_accent, theme_style, has_logo, logo_version FROM vendors WHERE id = $1`, [order.vendor_id]),
       paymentSettings(q, order.vendor_id),
     ]);
-    const options = optionsFrom(settings);
-    // Everything a UPI app needs to open with the amount filled in. Built here so the amount cannot be tampered with.
-    const payable = options.upi && order.payment_status === 'unpaid' && order.status !== 'cancelled';
     return publicOrderOut(order, items.get(order.id) ?? [], {
       vendor: { name: vendor.rows[0].name, currency: vendor.rows[0].currency, theme: themeOut(vendor.rows[0]), logo_url: logoUrl(vendor.rows[0]) },
-      payment_options: options,
+      payment_options: optionsFrom(settings),
       can_cancel: (await cancelBlocker(q, order)) === null,
-      upi: payable
-        ? {
-            vpa: settings.upi_id,
-            // The restaurant's own UPI QR image, when it has uploaded one. A business ID from PhonePe Business / Paytm for Business
-            // accepts money only through that QR, so the diner is shown it instead of a payment link or the app buttons.
-            qr_url: settings.has_upi_qr ? `/api/public/vendors/${order.vendor_id}/upi-qr?v=${settings.upi_qr_version}` : null,
-            // Whether to show the Google Pay / PhonePe / Paytm buttons, which also marks the ID as a business (merchant) one: the link then
-            // carries the merchant category code and a transaction reference. Off for a personal UPI ID (the apps refuse such links).
-            pay_buttons: Boolean(settings.upi_pay_buttons) && !settings.has_upi_qr,
-            payee_name: vendor.rows[0].name,
-            amount: toRupees(order.total_paise),
-            query: upiQuery({
-              vpa: settings.upi_id,
-              payeeName: vendor.rows[0].name,
-              amountPaise: order.total_paise,
-              note: `Table ${order.table_number} order`,
-              // A business UPI ID (the restaurant turned the app buttons on) is paid as a merchant: it needs `mc` and `tr`.
-              merchant: Boolean(settings.upi_pay_buttons),
-              reference: `MZ${order.id}`,
-            }),
-          }
-        : null,
     });
   };
 
@@ -189,20 +152,6 @@ export function publicRouter(db, { orderLimiter }) {
     res.set({
       'Content-Type': rows[0].mime,
       // The URL carries ?v=<logo_version>, so a changed logo always has a new URL.
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.send(Buffer.from(rows[0].data));
-  });
-
-  // The restaurant's own UPI QR image, shown on the order page while it pays by UPI.
-  router.get('/vendors/:id/upi-qr', async (req, res) => {
-    if (!/^\d{1,18}$/.test(req.params.id)) throw notFound('QR code');
-    const { rows } = await db.query(`SELECT mime, data FROM vendor_upi_qr WHERE vendor_id = $1`, [req.params.id]);
-    if (!rows[0]) throw notFound('QR code');
-    res.set({
-      'Content-Type': rows[0].mime,
-      // The URL carries ?v=<upi_qr_version>, so a changed QR always has a new URL.
       'Cache-Control': 'public, max-age=31536000, immutable',
       'X-Content-Type-Options': 'nosniff',
     });
@@ -292,7 +241,7 @@ export function publicRouter(db, { orderLimiter }) {
 
         // Only a payment method the restaurant currently offers can be chosen (e.g. not "counter" once cash is switched off).
         const offered = optionsFrom(await paymentSettings(t, table.vendor_id));
-        const available = [offered.cash && 'counter', offered.upi && 'upi', (offered.razorpay || offered.cashfree || offered.phonepe || offered.paytm) && 'online'].filter(Boolean);
+        const available = [offered.cash && 'counter', (offered.razorpay || offered.phonepe) && 'online'].filter(Boolean);
         if (available.length === 0) {
           throw conflict('PAYMENTS_NOT_SET_UP', "This restaurant hasn't finished setting up payments, so it can't take orders yet. Please ask a member of staff.");
         }
@@ -403,26 +352,6 @@ export function publicRouter(db, { orderLimiter }) {
     res.json({ data: await publicOrder(db, order) });
   });
 
-  // --- UPI app payment: the diner says they paid, staff confirm in the admin panel ---------------------------
-  // A plain UPI link cannot tell us whether the payment went through, so this never marks the order paid.
-  router.post('/orders/:token/upi-claim', orderLimiter, async (req, res) => {
-    const body = parse(claimSchema, req.body ?? {});
-    const order = await db.tx(async (t) => {
-      const current = await orderByToken(t, req.params.token, { lock: true });
-      if (current.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
-      if (current.payment_status === 'paid') return current;
-      if (!optionsFrom(await paymentSettings(t, current.vendor_id)).upi) {
-        throw conflict('UPI_NOT_AVAILABLE', 'UPI payment is not available at this restaurant. Please pay at the counter.');
-      }
-      const { rows } = await t.query(
-        `UPDATE orders SET claim_reference = $2, claimed_at = now() WHERE id = $1 RETURNING *`,
-        [current.id, body.reference || null],
-      );
-      return rows[0];
-    });
-    res.json({ data: await publicOrder(db, order) });
-  });
-
   // --- Online payment (Razorpay) ------------------------------------------------------------------------------
   router.post('/orders/:token/razorpay', orderLimiter, async (req, res) => {
     const order = await orderByToken(db, req.params.token);
@@ -480,12 +409,12 @@ export function publicRouter(db, { orderLimiter }) {
       if (current.payment_status === 'paid') return current; // already confirmed (e.g. double submit)
 
       const payment = await t.query(
-        `SELECT p.id, s.razorpay_key_secret_enc FROM payments p
+        `SELECT p.id, s.razorpay_key_id, s.razorpay_key_secret_enc FROM payments p
            JOIN vendor_payment_settings s ON s.vendor_id = $3
           WHERE p.order_id = $1 AND p.provider = 'razorpay' AND p.provider_order_id = $2`,
         [current.id, body.razorpay_order_id, current.vendor_id],
       );
-      if (!payment.rows[0] || !payment.rows[0].razorpay_key_secret_enc) {
+      if (!razorpayReady(payment.rows[0])) {
         throw new HttpError(400, 'PAYMENT_NOT_FOUND', 'We could not match this payment to your order.');
       }
       const valid = verifyCheckoutSignature({
@@ -577,7 +506,7 @@ export function publicRouter(db, { orderLimiter }) {
         )
       ).rows[0];
       const s = attempt && (await paymentSettings(db, order.vendor_id));
-      if (attempt && s?.razorpay_key_id && s.razorpay_key_secret_enc) {
+      if (attempt && razorpayReady(s)) {
         const list = await fetchRazorpayQrPayments({ ...razorpayCreds(s), qrId: attempt.provider_order_id });
         const hit = (list?.items ?? []).find((p) => p.status === 'captured' && Number(p.amount) === attempt.amount_paise);
         if (hit) {
@@ -593,117 +522,7 @@ export function publicRouter(db, { orderLimiter }) {
     res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
   });
 
-  // --- Online payment (Cashfree) ------------------------------------------------------------------------------
-  // Unlike a plain UPI link, Cashfree tells the server whether the money arrived. The server asks Cashfree (with the restaurant's
-  // own keys) and only then marks the order paid; nothing the browser sends can do that.
-  const openCashfreeAttempt = async (q, orderId) =>
-    (
-      await q.query(
-        `SELECT id, provider_order_id, amount_paise FROM payments
-          WHERE order_id = $1 AND provider = 'cashfree' AND status = 'created' ORDER BY id DESC LIMIT 1`,
-        [orderId],
-      )
-    ).rows[0];
-
-  /** Asks Cashfree about an attempt; marks the order paid when (and only when) Cashfree says PAID for the right amount. */
-  const settleCashfree = async (order, attempt, creds) => {
-    const cf = await getCashfreeOrder({ ...creds, orderId: attempt.provider_order_id });
-    if (cf.order_status !== 'PAID') return cf;
-    if (Math.round(Number(cf.order_amount) * 100) !== attempt.amount_paise) {
-      throw new HttpError(409, 'PAYMENT_AMOUNT_MISMATCH', 'The amount paid does not match this order. Please show this screen to a member of staff.');
-    }
-    // Cashfree's own payment id helps staff find the payment later; failing to fetch it must not hold up a paid order.
-    let paymentId = null;
-    try {
-      const list = await getCashfreePayments({ ...creds, orderId: attempt.provider_order_id });
-      const ok = Array.isArray(list) ? list.find((p) => p.payment_status === 'SUCCESS') : null;
-      if (ok?.cf_payment_id) paymentId = String(ok.cf_payment_id);
-    } catch {
-      /* optional */
-    }
-    await db.tx(async (t) => {
-      const current = await orderByToken(t, order.public_token, { lock: true });
-      if (current.payment_status === 'paid') return; // a parallel check already recorded it
-      await t.query(`UPDATE payments SET status = 'paid', provider_payment_id = $2, paid_at = now() WHERE id = $1`, [attempt.id, paymentId]);
-      await t.query(PAID_ONLINE_SQL('cashfree'), [current.id]);
-    });
-    return cf;
-  };
-
-  router.post('/orders/:token/cashfree', orderLimiter, async (req, res) => {
-    const order = await orderByToken(db, req.params.token);
-    if (order.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
-    if (order.payment_status === 'paid') throw conflict('ALREADY_PAID', 'This order is already paid.');
-
-    const { rows } = await db.query(
-      `SELECT s.*, v.name AS vendor_name FROM vendor_payment_settings s JOIN vendors v ON v.id = s.vendor_id WHERE s.vendor_id = $1`,
-      [order.vendor_id],
-    );
-    const s = rows[0];
-    if (!optionsFrom(s).cashfree) {
-      // The message is written for the diner; the restaurant sees the real reason in Payments settings.
-      throw conflict('CASHFREE_NOT_CONFIGURED', 'Online payment is not available at this restaurant. Please pay another way.');
-    }
-    const creds = { appId: s.cashfree_app_id, secret: decryptSecret(s.cashfree_secret_enc) };
-
-    // Reuse the open attempt (same amount, still payable) so retries do not pile up orders at Cashfree.
-    let sessionId = null;
-    let cfOrderId = null;
-    const open = await openCashfreeAttempt(db, order.id);
-    if (open) {
-      const cf = await settleCashfree(order, open, creds);
-      if (cf.order_status === 'PAID') throw conflict('ALREADY_PAID', 'This order is already paid.');
-      if (cf.order_status === 'ACTIVE' && cf.payment_session_id && open.amount_paise === order.total_paise) {
-        sessionId = cf.payment_session_id;
-        cfOrderId = open.provider_order_id;
-      } else {
-        await db.query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [open.id]); // expired or for an old amount
-      }
-    }
-    if (!sessionId) {
-      const orderId = `mz_${order.id}_${Date.now().toString(36)}`;
-      const created = await createCashfreeOrder({
-        ...creds,
-        orderId,
-        amountPaise: order.total_paise,
-        customerId: `order_${order.id}`,
-        returnUrl: `${config.customerAppUrl}/o/${order.public_token}`,
-        note: `Table ${order.table_number}`,
-      });
-      sessionId = created.payment_session_id;
-      cfOrderId = created.order_id || orderId;
-      await db.query(`INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) VALUES ($1, 'cashfree', $2, $3, 'created')`, [
-        order.id,
-        cfOrderId,
-        order.total_paise,
-      ]);
-    }
-    res.json({
-      data: {
-        payment_session_id: sessionId,
-        cashfree_order_id: cfOrderId,
-        mode: cashfreeMode(s.cashfree_app_id),
-        amount: toRupees(order.total_paise),
-        vendor_name: s.vendor_name,
-      },
-    });
-  });
-
-  // The customer app calls this after the payment window closes, and again whenever the diner comes back to the order page, so a
-  // payment is picked up even if the browser was closed or sent to a UPI app in between. It sends nothing: the server asks Cashfree.
-  router.post('/orders/:token/cashfree/verify', orderLimiter, async (req, res) => {
-    const order = await orderByToken(db, req.params.token);
-    if (order.payment_status !== 'paid') {
-      const attempt = await openCashfreeAttempt(db, order.id);
-      const s = attempt && (await paymentSettings(db, order.vendor_id));
-      if (attempt && s?.cashfree_app_id && s.cashfree_secret_enc) {
-        await settleCashfree(order, attempt, { appId: s.cashfree_app_id, secret: decryptSecret(s.cashfree_secret_enc) });
-      }
-    }
-    res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
-  });
-
-  // --- Online payment on the gateway's own page (PhonePe, Paytm) ------------------------------------------------
+  // --- Online payment on the gateway's own page (PhonePe) --------------------------------------------------------
   // The diner is sent to the gateway to pay and comes back to the order page. Whether the money arrived is always decided by the
   // server asking the gateway (with the restaurant's own keys); nothing the browser sends can mark an order paid.
   const gatewayFor = (name) => {
@@ -768,12 +587,10 @@ export function publicRouter(db, { orderLimiter }) {
     );
 
     const providerOrderId = attemptId(order.id);
-    const apiBase = config.apiPublicUrl || `${req.protocol}://${req.get('host')}`;
     const client = await gateway.start(gateway.creds(settings), {
       providerOrderId,
       order,
       returnUrl: `${config.customerAppUrl}/o/${order.public_token}`,
-      callbackUrl: `${apiBase}/api/public/paytm/callback/${order.public_token}`,
     });
     await db.query(`INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) VALUES ($1, $2, $3, $4, 'created')`, [
       order.id,
@@ -795,13 +612,6 @@ export function publicRouter(db, { orderLimiter }) {
       if (settings && gateway.configured(settings)) await settleAttempts(order, provider, settings);
     }
     res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
-  });
-
-  // Paytm sends the diner's browser back with a POSTed form. Nothing in it is believed; the diner is simply passed on to the order
-  // page, which then asks the server to check with Paytm.
-  router.all('/paytm/callback/:token', express.urlencoded({ extended: false, limit: '50kb' }), (req, res) => {
-    if (!UUID.test(req.params.token)) throw notFound('Order');
-    res.redirect(303, `${config.customerAppUrl}/o/${req.params.token.toLowerCase()}`);
   });
 
   return router;

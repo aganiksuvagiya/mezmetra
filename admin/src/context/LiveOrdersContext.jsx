@@ -54,15 +54,12 @@ export function LiveOrdersProvider({ children }) {
   const rq = useQuery(() => api('/api/admin/requests'), [], { interval: POLL_MS, pollInBackground: true, enabled: vendor?.role !== 'kitchen' });
   const requests = rq.data ?? [];
 
-  // Everything that is waiting for staff right now, newest first: customers calling, orders to accept, UPI payments to confirm.
+  // Everything that is waiting for staff right now, newest first: customers calling and orders to accept.
   // Each disappears by itself once it is dealt with, so this is a to-do list, not a history.
   const notifications = useMemo(() => {
     const list = requests.map((r) => ({ key: `request-${r.id}`, type: r.kind === 'bill' ? 'bill' : 'waiter', at: r.created_at, requestId: r.id, table: r.table_number }));
     for (const o of rows ?? []) {
       if (o.status === 'pending') list.push({ key: `order-${o.id}`, type: 'order', at: o.created_at, order: o });
-      if (o.payment_status === 'unpaid' && o.payment_claim && o.status !== 'cancelled') {
-        list.push({ key: `claim-${o.id}`, type: 'claim', at: o.payment_claim.claimed_at ?? o.created_at, order: o });
-      }
     }
     return list.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   }, [requests, rows]);

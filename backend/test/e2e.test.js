@@ -1,8 +1,8 @@
 // End-to-end API tests against an in-memory PGlite database (same SQL as production Postgres).
 process.env.NODE_ENV = 'test';
 delete process.env.DATABASE_URL;
-// The product defaults to UPI only; these tests exercise every method, and the "only UPI" suite below switches it back.
-process.env.PAYMENT_METHODS = 'upi,cash,razorpay,cashfree,phonepe,paytm';
+// Every way of paying the product offers.
+process.env.PAYMENT_METHODS = 'cash,razorpay,phonepe';
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -495,215 +495,6 @@ describe('online payments (Razorpay)', () => {
   });
 });
 
-describe('UPI app payments (claim + staff confirmation)', () => {
-  const regular = () => s.pizzaItem.option_groups[0].options[0].id; // Size: Regular (499.50 pizza)
-  const placeOrder = async (pay_pref = 'upi') =>
-    (await api('POST', `/api/public/t/${s.qrToken}/orders`, { body: { ...(pay_pref ? { pay_pref } : {}), items: [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [regular()] }] } })).body.data;
-
-  it('refuses a claim while the restaurant has not enabled UPI', async () => {
-    const order = await placeOrder('counter');
-    assert.equal(order.payment_options.upi, false);
-    assert.equal(order.upi, null);
-    const r = await api('POST', `/api/public/orders/${order.token}/upi-claim`, { body: {} });
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'UPI_NOT_AVAILABLE');
-    s.upiOrder = order;
-  });
-
-  it('only accepts a payment choice the restaurant offers, and defaults to one it does', async () => {
-    const path = `/api/public/t/${s.qrToken}/orders`;
-    const items = [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [regular()] }];
-    const upiWhileOff = await api('POST', path, { body: { pay_pref: 'upi', items } });
-    assert.equal(upiWhileOff.status, 409);
-    assert.equal(upiWhileOff.body.error.code, 'PAYMENT_METHOD_UNAVAILABLE');
-    // Not choosing falls back to the first offered method (counter, while cash is on).
-    const noChoice = await api('POST', path, { body: { items } });
-    assert.equal(noChoice.status, 201);
-    const mine = (await api('GET', '/api/admin/orders?status=pending', { token: s.token })).body.data.find((o) => o.id && o.pay_pref === 'counter');
-    assert.ok(mine, 'defaulted to counter');
-  });
-
-  it('validates the UPI ID in payment settings', async () => {
-    const bad = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { upi_id: 'not a upi id' } });
-    assert.equal(bad.status, 400);
-    const noId = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { upi_enabled: true } });
-    assert.equal(noId.status, 400);
-    const ok = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { upi_enabled: true, upi_id: 'tableseva.demo@okbank' } });
-    assert.equal(ok.status, 200);
-    assert.equal(ok.body.data.upi_enabled, true);
-    assert.equal(ok.body.data.upi_id, 'tableseva.demo@okbank');
-    const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.equal(menu.body.data.payment_options.upi, true);
-  });
-
-  it('builds the UPI link on the server with the exact order amount', async () => {
-    const r = await api('GET', `/api/public/orders/${s.upiOrder.token}`);
-    const upi = r.body.data.upi;
-    assert.equal(r.body.data.payment_options.upi, true);
-    assert.equal(upi.vpa, 'tableseva.demo@okbank');
-    assert.equal(upi.amount, 499.5);
-    const q = new URLSearchParams(upi.query);
-    assert.equal(q.get('pa'), 'tableseva.demo@okbank');
-    assert.equal(q.get('am'), '499.50');
-    assert.equal(q.get('cu'), 'INR');
-    assert.equal(q.get('tr'), null, 'merchant-only parameters are not sent: PhonePe/GPay reject them for ordinary UPI IDs');
-    assert.equal(q.get('mc'), null);
-    assert.ok(q.get('tn').includes('T-01'));
-    assert.ok(!upi.query.includes(' '), 'no raw spaces in the link');
-  });
-
-  it('with cash switched off, UPI is the only choice and counter is refused', async () => {
-    const off = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { cash_enabled: false } });
-    assert.equal(off.status, 200);
-    const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: true, cashfree: false, phonepe: false, paytm: false });
-    const items = [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [regular()] }];
-    const path = `/api/public/t/${s.qrToken}/orders`;
-    const counter = await api('POST', path, { body: { pay_pref: 'counter', items } });
-    assert.equal(counter.status, 409);
-    assert.equal(counter.body.error.code, 'PAYMENT_METHOD_UNAVAILABLE');
-    const upi = await api('POST', path, { body: { pay_pref: 'upi', items } });
-    assert.equal(upi.status, 201);
-    assert.equal(upi.body.data.payment_options.cash, false);
-    assert.ok(upi.body.data.upi, 'the UPI link is there');
-    // Leave cash on for the rest of the suite.
-    assert.equal((await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { cash_enabled: true } })).status, 200);
-  });
-
-  it('records a claim without marking the order paid', async () => {
-    assert.equal((await api('POST', `/api/public/orders/${s.upiOrder.token}/upi-claim`, { body: { reference: 'bad ref!' } })).status, 400);
-    const r = await api('POST', `/api/public/orders/${s.upiOrder.token}/upi-claim`, { body: { reference: '412345678901' } });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.data.payment_status, 'unpaid', 'a claim alone never counts as payment');
-    assert.equal(r.body.data.payment_claim.reference, '412345678901');
-    const admin = await api('GET', '/api/admin/orders?status=pending', { token: s.token });
-    const mine = admin.body.data.find((o) => o.payment_claim?.reference === '412345678901');
-    assert.ok(mine, 'admin can see the claim');
-    s.upiOrderId = mine.id;
-    const revenue = (await api('GET', '/api/admin/dashboard/overview', { token: s.token })).body.data.today_revenue;
-    assert.equal(revenue, 1419 + 499.5, 'claimed-but-unconfirmed money is not revenue');
-  });
-
-  it('lets staff confirm the UPI payment, once', async () => {
-    const paid = await api('POST', `/api/admin/orders/${s.upiOrderId}/upi-payment`, { token: s.token, body: {} });
-    assert.equal(paid.status, 200);
-    assert.equal(paid.body.data.payment_status, 'paid');
-    assert.equal(paid.body.data.payment_method, 'upi');
-    assert.equal((await api('POST', `/api/admin/orders/${s.upiOrderId}/upi-payment`, { token: s.token, body: {} })).status, 409);
-    assert.equal((await api('GET', `/api/public/orders/${s.upiOrder.token}`)).body.data.upi, null, 'no pay link once paid');
-    const receipt = await api('GET', `/api/admin/orders/${s.upiOrderId}/receipt.pdf`, { token: s.token });
-    assert.equal(receipt.status, 200);
-
-    const d = (await api('GET', '/api/admin/dashboard/overview', { token: s.token })).body.data;
-    assert.equal(d.today_revenue, 1419 + 499.5 + 499.5);
-    assert.equal(d.payment_methods.find((m) => m.method === 'upi').amount, 499.5);
-  });
-
-  it('does not let one UPI reference confirm two orders', async () => {
-    const second = await placeOrder();
-    await api('POST', `/api/public/orders/${second.token}/upi-claim`, { body: { reference: '412345678901' } });
-    const list = await api('GET', '/api/admin/orders?status=pending', { token: s.token });
-    const id = list.body.data.find((o) => o.payment_claim)?.id;
-    const dup = await api('POST', `/api/admin/orders/${id}/upi-payment`, { token: s.token, body: {} });
-    assert.equal(dup.status, 409);
-    assert.equal(dup.body.error.code, 'DUPLICATE_REFERENCE');
-  });
-});
-
-describe('only UPI (the default PAYMENT_METHODS)', () => {
-  const ALL = new Set(['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm']);
-  const items = () => [{ item_id: s.pizzaItem.id, quantity: 1, option_ids: [s.pizzaItem.option_groups[0].options[0].id] }];
-  const ordersPath = () => `/api/public/t/${s.qrToken}/orders`;
-  let vendorId;
-
-  before(async () => {
-    vendorId = (await api('GET', '/api/auth/me', { token: s.token })).body.data.id;
-    config.paymentMethods = new Set(['upi']);
-  });
-  after(() => {
-    config.paymentMethods = ALL;
-  });
-
-  it('defaults to UPI only and rejects unknown method names', async () => {
-    const run = (value) =>
-      import(`../src/config.js?methods=${encodeURIComponent(value ?? 'unset')}`).then(
-        (m) => [...m.config.paymentMethods],
-        (err) => err.message,
-      );
-    const saved = process.env.PAYMENT_METHODS;
-    try {
-      delete process.env.PAYMENT_METHODS;
-      assert.deepEqual(await run(undefined), ['upi']);
-      process.env.PAYMENT_METHODS = 'upi, cash';
-      assert.deepEqual(await run('upi, cash'), ['upi', 'cash']);
-      process.env.PAYMENT_METHODS = 'upi,bitcoin';
-      assert.match(await run('upi,bitcoin'), /PAYMENT_METHODS must list some of/);
-    } finally {
-      process.env.PAYMENT_METHODS = saved;
-    }
-  });
-
-  it('offers only UPI to diners even though the restaurant also switched cash and Razorpay on', async () => {
-    const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-    assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: true, razorpay: false, cashfree: false, phonepe: false, paytm: false });
-    const me = await api('GET', '/api/auth/me', { token: s.token });
-    assert.deepEqual(me.body.data.payment_methods, ['upi']);
-    const settings = await api('GET', '/api/admin/payment-settings', { token: s.token });
-    assert.deepEqual(settings.body.data.methods_available, ['upi']);
-  });
-
-  it('refuses the other ways of paying and defaults to UPI', async () => {
-    for (const pay_pref of ['counter', 'online']) {
-      const r = await api('POST', ordersPath(), { body: { pay_pref, items: items() } });
-      assert.equal(r.status, 409, pay_pref);
-      assert.equal(r.body.error.code, 'PAYMENT_METHOD_UNAVAILABLE');
-    }
-    const ok = await api('POST', ordersPath(), { body: { items: items() } });
-    assert.equal(ok.status, 201);
-    assert.ok(ok.body.data.upi, 'the UPI link is there');
-    assert.deepEqual(ok.body.data.payment_options, { cash: false, upi: true, razorpay: false, cashfree: false, phonepe: false, paytm: false });
-    s.upiOnlyOrder = ok.body.data;
-
-    const razorpay = await api('POST', `/api/public/orders/${ok.body.data.token}/razorpay`);
-    assert.equal(razorpay.status, 409);
-    assert.equal(razorpay.body.error.code, 'RAZORPAY_NOT_CONFIGURED');
-  });
-
-  it('does not let staff record cash, but still lets them confirm UPI', async () => {
-    const id = (await api('GET', '/api/admin/orders?status=pending', { token: s.token })).body.data.find((o) => o.pay_pref === 'upi' && o.payment_status === 'unpaid')?.id;
-    assert.ok(id);
-    const cash = await api('POST', `/api/admin/orders/${id}/cash-payment`, { token: s.token });
-    assert.equal(cash.status, 409);
-    assert.equal(cash.body.error.code, 'METHOD_NOT_AVAILABLE');
-    assert.equal((await api('POST', `/api/admin/orders/${id}/upi-payment`, { token: s.token, body: {} })).status, 200);
-  });
-
-  it('does not let a restaurant switch on a method the product does not offer, or switch off the last one', async () => {
-    for (const body of [{ cash_enabled: true }, { razorpay_enabled: true }, { cashfree_enabled: true }]) {
-      const r = await api('PUT', '/api/admin/payment-settings', { token: s.token, body });
-      assert.equal(r.status, 400, JSON.stringify(body));
-    }
-    const off = await api('PUT', '/api/admin/payment-settings', { token: s.token, body: { upi_enabled: false } });
-    assert.equal(off.status, 400);
-    assert.match(off.body.error.message, /Turn on UPI/);
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token: s.token })).body.data.upi_enabled, true, 'unchanged');
-  });
-
-  it("stops a restaurant that has not set up UPI from taking orders, with a clear message", async () => {
-    await db.query(`UPDATE vendor_payment_settings SET upi_enabled = false WHERE vendor_id = $1`, [vendorId]);
-    try {
-      const menu = await api('GET', `/api/public/t/${s.qrToken}`);
-      assert.deepEqual(menu.body.data.payment_options, { cash: false, upi: false, razorpay: false, cashfree: false, phonepe: false, paytm: false });
-      const r = await api('POST', ordersPath(), { body: { items: items() } });
-      assert.equal(r.status, 409);
-      assert.equal(r.body.error.code, 'PAYMENTS_NOT_SET_UP');
-    } finally {
-      await db.query(`UPDATE vendor_payment_settings SET upi_enabled = true WHERE vendor_id = $1`, [vendorId]);
-    }
-    assert.equal((await api('POST', ordersPath(), { body: { items: items() } })).status, 201, 'works again once UPI is back on');
-  });
-});
-
 describe('platform owner (super admin)', () => {
   const OWNER = 'platform.owner@mezmitra.test';
   let ownerToken;
@@ -750,12 +541,10 @@ describe('platform owner (super admin)', () => {
     assert.equal(spice.status, 'active');
     assert.ok(spice.tables >= 1 && spice.items >= 1 && spice.orders_total >= 1 && spice.orders_30d >= 1);
     assert.ok(spice.revenue_total > 0 && spice.last_order_at);
-    assert.equal(spice.upi_ready, true);
     assert.equal(spice.password_hash, undefined);
     const hq = list.body.data.find((r) => r.id === ownerId);
     assert.equal(hq.is_platform_owner, true);
     assert.equal(hq.orders_total, 0);
-    assert.equal(hq.upi_ready, false);
 
     const byName = await api('GET', '/api/platform/restaurants?q=spice', { token: ownerToken });
     assert.deepEqual(byName.body.data.map((r) => r.id), [spiceId]);
@@ -1311,7 +1100,7 @@ describe('sales reports (summary, CSV, PDF)', () => {
     assert.equal(d.sales.total, dashboard.today_revenue, 'same definition of revenue as the dashboard');
     assert.ok(d.sales.orders >= 1);
     assert.equal(Math.round(d.sales.by_method.reduce((n, m) => n + m.amount, 0) * 100) / 100, d.sales.total);
-    assert.deepEqual(d.sales.by_method.map((m) => m.method), ['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm']);
+    assert.deepEqual(d.sales.by_method.map((m) => m.method), ['cash', 'razorpay', 'phonepe']);
     assert.equal(Math.round((d.sales.subtotal + d.sales.tax) * 100) / 100, d.sales.total);
     assert.equal(d.placed.total, d.placed.completed + d.placed.cancelled + d.placed.open);
     assert.ok(d.placed.unpaid >= 1 && d.placed.unpaid_value > 0);
@@ -1351,7 +1140,7 @@ describe('sales reports (summary, CSV, PDF)', () => {
     const lines = text.slice(1).trim().split('\r\n');
     assert.ok(lines.length - 1 >= summary.placed.total, 'a row for every order placed (and paid) today');
     const paidRow = lines.find((l) => l.includes(',paid,'));
-    assert.match(paidRow, /^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\d{4}-\d{2}-\d{2} \d{2}:\d{2},T-01,\w+,paid,(cash|upi|razorpay),/);
+    assert.match(paidRow, /^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\d{4}-\d{2}-\d{2} \d{2}:\d{2},T-01,\w+,paid,(cash|razorpay|phonepe),/);
     assert.match(paidRow, /,\d+\.\d{2},\d+\.\d{2},\d+\.\d{2}$/);
     const empty = await get(`orders.csv?from=${ymd(-40)}&to=${ymd(-30)}`);
     assert.equal(empty.body.toString('utf8').trim().split('\r\n').length, 1, 'header only');
@@ -1393,7 +1182,6 @@ describe('demo data helpers (sample prices and order history)', () => {
     chaiId = chai.body.data.id;
     await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Samosa', price: 20 } });
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'A1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-    await api('PUT', '/api/admin/payment-settings', { token, body: { upi_enabled: true, upi_id: 'helper@okaxis' } });
   });
 
   it('makes every dish cost the same and the extras free, so an order is exactly that much', async () => {
@@ -1420,7 +1208,7 @@ describe('demo data helpers (sample prices and order history)', () => {
 
     const rows = await sampleRows();
     assert.equal(rows.length, 4);
-    assert.ok(rows.every((o) => o.status === 'completed' && o.payment_status === 'paid' && o.payment_method === 'upi' && o.pay_pref === 'upi'));
+    assert.ok(rows.every((o) => o.status === 'completed' && o.payment_status === 'paid' && o.payment_method === 'cash' && o.pay_pref === 'counter'));
     assert.ok(rows.every((o) => o.accepted_at && o.paid_at && o.completed_at && new Date(o.created_at) < new Date(o.accepted_at) && new Date(o.accepted_at) < new Date(o.paid_at) && new Date(o.paid_at) < new Date(o.completed_at)));
     assert.ok(rows.every((o) => new Date(o.completed_at) < new Date()), 'nothing is "in the future"');
     assert.equal((await orderRows()).length, realBefore + 4, 'real orders untouched');
@@ -1429,13 +1217,13 @@ describe('demo data helpers (sample prices and order history)', () => {
     assert.ok(items.n >= 4);
     assert.equal(items.paise, rows.reduce((n, o) => n + o.subtotal_paise, 0), 'line items add up to each order subtotal');
     assert.ok(rows.every((o) => o.total_paise === o.subtotal_paise + o.tax_paise));
-    const payments = (await db.query(`SELECT count(*)::int AS n, sum(amount_paise)::int AS paise FROM payments WHERE order_id = ANY($1::bigint[]) AND provider = 'upi' AND status = 'paid'`, [rows.map((o) => o.id)])).rows[0];
+    const payments = (await db.query(`SELECT count(*)::int AS n, sum(amount_paise)::int AS paise FROM payments WHERE order_id = ANY($1::bigint[]) AND provider = 'cash' AND status = 'paid'`, [rows.map((o) => o.id)])).rows[0];
     assert.deepEqual([payments.n, payments.paise], [4, rows.reduce((n, o) => n + o.total_paise, 0)]);
 
     const dash = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
     const realPaid = (await orderRows()).filter((o) => o.payment_status === 'paid' && !o.idempotency_key?.startsWith('demo-history-')).reduce((n, o) => n + o.total_paise, 0);
     assert.equal(Math.round(dash.weekly_revenue.reduce((n, d) => n + d.revenue, 0) * 100), Math.round(r.revenue * 100) + realPaid, 'the 7-day chart counts the sample payments');
-    assert.equal(dash.payment_methods.find((m) => m.method === 'upi').percent, 100);
+    assert.equal(dash.payment_methods.find((m) => m.method === 'cash').percent, 100);
     const summary = (await api('GET', `/api/admin/reports/summary?from=${new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10)}&to=${new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}`, { token })).body.data;
     assert.equal(summary.sales.orders, 4);
   });
@@ -1458,355 +1246,6 @@ describe('demo data helpers (sample prices and order history)', () => {
     const { generateHistory } = await import('../src/demoHistory.js');
     const empty = await signupAccount({ name: 'Empty Place', email: 'empty.place@example.test', password: 'a-long-enough-password' });
     await assert.rejects(generateHistory(db, { vendorId: empty.body.data.vendor.id, days: 2, orders: 4 }), /needs a menu and at least one table/);
-  });
-});
-
-describe('UPI needs a UPI ID', () => {
-  let token;
-  let qr;
-  let itemId;
-  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
-  const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
-
-  before(async () => {
-    const su = await signupAccount({ name: 'Mobile Pay Cafe', email: 'mobile.pay@example.test', password: 'a-long-enough-password' });
-    token = su.body.data.token;
-    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
-    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
-    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'M1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-  });
-
-  it('refuses to switch UPI on without a UPI ID', async () => {
-    const r = await put({ upi_enabled: true });
-    assert.equal(r.status, 400);
-    assert.match(r.body.error.message, /UPI ID/);
-  });
-
-  it('has no mobile-number setting any more: it is not returned and a value sent for it is ignored', async () => {
-    const r = await put({ upi_enabled: true, upi_id: 'mobile.pay@okaxis', upi_mobile: '9876543210' });
-    assert.equal(r.status, 200);
-    assert.equal('upi_mobile' in r.body.data, false);
-    assert.equal('upi_mobile' in (await api('GET', '/api/admin/payment-settings', { token })).body.data, false);
-    const o = await order();
-    assert.equal('mobile' in o.upi, false, 'the diner is only ever shown the UPI ID');
-    assert.equal(o.upi.vpa, 'mobile.pay@okaxis');
-    assert.equal(new URLSearchParams(o.upi.query).get('pa'), 'mobile.pay@okaxis');
-  });
-
-  it('refuses to remove the UPI ID while UPI is on', async () => {
-    assert.equal((await put({ upi_id: '' })).status, 400);
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_id, 'mobile.pay@okaxis', 'a refused change keeps the ID');
-  });
-});
-
-describe("the restaurant's own UPI QR (PhonePe Business / Paytm for Business accept money only through it)", () => {
-  let token;
-  let qr;
-  let itemId;
-  let vendorId;
-  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
-  const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
-  const upload = (raw, type = 'image/png') => api('PUT', '/api/admin/payment-settings/upi-qr', { token, raw, headers: { 'Content-Type': type } });
-
-  before(async () => {
-    const su = await signupAccount({ name: 'Merchant QR Cafe', email: 'merchant.qr@example.test', password: 'a-long-enough-password' });
-    token = su.body.data.token;
-    vendorId = (await api('GET', '/api/auth/me', { token })).body.data.id;
-    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
-    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
-    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'Q1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-    assert.equal((await put({ upi_enabled: true, upi_id: 'merchant.qr@ybl', upi_pay_buttons: true })).status, 200);
-  });
-
-  it('has no QR to begin with, and the diner is shown the payment link and the app buttons', async () => {
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token })).body.data.upi_qr_url, null);
-    const o = await order();
-    assert.equal(o.upi.qr_url, null);
-    assert.equal(o.upi.pay_buttons, true);
-  });
-
-  it('stores an uploaded QR, serves it publicly, and shows it to the diner instead of the app buttons', async () => {
-    const up = await upload(PNG_1X1);
-    assert.equal(up.status, 200);
-    assert.match(up.body.data.upi_qr_url, new RegExp(`^/api/public/vendors/${vendorId}/upi-qr\\?v=1$`));
-    const img = await fetch(`${base}${up.body.data.upi_qr_url}`);
-    assert.equal(img.status, 200);
-    assert.equal(img.headers.get('content-type'), 'image/png');
-    assert.deepEqual(Buffer.from(await img.arrayBuffer()), PNG_1X1);
-
-    const o = await order();
-    assert.equal(o.upi.qr_url, up.body.data.upi_qr_url, 'the diner gets the same image URL');
-    assert.equal(o.upi.pay_buttons, false, 'a link is refused for such an ID, so no app buttons while the QR is set');
-    // Replacing it changes the URL (so no stale copy is shown).
-    assert.match((await upload(PNG_1X1)).body.data.upi_qr_url, /v=2$/);
-  });
-
-  it('refuses anything that is not a JPEG, PNG or WebP image, and an empty body', async () => {
-    assert.equal((await upload(Buffer.from('not an image at all'))).status, 415);
-    assert.equal((await upload(Buffer.alloc(0))).status, 415);
-    assert.equal((await upload(PNG_1X1, 'application/pdf')).status, 415);
-    assert.equal((await api('PUT', '/api/admin/payment-settings/upi-qr', { raw: PNG_1X1, headers: { 'Content-Type': 'image/png' } })).status, 401);
-  });
-
-  it('removes the QR, so the app buttons come back and the image is gone', async () => {
-    const gone = await api('DELETE', '/api/admin/payment-settings/upi-qr', { token });
-    assert.equal(gone.status, 200);
-    assert.equal(gone.body.data.upi_qr_url, null);
-    const o = await order();
-    assert.equal(o.upi.qr_url, null);
-    assert.equal(o.upi.pay_buttons, true);
-    assert.equal((await fetch(`${base}/api/public/vendors/${vendorId}/upi-qr`)).status, 404);
-  });
-
-  it("does not show one restaurant's QR on another's order", async () => {
-    await upload(PNG_1X1);
-    const other = (await signupAccount({ name: 'Other QR Cafe', email: 'other.qr@example.test', password: 'a-long-enough-password' })).body.data.token;
-    assert.equal((await api('GET', '/api/admin/payment-settings', { token: other })).body.data.upi_qr_url, null);
-  });
-});
-
-describe('UPI app buttons (off by default)', () => {
-  let token;
-  let qr;
-  let itemId;
-  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
-  const order = async () => (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
-
-  before(async () => {
-    const su = await signupAccount({ name: 'Buttons Cafe', email: 'buttons.cafe@example.test', password: 'a-long-enough-password' });
-    token = su.body.data.token;
-    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
-    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
-    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'B1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-  });
-
-  it('keeps the Google Pay / PhonePe / Paytm buttons off until the restaurant turns them on', async () => {
-    const on = await put({ upi_enabled: true, upi_id: 'buttons.cafe@okaxis' });
-    assert.equal(on.status, 200);
-    assert.equal(on.body.data.upi_pay_buttons, false, 'off by default');
-    const off = await order();
-    assert.equal(off.upi.pay_buttons, false);
-    assert.ok(off.upi.query, 'the link still exists, for the QR code');
-    assert.equal(off.upi.vpa, 'buttons.cafe@okaxis');
-
-    // A personal UPI ID's link carries no merchant-only parameters.
-    const personal = new URLSearchParams(off.upi.query);
-    assert.equal(personal.get('mc'), null);
-    assert.equal(personal.get('tr'), null);
-
-    const set = await put({ upi_pay_buttons: true });
-    assert.equal(set.body.data.upi_pay_buttons, true);
-    const business = (await order()).upi;
-    assert.equal(business.pay_buttons, true);
-    // A business UPI ID is paid as a merchant: without the category code and a reference Google Pay and PhonePe say "security reasons".
-    const q = new URLSearchParams(business.query);
-    assert.equal(q.get('mc'), '5812');
-    assert.match(q.get('tr'), /^MZ\d+$/, 'one reference per order, letters and digits only');
-    assert.equal(q.get('pa'), 'buttons.cafe@okaxis');
-    assert.equal(q.get('cu'), 'INR');
-    assert.match(q.get('am'), /^\d+\.\d{2}$/);
-    const another = new URLSearchParams((await order()).upi?.query ?? '');
-    assert.notEqual(another.get('tr') ?? 'x', q.get('tr'), 'a different order gets a different reference');
-    assert.equal((await put({ upi_pay_buttons: 'yes' })).status, 400);
-    assert.equal((await put({ upi_pay_buttons: false })).body.data.upi_pay_buttons, false);
-    assert.equal((await order()).upi.pay_buttons, false);
-  });
-
-  it('cannot turn the buttons on for a restaurant that has no UPI ID', async () => {
-    assert.equal((await put({ upi_id: '' })).status, 400, 'UPI is on, so its ID cannot be removed');
-    assert.equal((await put({ upi_pay_buttons: true })).status, 200);
-    assert.equal((await order()).upi.vpa, 'buttons.cafe@okaxis');
-  });
-});
-
-describe('online payments (Cashfree)', () => {
-  const APP_ID = 'TESTAPP12345';
-  const SECRET = 'cfsk_ma_test_secret_value';
-  let token;
-  let qr;
-  let itemId;
-  let mock;
-  let savedBase;
-  const cfOrders = new Map(); // Cashfree order id -> { amount, status }
-  const cfCalls = [];
-  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
-  const place = async (pay_pref) => {
-    const r = await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref, items: [{ item_id: itemId, quantity: 2, option_ids: [] }] } });
-    assert.equal(r.status, 201, JSON.stringify(r.body));
-    return r.body.data;
-  };
-  const start = (order) => api('POST', `/api/public/orders/${order.token}/cashfree`);
-  const verify = (order) => api('POST', `/api/public/orders/${order.token}/cashfree/verify`);
-  const status = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
-
-  before(async () => {
-    // A fake Cashfree API: it checks the keys, remembers the orders it was asked to create, and lets the test decide who "paid".
-    mock = await new Promise((resolve) => {
-      const server = http
-        .createServer((req, res) => {
-          let data = '';
-          req.on('data', (c) => (data += c));
-          req.on('end', () => {
-            cfCalls.push({ method: req.method, url: req.url, headers: req.headers, body: data ? JSON.parse(data) : null });
-            res.setHeader('Content-Type', 'application/json');
-            const send = (code, json) => {
-              res.statusCode = code;
-              res.end(JSON.stringify(json));
-            };
-            if (req.headers['x-client-id'] !== APP_ID || req.headers['x-client-secret'] !== SECRET) {
-              return send(401, { message: 'authentication Failed', code: 'request_failed', type: 'authentication_error' });
-            }
-            const path = req.url.split('?')[0];
-            if (req.method === 'POST' && path === '/orders') {
-              const body = JSON.parse(data);
-              cfOrders.set(body.order_id, { amount: body.order_amount, status: 'ACTIVE' });
-              return send(200, { order_id: body.order_id, order_status: 'ACTIVE', payment_session_id: `session_${body.order_id}` });
-            }
-            const m = path.match(/^\/orders\/([^/]+)(\/payments)?$/);
-            const found = m && cfOrders.get(decodeURIComponent(m[1]));
-            if (!found) return send(404, { message: 'order not found', code: 'order_not_found', type: 'invalid_request_error' });
-            if (m[2]) return send(200, [{ cf_payment_id: 5551234, payment_status: 'SUCCESS' }]);
-            return send(200, { order_id: decodeURIComponent(m[1]), order_amount: found.amount, order_status: found.status, payment_session_id: `session_${decodeURIComponent(m[1])}` });
-          });
-        })
-        .listen(0, '127.0.0.1', () => resolve(server));
-    });
-    savedBase = config.cashfreeApiBase;
-    config.cashfreeApiBase = `http://127.0.0.1:${mock.address().port}`;
-
-    token = (await signupAccount({ name: 'Cashfree Cafe', email: 'cashfree.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
-    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
-    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
-    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'C1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-  });
-
-  after(async () => {
-    config.cashfreeApiBase = savedBase;
-    await new Promise((r) => mock.close(r));
-  });
-
-  it('tells the diner to pay another way while the restaurant has no Cashfree keys', async () => {
-    const order = await place(); // "online" is not offered yet, so the default (the counter) is used
-    const r = await start(order);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'CASHFREE_NOT_CONFIGURED');
-  });
-
-  it('validates and stores the keys without ever returning the secret', async () => {
-    assert.equal((await put({ cashfree_app_id: 'no spaces allowed', cashfree_secret: SECRET })).status, 400);
-    assert.equal((await put({ cashfree_enabled: true })).status, 400, 'no keys yet');
-
-    const wrong = await put({ cashfree_enabled: true, cashfree_app_id: APP_ID, cashfree_secret: 'wrong-secret-value' });
-    assert.equal(wrong.status, 200);
-    const failing = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'cashfree' } });
-    assert.equal(failing.status, 502);
-    assert.equal(failing.body.error.code, 'CASHFREE_BAD_KEYS');
-
-    const saved = await put({ cashfree_secret: SECRET });
-    assert.equal(saved.body.data.cashfree_configured, true);
-    assert.equal(saved.body.data.cashfree_mode, 'test', 'App IDs starting with TEST are Cashfree sandbox');
-    assert.equal(saved.body.data.cashfree_app_id, APP_ID);
-    assert.ok(!JSON.stringify(saved.body).includes(SECRET));
-    const stored = await db.query(`SELECT cashfree_secret_enc FROM vendor_payment_settings WHERE cashfree_app_id = $1`, [APP_ID]);
-    assert.ok(stored.rows.every((row) => !String(row.cashfree_secret_enc).includes(SECRET)), 'secret is encrypted at rest');
-    const ok = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'cashfree' } });
-    assert.equal(ok.body.data.ok, true);
-    assert.equal(ok.body.data.mode, 'test');
-
-    const menu = await api('GET', `/api/public/t/${qr}`);
-    assert.equal(menu.body.data.payment_options.cashfree, true);
-    assert.equal(menu.body.data.payment_options.razorpay, false);
-  });
-
-  it('lets a restaurant use one online gateway at a time', async () => {
-    const both = await put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
-    assert.equal(both.status, 400);
-    assert.match(both.body.error.message, /one online payment gateway/);
-    const swap = await put({ cashfree_enabled: false, razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
-    assert.equal(swap.status, 200, 'switching is one request');
-    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.payment_options.cashfree, false);
-    const back = await put({ razorpay_enabled: false, cashfree_enabled: true });
-    assert.equal(back.status, 200);
-    assert.equal(back.body.data.cashfree_secret_set, true, 'the saved secret is kept');
-  });
-
-  it('creates one Cashfree order (reused on retry) and marks the order paid only when Cashfree says PAID', async () => {
-    const order = await place('online');
-    const posts = () => cfCalls.filter((c) => c.method === 'POST' && c.url === '/orders').length;
-    const before = posts();
-
-    const a = await start(order);
-    assert.equal(a.status, 200);
-    assert.equal(a.body.data.mode, 'sandbox');
-    assert.equal(a.body.data.amount, 80);
-    assert.match(a.body.data.payment_session_id, /^session_mz_/);
-    const created = cfCalls.filter((c) => c.method === 'POST' && c.url === '/orders').at(-1);
-    assert.equal(created.body.order_amount, 80);
-    assert.equal(created.body.order_currency, 'INR');
-    assert.ok(created.body.customer_details.customer_phone, 'Cashfree needs a phone number');
-    assert.match(created.body.order_meta.return_url, new RegExp(`/o/${order.token}$`));
-
-    const b = await start(order);
-    assert.equal(b.body.data.payment_session_id, a.body.data.payment_session_id);
-    assert.equal(posts() - before, 1, 'retrying must not create a second Cashfree order');
-
-    // The diner closing the window or a made-up claim does not make the order paid: only Cashfree can.
-    const early = await verify(order);
-    assert.equal(early.status, 200);
-    assert.equal(early.body.data.payment_status, 'unpaid');
-
-    cfOrders.get(a.body.data.cashfree_order_id).status = 'PAID';
-    const paid = await verify(order);
-    assert.equal(paid.status, 200);
-    assert.equal(paid.body.data.payment_status, 'paid');
-    assert.equal(paid.body.data.payment_method, 'cashfree');
-    assert.equal(paid.body.data.status, 'accepted', 'paying online accepts the order');
-    const row = await db.query(`SELECT status, provider_payment_id FROM payments WHERE provider = 'cashfree' AND provider_order_id = $1`, [a.body.data.cashfree_order_id]);
-    assert.deepEqual(row.rows[0], { status: 'paid', provider_payment_id: '5551234' });
-
-    assert.equal((await verify(order)).status, 200, 'verifying again is harmless');
-    assert.equal((await start(order)).status, 409, 'an already paid order cannot be paid again');
-  });
-
-  it('does not mark an order paid when the amount Cashfree took is different', async () => {
-    const order = await place('online');
-    const a = await start(order);
-    const cf = cfOrders.get(a.body.data.cashfree_order_id);
-    cf.status = 'PAID';
-    cf.amount = 1;
-    const r = await verify(order);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'PAYMENT_AMOUNT_MISMATCH');
-    assert.equal((await status(order)).payment_status, 'unpaid');
-  });
-
-  it('starts a fresh Cashfree order when the earlier one has expired', async () => {
-    const order = await place('online');
-    const a = await start(order);
-    cfOrders.get(a.body.data.cashfree_order_id).status = 'EXPIRED';
-    const b = await start(order);
-    assert.equal(b.status, 200);
-    assert.notEqual(b.body.data.cashfree_order_id, a.body.data.cashfree_order_id);
-    const old = await db.query(`SELECT status FROM payments WHERE provider_order_id = $1`, [a.body.data.cashfree_order_id]);
-    assert.equal(old.rows[0].status, 'failed');
-  });
-
-  it('shows Cashfree money in the dashboard split, the sales report and the receipt', async () => {
-    const d = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
-    assert.equal(d.payment_methods.find((m) => m.method === 'cashfree').amount, 80);
-    assert.equal(d.today_revenue, 80);
-    const r = (await api('GET', '/api/admin/reports/summary', { token })).body.data;
-    assert.equal(r.sales.by_method.find((m) => m.method === 'cashfree').amount, 80);
-  });
-
-  it('refuses to switch Cashfree on when the product does not offer it', async () => {
-    config.paymentMethods = new Set(['upi', 'cash', 'razorpay']);
-    try {
-      assert.equal((await put({ cashfree_enabled: true })).status, 400);
-      assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.payment_options.cashfree, false);
-    } finally {
-      config.paymentMethods = new Set(['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm']);
-    }
   });
 });
 
@@ -2258,20 +1697,19 @@ describe("table bill (one payment for everything a table ordered)", () => {
     assert.equal((await settle('cash')).status, 409, 'nothing left to settle');
   });
 
-  it('can settle by UPI, and refuses a method the product does not offer', async () => {
+  it('settles only in cash, and not at all when the product offers no cash', async () => {
     await order();
     assert.equal((await settle('bitcoin')).status, 400);
-    config.paymentMethods = new Set(['upi']);
+    assert.equal((await settle('upi')).status, 400, 'UPI no longer exists');
+    config.paymentMethods = new Set(['razorpay']);
     try {
       const cash = await settle('cash');
       assert.equal(cash.status, 409);
       assert.equal(cash.body.error.code, 'METHOD_NOT_AVAILABLE');
     } finally {
-      config.paymentMethods = new Set(['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm']);
+      config.paymentMethods = new Set(['cash', 'razorpay', 'phonepe']);
     }
-    const upi = await settle('upi');
-    assert.equal(upi.status, 200);
-    assert.equal(upi.body.data.method, 'upi');
+    assert.equal((await settle('cash')).status, 200);
   });
 
   it("does not let another restaurant see or settle this table's bill", async () => {
@@ -2446,7 +1884,7 @@ describe('menu colours (theme)', () => {
   it('serves the colours to the customer menu and order pages', async () => {
     const menu = await api('GET', `/api/public/t/${s.qrToken}`);
     assert.deepEqual(menu.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a', style: 'classic' });
-    const order = await api('GET', `/api/public/orders/${s.upiOrder.token}`);
+    const order = await api('GET', `/api/public/orders/${s.secondOrderToken}`);
     assert.deepEqual(order.body.data.vendor.theme, { primary: '#b91c1c', accent: '#e8872a', style: 'classic' });
   });
 
@@ -2466,7 +1904,7 @@ describe('menu colours (theme)', () => {
     }
     const menu = await api('GET', `/api/public/t/${s.qrToken}`);
     assert.equal(menu.body.data.vendor.theme.style, 'night', 'the last one chosen');
-    const order = await api('GET', `/api/public/orders/${s.upiOrder.token}`);
+    const order = await api('GET', `/api/public/orders/${s.secondOrderToken}`);
     assert.equal(order.body.data.vendor.theme.style, 'night');
     // Another restaurant is not affected, and an unknown design is refused.
     assert.equal((await api('GET', '/api/auth/me', { token: s.otherToken })).body.data.theme.style, 'classic');
@@ -2589,7 +2027,6 @@ describe('online payments (PhonePe)', () => {
 
   it('validates and stores the keys without ever returning the secret', async () => {
     assert.equal((await put({ phonepe_client_id: 'no spaces allowed', phonepe_client_secret: SECRET })).status, 400);
-    assert.equal((await put({ phonepe_env: 'production' })).status, 400, 'sandbox or live only');
     assert.equal((await put({ phonepe_enabled: true })).status, 400, 'no keys yet');
 
     const wrong = await put({ phonepe_enabled: true, phonepe_client_id: CLIENT_ID, phonepe_client_version: '1', phonepe_client_secret: 'wrong-secret-value' });
@@ -2600,18 +2037,37 @@ describe('online payments (PhonePe)', () => {
 
     const saved = await put({ phonepe_client_secret: SECRET });
     assert.equal(saved.body.data.phonepe_configured, true);
-    assert.equal(saved.body.data.phonepe_env, 'sandbox');
+    assert.equal('phonepe_env' in saved.body.data, false, 'there is no sandbox choice');
     assert.equal(saved.body.data.phonepe_client_id, CLIENT_ID);
     assert.ok(!JSON.stringify(saved.body).includes(SECRET));
     const stored = await db.query(`SELECT phonepe_secret_enc FROM vendor_payment_settings WHERE phonepe_client_id = $1`, [CLIENT_ID]);
     assert.ok(stored.rows.every((row) => !String(row.phonepe_secret_enc).includes(SECRET)), 'secret is encrypted at rest');
     const ok = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'phonepe' } });
     assert.equal(ok.body.data.ok, true);
-    assert.equal(ok.body.data.mode, 'test');
+    assert.equal(ok.body.data.mode, 'live');
 
     const menu = await api('GET', `/api/public/t/${qr}`);
     assert.equal(menu.body.data.payment_options.phonepe, true);
     assert.equal(menu.body.data.payment_options.razorpay, false);
+  });
+
+  it('talks only to PhonePe\'s live servers', async () => {
+    const { pingPhonepe } = await import('../src/lib/phonepe.js');
+    const realFetch = globalThis.fetch;
+    const fake = config.phonepeApiBase;
+    const asked = [];
+    config.phonepeApiBase = '';
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      return new Response(JSON.stringify({ access_token: 'token' }), { status: 200 });
+    };
+    try {
+      await pingPhonepe({ clientId: 'LIVEMERCHANT_1', clientVersion: '1', clientSecret: 'a-live-client-secret' });
+    } finally {
+      globalThis.fetch = realFetch;
+      config.phonepeApiBase = fake;
+    }
+    assert.deepEqual(asked, ['https://api.phonepe.com/apis/identity-manager/v1/oauth/token']);
   });
 
   it('lets a restaurant use one online gateway at a time', async () => {
@@ -2968,228 +2424,51 @@ describe('payment webhooks (the gateway tells us a payment arrived)', () => {
     assert.equal((await view(cancelled)).payment_status, 'unpaid', 'a cancelled order is left alone');
     assert.equal((await view(pending)).payment_status, 'unpaid', 'still pending at PhonePe: nothing is guessed');
   });
-});
 
-describe('online payments (Paytm)', async () => {
-  const { default: PaytmChecksum } = await import('paytmchecksum');
-  const MID = 'TESTMID12345678901';
-  const KEY = 'paytmkey16chars!';
-  let token;
-  let qr;
-  let itemId;
-  let mock;
-  let savedTheia;
-  let savedStatus;
-  const txns = new Map(); // orderId -> { amount, result, txnId, tamper }
-  let txnSeq = 1000;
-  const calls = [];
-  const sign = (body, key = KEY) => PaytmChecksum.generateSignature(JSON.stringify(body), key);
-  const put = (body) => api('PUT', '/api/admin/payment-settings', { token, body });
-  const place = async (pay_pref) => {
-    const r = await api('POST', `/api/public/t/${qr}/orders`, { body: { pay_pref, items: [{ item_id: itemId, quantity: 2, option_ids: [] }] } });
-    assert.equal(r.status, 201, JSON.stringify(r.body));
-    return r.body.data;
-  };
-  const start = (order) => api('POST', `/api/public/orders/${order.token}/pay/paytm`);
-  const verify = (order) => api('POST', `/api/public/orders/${order.token}/pay/paytm/verify`);
-  const lastAttempt = async (order) =>
-    (await db.query(`SELECT p.* FROM payments p JOIN orders o ON o.id = p.order_id WHERE o.public_token = $1 AND p.provider = 'paytm' ORDER BY p.id DESC LIMIT 1`, [order.token])).rows[0];
+  it('takes only live Razorpay keys on the live server: with a test key nothing can mark an order paid', async () => {
+    const r = await setup('Live Only Cafe', 'live.only@example.test');
+    const testKeys = { razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' };
+    // From before the rule: a saved test key with its webhook secret, an open checkout, and a QR that Razorpay's test mode says is paid.
+    assert.equal((await r.put({ ...testKeys, razorpay_webhook_secret: RZ_SECRET })).status, 200);
+    const order = await place(r);
+    const amount = Math.round(order.total * 100);
+    assert.equal((await api('POST', `/api/public/orders/${order.token}/razorpay`)).status, 200);
+    const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
+    qrCodes.get(qr.qr_id).payments.push({ id: 'pay_TESTQR01', status: 'captured', amount });
+    await db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE order_id IN (SELECT id FROM orders WHERE public_token = $1)`, [order.token]);
+    const key = await hookKey(r);
 
-  before(async () => {
-    // A fake Paytm: it checks the signature on every request, signs its answers with the merchant key and lets the test decide who paid.
-    mock = await new Promise((resolve) => {
-      const server = http
-        .createServer((req, res) => {
-          let data = '';
-          req.on('data', (c) => (data += c));
-          req.on('end', async () => {
-            const path = req.url.split('?')[0];
-            const payload = data ? JSON.parse(data) : {};
-            calls.push({ path, query: req.url.split('?')[1] ?? '', body: payload.body, head: payload.head });
-            res.setHeader('Content-Type', 'application/json');
-            const reply = async (body, { badSignature = false } = {}) => {
-              res.end(JSON.stringify({ head: { responseTimestamp: String(Date.now()), signature: badSignature ? await sign({ other: 'body' }) : await sign(body) }, body }));
-            };
-            let keyOk = false;
-            try {
-              keyOk = Boolean(payload.head?.signature) && Boolean(await PaytmChecksum.verifySignature(JSON.stringify(payload.body), KEY, payload.head.signature));
-            } catch {
-              keyOk = false;
-            }
-            if (!keyOk) {
-              // Paytm's real answer to a bad checksum is not signed with the merchant key.
-              return res.end(JSON.stringify({ body: { resultInfo: { resultStatus: 'F', resultCode: '2005', resultMsg: 'Checksum provided is invalid' } } }));
-            }
-            if (path === '/theia/api/v1/initiateTransaction') {
-              txns.set(payload.body.orderId, { amount: payload.body.txnAmount.value, result: 'PENDING', txnId: `20261117${(txnSeq += 1)}` });
-              return reply({ resultInfo: { resultStatus: 'S', resultCode: '0000', resultMsg: 'Success' }, txnToken: `tok_${payload.body.orderId}` });
-            }
-            if (path === '/v3/order/status') {
-              const found = txns.get(payload.body.orderId);
-              if (!found) return reply({ resultInfo: { resultStatus: 'NO_RECORD_FOUND', resultCode: '334', resultMsg: 'Invalid Order ID' } });
-              return reply(
-                {
-                  resultInfo: { resultStatus: found.result, resultCode: found.result === 'TXN_SUCCESS' ? '01' : '400', resultMsg: found.result },
-                  txnId: found.txnId,
-                  bankTxnId: '630000000001',
-                  orderId: payload.body.orderId,
-                  mid: MID,
-                  txnAmount: found.paidAmount ?? found.amount,
-                },
-                { badSignature: Boolean(found.tamper) },
-              );
-            }
-            if (path === '/refund/apply') return reply({ resultInfo: { resultStatus: 'PENDING', resultCode: '601', resultMsg: 'Refund request was raised' }, refundId: 'PTM_REFUND_7' });
-            return res.end(JSON.stringify({ body: { resultInfo: { resultStatus: 'F', resultCode: '9999', resultMsg: 'unknown endpoint' } } }));
-          });
-        })
-        .listen(0, '127.0.0.1', () => resolve(server));
-    });
-    savedTheia = config.paytmTheiaBase;
-    savedStatus = config.paytmStatusBase;
-    config.paytmTheiaBase = config.paytmStatusBase = `http://127.0.0.1:${mock.address().port}`;
+    config.razorpayLiveOnly = true;
+    try {
+      const settings = (await api('GET', '/api/admin/payment-settings', { token: r.token })).body.data;
+      assert.deepEqual([settings.razorpay_live_only, settings.razorpay_configured], [true, false]);
+      assert.equal((await api('GET', `/api/public/t/${r.qr}`)).body.data.payment_options.razorpay, false);
+      assert.equal((await api('POST', `/api/public/orders/${order.token}/razorpay`)).status, 409);
+      assert.equal((await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).status, 409);
 
-    token = (await signupAccount({ name: 'Paytm Cafe', email: 'paytm.cafe@example.test', password: 'a-long-enough-password' })).body.data.token;
-    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
-    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Masala Chai', price: 40 } })).body.data.id;
-    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'T1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-  });
+      const signature = createHmac('sha256', 'secret-value-123').update('order_MOCK123456|pay_TESTCHK1').digest('hex');
+      const checkout = await api('POST', `/api/public/orders/${order.token}/razorpay/verify`, {
+        body: { razorpay_order_id: 'order_MOCK123456', razorpay_payment_id: 'pay_TESTCHK1', razorpay_signature: signature },
+      });
+      assert.equal(checkout.status, 400);
+      assert.equal((await rzHook(key, captured('order_MOCK123456', amount, 'pay_TESTHK01'))).body.data.ignored, true);
+      await api('POST', `/api/public/orders/${order.token}/razorpay-qr/verify`);
+      await reconcileOnce(db, { log: { info: none, warn: none } });
+      assert.equal((await view(order)).payment_status, 'unpaid');
 
-  after(async () => {
-    config.paytmTheiaBase = savedTheia;
-    config.paytmStatusBase = savedStatus;
-    await new Promise((r) => mock.close(r));
-  });
+      const refused = await r.put(testKeys);
+      assert.equal(refused.status, 400);
+      assert.equal(refused.body.error.details[0].field, 'razorpay_key_id');
+      assert.match((await r.put({ razorpay_enabled: true })).body.error.message, /test key/);
+      assert.equal((await api('POST', '/api/admin/payment-settings/test', { token: r.token })).body.error.code, 'RAZORPAY_TEST_KEY');
 
-  it('tells the diner to pay another way while the restaurant has no Paytm keys', async () => {
-    const order = await place();
-    const r = await start(order);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'GATEWAY_NOT_CONFIGURED');
-  });
-
-  it('validates and stores the keys without ever returning the Merchant Key', async () => {
-    assert.equal((await put({ paytm_mid: 'no spaces allowed', paytm_merchant_key: KEY })).status, 400);
-    assert.equal((await put({ paytm_mid: MID, paytm_merchant_key: 'too-short' })).status, 400, 'a Merchant Key is exactly 16 characters');
-    assert.equal((await put({ paytm_enabled: true })).status, 400, 'no keys yet');
-
-    const wrong = await put({ paytm_enabled: true, paytm_mid: MID, paytm_merchant_key: 'wrongkey16chars!' });
-    assert.equal(wrong.status, 200);
-    const failing = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'paytm' } });
-    assert.equal(failing.status, 502);
-    assert.equal(failing.body.error.code, 'PAYTM_BAD_KEYS');
-
-    const saved = await put({ paytm_merchant_key: KEY, paytm_website: 'WEBSTAGING' });
-    assert.equal(saved.body.data.paytm_configured, true);
-    assert.equal(saved.body.data.paytm_env, 'sandbox');
-    assert.equal(saved.body.data.paytm_mid, MID);
-    assert.ok(!JSON.stringify(saved.body).includes(KEY));
-    const stored = await db.query(`SELECT paytm_key_enc FROM vendor_payment_settings WHERE paytm_mid = $1`, [MID]);
-    assert.ok(stored.rows.every((row) => !String(row.paytm_key_enc).includes(KEY)), 'key is encrypted at rest');
-    const ok = await api('POST', '/api/admin/payment-settings/test', { token, body: { provider: 'paytm' } });
-    assert.equal(ok.body.data.ok, true);
-    assert.equal(ok.body.data.mode, 'test');
-    assert.equal((await api('GET', `/api/public/t/${qr}`)).body.data.payment_options.paytm, true);
-  });
-
-  it('lets a restaurant use one online gateway at a time', async () => {
-    const both = await put({ razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
-    assert.equal(both.status, 400);
-    assert.match(both.body.error.message, /one online payment gateway/);
-    const swap = await put({ paytm_enabled: false, razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' });
-    assert.equal(swap.status, 200);
-    const back = await put({ razorpay_enabled: false, paytm_enabled: true });
-    assert.equal(back.status, 200);
-    assert.equal(back.body.data.paytm_key_set, true, 'the saved key is kept');
-  });
-
-  it('opens a signed Paytm payment, sends the diner to the pay page, and marks the order paid only on a verified TXN_SUCCESS', async () => {
-    const order = await place('online');
-    const a = await start(order);
-    assert.equal(a.status, 200, JSON.stringify(a.body));
-    assert.equal(a.body.data.client.type, 'form');
-    assert.match(a.body.data.client.action, /\/theia\/api\/v1\/showPaymentPage\?mid=TESTMID12345678901&orderId=mz_/);
-    assert.equal(a.body.data.client.fields.mid, MID);
-    assert.match(a.body.data.client.fields.txnToken, /^tok_mz_/);
-    assert.equal(a.body.data.amount, 80);
-    const init = calls.filter((c) => c.path === '/theia/api/v1/initiateTransaction').at(-1);
-    assert.equal(init.body.requestType, 'Payment');
-    assert.equal(init.body.websiteName, 'WEBSTAGING');
-    assert.equal(init.body.txnAmount.value, '80.00', 'Paytm takes rupees with two decimals');
-    assert.ok(init.body.orderId.length <= 50);
-    assert.match(init.body.callbackUrl, new RegExp(`/api/public/paytm/callback/${order.token}$`));
-    const attempt = await lastAttempt(order);
-
-    // Not paid yet, and a made-up claim changes nothing.
-    assert.equal((await verify(order)).body.data.payment_status, 'unpaid');
-    txns.get(attempt.provider_order_id).result = 'TXN_FAILURE';
-    assert.equal((await verify(order)).body.data.payment_status, 'unpaid', 'a failure does not pay the order');
-
-    // Paytm's answer whose signature does not check out is never believed.
-    Object.assign(txns.get(attempt.provider_order_id), { result: 'TXN_SUCCESS', tamper: true });
-    const forged = await verify(order);
-    assert.equal(forged.status, 502);
-    assert.equal(forged.body.error.code, 'PAYTM_BAD_RESPONSE');
-    assert.equal((await api('GET', `/api/public/orders/${order.token}`)).body.data.payment_status, 'unpaid');
-
-    txns.get(attempt.provider_order_id).tamper = false;
-    const paid = await verify(order);
-    assert.equal(paid.status, 200);
-    assert.equal(paid.body.data.payment_status, 'paid');
-    assert.equal(paid.body.data.payment_method, 'paytm');
-    assert.equal(paid.body.data.status, 'accepted');
-    const row = await lastAttempt(order);
-    assert.equal(row.status, 'paid');
-    assert.equal(row.provider_payment_id, txns.get(attempt.provider_order_id).txnId);
-    assert.equal((await start(order)).status, 409, 'an already paid order cannot be paid again');
-  });
-
-  it('does not mark an order paid when the amount Paytm took is different', async () => {
-    const order = await place('online');
-    assert.equal((await start(order)).status, 200);
-    const attempt = await lastAttempt(order);
-    Object.assign(txns.get(attempt.provider_order_id), { result: 'TXN_SUCCESS', paidAmount: '1.00', txnId: '20261117999' });
-    const r = await verify(order);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'PAYMENT_AMOUNT_MISMATCH');
-    assert.equal((await api('GET', `/api/public/orders/${order.token}`)).body.data.payment_status, 'unpaid');
-  });
-
-  it("passes the diner's browser from the Paytm callback to the order page without believing anything in it", async () => {
-    const order = await place('online');
-    const res = await fetch(`${base}/api/public/paytm/callback/${order.token}`, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'STATUS=TXN_SUCCESS&TXNAMOUNT=80.00&CHECKSUMHASH=forged',
-    });
-    assert.equal(res.status, 303);
-    assert.equal(res.headers.get('location'), `${config.customerAppUrl}/o/${order.token}`);
-    assert.equal((await api('GET', `/api/public/orders/${order.token}`)).body.data.payment_status, 'unpaid', 'a forged callback pays nothing');
-    assert.equal((await fetch(`${base}/api/public/paytm/callback/not-a-token`, { method: 'POST', redirect: 'manual' })).status, 404);
-  });
-
-  it('refunds a Paytm payment from the admin and records it', async () => {
-    const order = await place('online');
-    await start(order);
-    const attempt = await lastAttempt(order);
-    txns.get(attempt.provider_order_id).result = 'TXN_SUCCESS';
-    txns.get(attempt.provider_order_id).txnId = '20261117555';
-    await verify(order);
-    const id = (await db.query(`SELECT id FROM orders WHERE public_token = $1`, [order.token])).rows[0].id;
-
-    const refunded = await api('POST', `/api/admin/orders/${id}/refund`, { token });
-    assert.equal(refunded.status, 200, JSON.stringify(refunded.body));
-    assert.equal(refunded.body.data.payment_status, 'refunded');
-    const call = calls.filter((c) => c.path === '/refund/apply').at(-1);
-    assert.equal(call.body.txnType, 'REFUND');
-    assert.equal(call.body.txnId, '20261117555');
-    assert.equal(call.body.orderId, attempt.provider_order_id);
-    assert.equal(call.body.refundAmount, '80.00');
-    assert.match(call.body.refId, /^mzr_\d+_/);
-    const row = await lastAttempt(order);
-    assert.equal(row.status, 'refunded');
-    assert.equal(row.refund_id, 'PTM_REFUND_7');
+      const live = await r.put({ razorpay_enabled: true, razorpay_key_id: 'rzp_live_abcdef123456', razorpay_key_secret: 'live-secret-value' });
+      assert.equal(live.status, 200);
+      assert.equal(live.body.data.razorpay_configured, true);
+      assert.equal((await api('GET', `/api/public/t/${r.qr}`)).body.data.payment_options.razorpay, true);
+    } finally {
+      config.razorpayLiveOnly = false;
+    }
   });
 });
 
@@ -3333,7 +2612,6 @@ describe('the diner cancels their own order', () => {
     const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
     itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
     qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'X1', capacity: 2 } })).body.data.qr_url.split('/').pop();
-    await api('PUT', '/api/admin/payment-settings', { token, body: { upi_enabled: true, upi_id: 'cancel.cafe@okaxis' } });
   });
 
   it('lets the diner cancel an order nobody has touched, and shows it as cancelled to the restaurant', async () => {
@@ -3361,13 +2639,7 @@ describe('the diner cancels their own order', () => {
     assert.equal((await view(order)).status, 'accepted', 'nothing changed');
   });
 
-  it('refuses once the diner said they paid by UPI, or an online payment was started, or it is paid', async () => {
-    const claimed = await place('upi');
-    assert.equal((await api('POST', `/api/public/orders/${claimed.token}/upi-claim`, { body: {} })).status, 200);
-    const afterClaim = await cancel(claimed);
-    assert.equal(afterClaim.status, 409);
-    assert.match(afterClaim.body.error.message, /told us you paid/i);
-
+  it('refuses once an online payment was started, or the order is paid', async () => {
     const started = await place();
     const startedId = await adminId(started);
     await db.query(`INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) VALUES ($1, 'razorpay', 'order_x', 2000, 'created')`, [startedId]);
@@ -3617,5 +2889,116 @@ describe('the orders page figures: counts by state, the preparing and ready filt
     const other = (await signupAccount({ name: 'Dash Other', email: 'dash.other@mezmitra.test', password: 'a-long-enough-password' })).body.data.token;
     const o = (await api('GET', '/api/admin/dashboard/overview', { token: other })).body.data;
     assert.deepEqual([o.today_orders, o.average_order, o.live_orders, o.latest_orders.length, o.top_selling.length], [0, 0, 0, 0, 0]);
+  });
+});
+
+describe('UPI, Cashfree and Paytm were removed: nothing breaks for restaurants that had them', () => {
+  let token;
+  let vendorId;
+  let qr;
+  let itemId;
+
+  before(async () => {
+    const su = await signupAccount({ name: 'Old Ways Cafe', email: 'old.ways@example.test', password: 'a-long-enough-password' });
+    token = su.body.data.token;
+    vendorId = su.body.data.vendor.id;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 20 } })).body.data.id;
+    qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'O1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+  });
+
+  it('starts with a deployment that still lists a removed method, ignoring it, and still refuses a made-up one', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const run = (value) =>
+      execFileSync(process.execPath, ['-e', "import('./src/config.js').then(({ config }) => console.log([...config.paymentMethods].join()))"], {
+        env: { ...process.env, PAYMENT_METHODS: value, NODE_ENV: 'test', DATABASE_URL: '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+        .toString()
+        .trim();
+    assert.equal(run('upi,cash,razorpay,phonepe'), 'cash,razorpay,phonepe', 'the live setting keeps working');
+    assert.equal(run('upi'), 'cash', 'only removed ones: cash, so orders can still be taken');
+    assert.equal(run('razorpay'), 'razorpay');
+    assert.throws(() => run('bitcoin'));
+  });
+
+  it('does not offer or accept the removed ways of paying', async () => {
+    const menu = (await api('GET', `/api/public/t/${qr}`)).body.data;
+    assert.deepEqual(menu.payment_options, { cash: true, razorpay: false, phonepe: false });
+    assert.equal((await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }], pay_pref: 'upi' } })).status, 400);
+    const settings = (await api('GET', '/api/admin/payment-settings', { token })).body.data;
+    for (const key of Object.keys(settings)) assert.doesNotMatch(key, /^(upi|cashfree|paytm)_/);
+    const placed = (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+    assert.equal('upi' in placed, false);
+    assert.equal('payment_claim' in placed, false);
+    for (const path of ['upi-claim', 'cashfree', 'cashfree/verify']) assert.equal((await api('POST', `/api/public/orders/${placed.token}/${path}`, { body: {} })).status, 404, path);
+    assert.equal((await api('POST', `/api/public/orders/${placed.token}/pay/paytm`)).status, 404);
+    assert.equal((await api('GET', `/api/public/vendors/${vendorId}/upi-qr`)).status, 404);
+  });
+
+  it('switches cash on for a restaurant that would be left with no way to be paid (migration 026), and leaves others alone', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const sql = await readFile(new URL('../migrations/026_upi_cashfree_paytm_removed.sql', import.meta.url), 'utf8');
+    const other = (await signupAccount({ name: 'Keys Cafe', email: 'keys.cafe@example.test', password: 'a-long-enough-password' })).body.data;
+    await api('GET', '/api/admin/payment-settings', { token: other.token });
+    // This one took only UPI; the other has Razorpay set up and had switched cash off on purpose.
+    await api('GET', '/api/admin/payment-settings', { token });
+    await db.query(`UPDATE vendor_payment_settings SET cash_enabled = false, upi_enabled = true, upi_id = 'old@okbank' WHERE vendor_id = $1`, [vendorId]);
+    await db.query(
+      `UPDATE vendor_payment_settings SET cash_enabled = false, razorpay_enabled = true, razorpay_key_id = 'rzp_test_abcdef123', razorpay_key_secret_enc = 'x' WHERE vendor_id = $1`,
+      [other.vendor.id],
+    );
+    await db.query(sql);
+    const cashOf = async (id) => (await db.query(`SELECT cash_enabled, upi_id FROM vendor_payment_settings WHERE vendor_id = $1`, [id])).rows[0];
+    assert.equal((await cashOf(vendorId)).cash_enabled, true);
+    assert.equal((await cashOf(vendorId)).upi_id, 'old@okbank', 'nothing old is deleted');
+    assert.equal((await cashOf(other.vendor.id)).cash_enabled, false);
+  });
+
+  it('switches PhonePe off where sandbox keys were saved, with cash on instead (migration 027)', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const sql = await readFile(new URL('../migrations/027_phonepe_live_only.sql', import.meta.url), 'utf8');
+    const live = (await signupAccount({ name: 'Live Keys Cafe', email: 'live.keys@example.test', password: 'a-long-enough-password' })).body.data;
+    await api('GET', '/api/admin/payment-settings', { token: live.token });
+    await api('GET', '/api/admin/payment-settings', { token });
+    const withKeys = `UPDATE vendor_payment_settings SET cash_enabled = false, razorpay_enabled = false, phonepe_enabled = true,
+        phonepe_client_id = 'MERCHANT_1', phonepe_client_version = '1', phonepe_secret_enc = 'x', phonepe_env = $2 WHERE vendor_id = $1`;
+    await db.query(withKeys, [vendorId, 'sandbox']);
+    await db.query(withKeys, [live.vendor.id, 'live']);
+    await db.exec(sql); // several statements, run the way the migrator runs them
+    const of = async (id) =>
+      (await db.query(`SELECT cash_enabled, phonepe_enabled, phonepe_client_id, phonepe_env FROM vendor_payment_settings WHERE vendor_id = $1`, [id])).rows[0];
+    assert.deepEqual(await of(vendorId), { cash_enabled: true, phonepe_enabled: false, phonepe_client_id: 'MERCHANT_1', phonepe_env: 'live' });
+    assert.deepEqual(await of(live.vendor.id), { cash_enabled: false, phonepe_enabled: true, phonepe_client_id: 'MERCHANT_1', phonepe_env: 'live' });
+  });
+
+  it('switches Razorpay off where a test key was saved, with cash on instead (migration 028)', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const sql = await readFile(new URL('../migrations/028_razorpay_live_keys_only.sql', import.meta.url), 'utf8');
+    const live = (await signupAccount({ name: 'Live Razorpay Cafe', email: 'live.razorpay@example.test', password: 'a-long-enough-password' })).body.data;
+    await api('GET', '/api/admin/payment-settings', { token: live.token });
+    await api('GET', '/api/admin/payment-settings', { token });
+    const withKey = `UPDATE vendor_payment_settings SET cash_enabled = false, phonepe_enabled = false, razorpay_enabled = true,
+        razorpay_key_id = $2, razorpay_key_secret_enc = 'x' WHERE vendor_id = $1`;
+    await db.query(withKey, [vendorId, 'rzp_test_abcdef123']);
+    await db.query(withKey, [live.vendor.id, 'rzp_live_abcdef123']);
+    await db.exec(sql);
+    const of = async (id) =>
+      (await db.query(`SELECT cash_enabled, razorpay_enabled, razorpay_key_id FROM vendor_payment_settings WHERE vendor_id = $1`, [id])).rows[0];
+    assert.deepEqual(await of(vendorId), { cash_enabled: true, razorpay_enabled: false, razorpay_key_id: 'rzp_test_abcdef123' });
+    assert.deepEqual(await of(live.vendor.id), { cash_enabled: false, razorpay_enabled: true, razorpay_key_id: 'rzp_live_abcdef123' });
+  });
+
+  it('still shows how an older order was paid, in the reports and on its receipt', async () => {
+    const placed = (await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity: 1, option_ids: [] }] } })).body.data;
+    const row = (await db.query(`UPDATE orders SET payment_status = 'paid', payment_method = 'upi', paid_at = now() WHERE public_token = $1 RETURNING id`, [placed.token])).rows[0];
+    const summary = (await api('GET', '/api/admin/reports/summary', { token })).body.data;
+    assert.deepEqual(summary.sales.by_method.map((m) => m.method), ['cash', 'razorpay', 'phonepe', 'upi']);
+    assert.equal(Math.round(summary.sales.by_method.reduce((n, m) => n + m.amount, 0) * 100), Math.round(summary.sales.total * 100), 'totals still add up');
+    const dash = (await api('GET', '/api/admin/dashboard/overview', { token })).body.data;
+    assert.equal(dash.payment_methods.at(-1).method, 'upi');
+    assert.equal((await api('GET', `/api/admin/orders/${row.id}/receipt.pdf`, { token })).status, 200);
+    const refund = await api('POST', `/api/admin/orders/${row.id}/refund`, { token });
+    assert.equal(refund.body.error.code, 'REFUND_MANUAL');
   });
 });

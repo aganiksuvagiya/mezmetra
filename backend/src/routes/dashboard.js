@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { toRupees } from '../lib/money.js';
 import { loadOrderItems, photoUrl } from '../lib/serialize.js';
+import { methodsFor } from '../lib/paymentLabels.js';
 
 const WEEKLY_DAYS = 7;
 const WINDOW_DAYS = 30;
@@ -82,7 +83,7 @@ export function dashboardRouter(db) {
 
     const byMethod = Object.fromEntries(methods.rows.map((r) => [r.method, r.amount]));
     const methodTotal = Object.values(byMethod).reduce((a, b) => a + b, 0);
-    const payment_methods = ['cash', 'upi', 'razorpay', 'cashfree', 'phonepe', 'paytm'].map((method) => ({
+    const payment_methods = methodsFor(methods.rows.map((r) => r.method)).map((method) => ({
       method,
       amount: toRupees(byMethod[method] ?? 0),
       percent: methodTotal ? Math.round(((byMethod[method] ?? 0) / methodTotal) * 100) : 0,

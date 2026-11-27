@@ -3,7 +3,7 @@ import { decryptSecret, safeEqual } from '../lib/crypto.js';
 import { HttpError, notFound } from '../lib/errors.js';
 import { GATEWAYS } from '../lib/gateways.js';
 import { markAttemptPaid } from '../lib/onlinePayments.js';
-import { verifyWebhookSignature } from '../lib/razorpay.js';
+import { isUsableKeyId, verifyWebhookSignature } from '../lib/razorpay.js';
 
 // Payment webhooks: the gateway calls our server the moment a payment succeeds, so an order turns "Paid" even when the diner has closed
 // the browser. Each restaurant has its own gateway account, so each has its own address (/api/webhooks/<gateway>/<webhook_key>) and
@@ -54,6 +54,7 @@ export function webhooksRouter(db) {
     if (!s.razorpay_webhook_secret_enc) throw new HttpError(400, 'WEBHOOK_NOT_SET_UP', 'Save the webhook secret in Payments first.');
     const valid = verifyWebhookSignature({ secret: decryptSecret(s.razorpay_webhook_secret_enc), rawBody: bodyText(req), signature: req.get('x-razorpay-signature') });
     if (!valid) throw new HttpError(400, 'WEBHOOK_SIGNATURE_INVALID', 'The signature does not match.');
+    if (!isUsableKeyId(s.razorpay_key_id)) return ok(res, { ignored: true }); // a test key on the live server: no money moved
 
     const event = bodyJson(req);
     const payment = event?.payload?.payment?.entity;

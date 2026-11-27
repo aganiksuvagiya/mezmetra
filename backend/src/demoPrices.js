@@ -2,7 +2,7 @@ import { createDb } from './db.js';
 import { DEMO, MENU, TEA_POST, TEA_POST_MENU } from './seed.js';
 import { toPaise } from './lib/money.js';
 
-// Prices for a demo restaurant, so a real UPI payment during a demo costs almost nothing.
+// Prices for a demo restaurant, so a real payment during a demo costs almost nothing.
 //   npm run demo:prices                       (Tea Post: every dish Rs 1, extras free)
 //   npm run demo:prices -- --price 5          (every dish Rs 5)
 //   npm run demo:prices -- --restore          (back to the prices written in seed.js)

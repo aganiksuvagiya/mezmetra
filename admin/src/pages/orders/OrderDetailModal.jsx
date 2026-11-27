@@ -14,11 +14,11 @@ import { downloadUrl, useAction, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
 import OrderTimeline from './OrderTimeline.jsx';
 
-// Online payments the admin can give back from the order screen (cash and UPI are handed back by staff).
-const REFUNDABLE = ['razorpay', 'phonepe', 'paytm'];
-const GATEWAY_NAME = { razorpay: 'Razorpay', phonepe: 'PhonePe', paytm: 'Paytm' };
+// Online payments the admin can give back from the order screen (cash is handed back by staff).
+const REFUNDABLE = ['razorpay', 'phonepe'];
+const GATEWAY_NAME = { razorpay: 'Razorpay', phonepe: 'PhonePe' };
 
-const PAY_PREF = { counter: 'at the counter', online: 'online', upi: 'with a UPI app' };
+const PAY_PREF = { counter: 'at the counter', online: 'online' };
 
 function Section({ title, children }) {
   return (
@@ -34,7 +34,7 @@ function OrderBody({ order, fmt }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={order.status} ready={Boolean(order.ready_at)} />
-        <PaymentBadge status={order.payment_status} method={order.payment_method} claimed={Boolean(order.payment_claim)} />
+        <PaymentBadge status={order.payment_status} method={order.payment_method} />
         <span className="text-sm text-slate-600">
           Table <strong className="font-semibold text-slate-900">{order.table_number}</strong>
         </span>
@@ -45,15 +45,8 @@ function OrderBody({ order, fmt }) {
           </Badge>
         )}
       </div>
-      {order.payment_status === 'unpaid' && order.payment_claim && order.status !== 'cancelled' && (
-        <Alert tone="warning">
-          <strong>Customer says they paid {fmt.money(order.total)} by UPI</strong> ({fmt.dateTime(order.payment_claim.claimed_at)}
-          {order.payment_claim.reference ? <>, reference <span className="font-mono">{order.payment_claim.reference}</span></> : ', no reference given'}).
-          Check your bank or UPI app, then press <strong>Confirm UPI payment</strong>. Nothing counts as revenue until you do.
-        </Alert>
-      )}
-      {order.payment_status === 'unpaid' && order.pay_pref && (order.status === 'pending' || order.status === 'accepted') && (
-        <p className="-mt-3 text-sm text-slate-500">The customer plans to pay {PAY_PREF[order.pay_pref] ?? order.pay_pref}.</p>
+      {order.payment_status === 'unpaid' && PAY_PREF[order.pay_pref] && (order.status === 'pending' || order.status === 'accepted') && (
+        <p className="-mt-3 text-sm text-slate-500">The customer plans to pay {PAY_PREF[order.pay_pref]}.</p>
       )}
 
       <Section title={`Items (${order.total_quantity})`}>
@@ -129,11 +122,10 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
   const [run, busy] = useAction();
   const [pending, setPending] = useState(null); // which action is running: 'accept' | 'ready' | 'complete' | 'receipt'
   const [actionError, setActionError] = useState(null);
-  const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'upi' | 'refund' | null
+  const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'refund' | null
 
   const { vendor } = useAuth();
-  // Cash is only a payment method while the product offers it; with UPI only, staff confirm the UPI payment instead
-  // (whether or not the diner tapped "I've paid").
+  // Cash is only a payment method while the product offers it.
   const cashOffered = vendor?.payment_methods?.includes('cash') ?? true;
 
   const order = q.data;
@@ -214,16 +206,9 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
         </Button>,
       );
     }
-    if (active && !paid && (order.payment_claim || !cashOffered)) {
-      main.push(
-        <Button key="upi" size="lg" variant={order.payment_claim || order.status === 'accepted' ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('upi')}>
-          Confirm UPI payment
-        </Button>,
-      );
-    }
     if (active && !paid && cashOffered) {
       main.push(
-        <Button key="cash" size="lg" variant={order.status === 'accepted' && !order.payment_claim ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('cash')}>
+        <Button key="cash" size="lg" variant={order.status === 'accepted' ? 'primary' : 'secondary'} disabled={busy} onClick={() => setConfirm('cash')}>
           Record cash payment
         </Button>,
       );
@@ -252,7 +237,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
           {waitingForPayment && (
             <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-slate-600">
               <InfoIcon size={16} className="text-slate-400" />
-              {cashOffered ? 'Record the payment first, then complete the order' : 'Confirm the payment first, then complete the order'}
+              {cashOffered ? 'Record the payment first, then complete the order' : 'Waiting for the online payment before the order can be completed'}
             </p>
           )}
           {main.length > 0 && <div className={main.length > 1 ? 'grid grid-cols-1 gap-2.5 @[26rem]:grid-cols-2 [&>button]:w-full' : '[&>button]:w-full'}>{main}</div>}
@@ -347,27 +332,6 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
           setConfirm(null);
           setActionError(null);
           applyUpdate(updated, `Cash payment recorded for order #${num}.`);
-        }}
-      />
-
-      <ConfirmDialog
-        open={confirm === 'upi'}
-        tone="primary"
-        title="Confirm UPI payment?"
-        message={
-          order
-            ? `Confirm that ${fmt.money(order.total)} for order #${num} arrived in your bank or UPI account${
-                order.payment_claim?.reference ? ` (reference ${order.payment_claim.reference})` : ''
-              }. This counts towards today’s revenue and can’t be undone.`
-            : ''
-        }
-        confirmLabel="Confirm payment"
-        onCancel={() => setConfirm(null)}
-        onConfirm={async () => {
-          const updated = await api(`/api/admin/orders/${orderId}/upi-payment`, { method: 'POST', body: {} });
-          setConfirm(null);
-          setActionError(null);
-          applyUpdate(updated, `UPI payment confirmed for order #${num}.`);
         }}
       />
     </>

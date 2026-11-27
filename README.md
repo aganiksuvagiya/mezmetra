@@ -1,7 +1,7 @@
 # MezMitra
 
 QR-code table ordering for restaurants. Diners scan the code on their table, browse the menu on their phone, place an
-order and pay at the counter or online (Razorpay, Cashfree, PhonePe or Paytm). Staff manage the menu, tables and live orders from an admin panel.
+order and pay at the counter or online (Razorpay or PhonePe). Staff manage the menu, tables and live orders from an admin panel.
 
 ```
 backend/    Node.js + Express API (PostgreSQL: Aiven in production, PGlite locally)
@@ -38,10 +38,10 @@ Both web apps listen on your network address, so a phone on the same Wi-Fi can o
 3. On the phone open `http://192.168.1.22:5174/` (customer menu) or `http://192.168.1.22:5180/` (admin). Scan a table QR with the phone's own camera app, or print/show the QR from **Tables -> QR codes**.
 4. If it does not load: allow incoming connections for `node` in the macOS firewall prompt, make sure the phone is on the same Wi-Fi (not a guest/isolated network), and re-check the address (it can change when you reconnect).
 
-On plain `http://` the *in-page* camera scanner is disabled by the browser (it needs `https`); use the phone's camera app or "Use a photo of the QR code". UPI app buttons work over `http`.
+On plain `http://` the *in-page* camera scanner is disabled by the browser (it needs `https`); use the phone's camera app or "Use a photo of the QR code".
 
 ```bash
-npm test          # backend end-to-end tests (in-memory database, fake Razorpay, Cashfree, PhonePe and Paytm)
+npm test          # backend end-to-end tests (in-memory database, fake Razorpay and PhonePe)
 npm run build     # production builds of both web apps (admin/dist, customer/dist)
 ```
 
@@ -82,10 +82,9 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get the **Owner console** (`/owner`, linked from the sidebar): every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
 | `SMTP_URL`, `MAIL_FROM` | Email for password reset. `SMTP_URL` is any provider's SMTP address, e.g. `smtps://user:app-password@smtp.gmail.com:465` (Gmail needs an *app password*). Empty = no email is sent; in development the email is printed in the API console instead. |
 | `ADMIN_APP_URL` | Public URL of the admin site (default `http://localhost:5180`): the base of the link inside the reset email. |
-| `PAYMENT_METHODS` | Ways of paying the product offers: any of `upi`, `cash`, `razorpay`, `cashfree`, `phonepe`, `paytm`, comma separated. **Default `upi` (UPI only).** Restaurants can only switch on what is listed here; use `upi,cash,razorpay,phonepe,paytm` to bring the others back. |
-| `API_PUBLIC_URL` | Optional, e.g. `https://your-api.onrender.com`. Paytm sends the diner's browser back through this API, so it needs its public address; empty = read from the request (fine behind Render's proxy). |
-| `PHONEPE_API_BASE`, `PAYTM_THEIA_BASE`, `PAYTM_STATUS_BASE` | Optional. Leave empty: PhonePe's and Paytm's own servers are used (the restaurant picks sandbox or live). Tests point them at fakes. |
-| `CASHFREE_API_BASE` | Optional. Leave empty: Cashfree's own servers are used (sandbox for App IDs starting with `TEST`, production otherwise). Tests point it at a fake. |
+| `PAYMENT_METHODS` | Ways of paying the product offers: any of `cash`, `razorpay`, `phonepe`, comma separated. **Default: all three.** Restaurants can only switch on what is listed here. |
+| `API_PUBLIC_URL` | Optional, e.g. `https://your-api.onrender.com`: the base of the payment webhook address shown to restaurants. Empty = read from the request (fine behind Render's proxy). |
+| `PHONEPE_API_BASE` | Optional. Leave empty: PhonePe's own live servers are used. Tests point it at a fake. |
 | `TRUST_PROXY` | How many reverse proxies sit in front of the API: `1` on Render/Fly/Heroku, `0` when none (default in production is `1`). Needed for correct per-IP rate limits. |
 
 Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin.
@@ -103,7 +102,7 @@ Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are 
   be ordered; carts drop it. **All back in stock** clears every sold-out dish at once (end of the day). This is separate from the
   *Available* switch, which hides a dish completely.
 - **Reports:** *Reports* shows a day (or up to 92 days) of sales: money received (counted on the day it was paid, like the dashboard),
-  split by UPI / cash / online, orders placed, unpaid orders and best sellers, with a **CSV** (one row per order, opens in Excel/Sheets) and
+  split by payment method (cash / online), orders placed, unpaid orders and best sellers, with a **CSV** (one row per order, opens in Excel/Sheets) and
   a **PDF** download.
 
 ## Voice for new orders
@@ -131,7 +130,7 @@ the login ends it at once. The restaurant's own login also works on the screen, 
 
 ## Demo data (sample orders and prices)
 
-For a client demo: `npm run demo:prices` makes every Tea Post dish Rs 1 (extras free), so a real UPI payment costs almost nothing, and
+For a client demo: `npm run demo:prices` makes every Tea Post dish Rs 1 (extras free), so a real payment costs almost nothing, and
 `npm run demo:history` adds 4 paid, completed sample orders over the last 2 days so the dashboard, Orders and Reports are not empty.
 `npm run demo:history -- --busy` makes a busy cafe (about 30 orders a day for 14 days). Sample orders are marked and never mix with
 real ones: run `npm run demo:history -- --remove` to delete only them, and `npm run demo:prices -- --restore` for the seed.js prices.
@@ -143,67 +142,40 @@ Add `--email you@x.in` to use another restaurant.
 Create an account of your own (`NEW_PASSWORD='a-long-password' npm run create-restaurant -w backend -- "My Cafe" me@example.com`), put its email in `SUPER_ADMIN_EMAILS` and restart the API. That account now has
 the **Owner console** at `/owner` (a link above "Sign out" in the sidebar; old `/platform` links land there). It is a separate area with
 its own dark header and an "Owner" mark, not part of a restaurant's admin, and it has a link back to the account's own restaurant admin.
-It lists every restaurant with its orders, paid revenue, tables, dishes and whether it has a UPI
-ID, search and filters, **Add restaurant** (you type its name, email and a first password; the login is shown once so you can hand it over, because restaurants cannot sign themselves up), and **Suspend / Reactivate**. A restaurant's page has **Edit details** (fix its name or login email) and the **Activity** page lists everything done from the console, across all restaurants, with a search and a filter by kind of action. Everyone else who opens `/owner` is sent back to their own admin. A suspended restaurant cannot sign in (it sees your optional reason), its admin
+It lists every restaurant with its orders, paid revenue, tables and dishes, with search and filters, **Add restaurant** (you type its name, email and a first password; the login is shown once so you can hand it over, because restaurants cannot sign themselves up), and **Suspend / Reactivate**. A restaurant's page has **Edit details** (fix its name or login email) and the **Activity** page lists everything done from the console, across all restaurants, with a search and a filter by kind of action. Everyone else who opens `/owner` is sent back to their own admin. A suspended restaurant cannot sign in (it sees your optional reason), its admin
 API is refused on the very next request, and its tables stop taking orders; its data is kept and reactivating restores everything.
 Platform owner accounts cannot be suspended. Removing an email from `SUPER_ADMIN_EMAILS` removes the access.
 
-## Payments: UPI only for now
+## Payments: cash, Razorpay and PhonePe
 
-> **Personal UPI ID?** Google Pay and PhonePe refuse the pay-with-app buttons for an ordinary UPI ID ("bank limit exceeded", "security reasons"), so the buttons are **off by default**: diners pay by typing the UPI ID (a QR code is shown too). Turn on *Show UPI app buttons* in Admin -> Payments only for a business (merchant) UPI ID.
+Diners pay at the counter (cash) or online. `PAYMENT_METHODS` lists what the product offers; each restaurant switches those on in
+**Admin -> Payments** and uses **one** online gateway at a time (Razorpay or PhonePe). New restaurants start with cash on. While a
+restaurant has no way to be paid, the Dashboard shows a reminder and the menu refuses orders with a clear message.
 
-By default (`PAYMENT_METHODS=upi`) diners pay with a UPI app (Google Pay, PhonePe, Paytm ...): the order page opens the app with the
-exact amount filled in, the diner taps "I've paid", and the restaurant confirms the money arrived (**Orders -> Confirm UPI payment**).
-A restaurant has to enter its UPI ID in **Admin -> Payments** before diners can order; until then the Dashboard shows a reminder and the
-menu refuses orders with a clear message. Cash and Razorpay are hidden everywhere (admin, customer menu, API) until `PAYMENT_METHODS`
-lists them again; nothing is deleted, so switching them back on needs no migration.
+The plain "UPI ID" way of paying (UPI app links, the restaurant's own UPI QR, staff confirming the payment), Cashfree and Paytm were
+removed. Orders paid those ways keep their names in Orders, receipts and Reports, and the old data stays in the database. Migration
+`026` switches cash on for any restaurant that was left with no way to be paid.
 
-## Online payments (Cashfree)
+## Online payments (PhonePe)
 
-Only used when `PAYMENT_METHODS` includes `cashfree`. Cashfree is the lower-fee online gateway (UPI apps, cards, net banking) and,
-unlike a plain UPI ID, it **tells the server when the money arrived**, so the order turns "Paid" by itself.
+The official PhonePe payment gateway (**Standard Checkout v2**): the diner is sent to PhonePe's own page to pay by UPI, card or net
+banking, and comes back to the order page. The money goes through PhonePe to the restaurant's own merchant account; MezMitra never
+holds it.
 
-Each restaurant brings its own Cashfree account: **Admin -> Payments** -> enter the **App ID** and **Secret Key** from the Cashfree
-dashboard (Payment Gateway -> Developers -> API Keys). The secret is stored encrypted and never sent back to the browser. App IDs starting
-with `TEST` use Cashfree's sandbox; any other App ID is a live account. A restaurant uses **one** online gateway at a time (Cashfree or
-Razorpay): turning one on turns the other off. Diners see **Pay online** on their order page.
+Each restaurant brings its own PhonePe **payment gateway** account: **Admin -> Payments** -> turn on *Online payments (PhonePe)* and
+enter the **Client ID**, **Client Version** (usually `1`) and **Client Secret** (PhonePe Business dashboard -> Developer Settings,
+with Test Mode off). Only **live** keys work: there is no sandbox choice, so every payment is real money. These keys come with PhonePe's
+payment gateway onboarding; a UPI ID or QR from the PhonePe Business app is not enough. Secrets are stored encrypted and never shown
+again; *Test connection* proves the keys. Migration `027` switches PhonePe off (and cash on, if needed) for any restaurant that had
+saved sandbox keys.
 
-How a payment is confirmed: the API creates a Cashfree order (`POST /api/public/orders/:token/cashfree`), the browser opens Cashfree's
-payment window, and when it closes (and again whenever the diner returns to the order page) the customer app calls
-`POST /api/public/orders/:token/cashfree/verify`. That call sends nothing: the **server asks Cashfree** for the order status and only
-marks the order paid when Cashfree says `PAID` for exactly the order's amount. A payment is therefore picked up even if the diner paid
-in a UPI app and closed the tab.
+How a payment is confirmed: `POST /api/public/orders/:token/pay/phonepe` opens a payment at PhonePe and returns where to send the
+diner. Coming back, the order page calls `.../pay/phonepe/verify`, which sends nothing: the **server asks PhonePe** for the order status
+and only marks the order paid for exactly the right amount. A payment made on an earlier attempt is found before a new one is opened.
+Refunds work (admin -> order -> *Refund*).
 
-Not built yet: a Cashfree **webhook** (so a payment is recorded even if the diner never returns to the page). Until then staff can see an
-unrecorded payment in the Cashfree dashboard and confirm the order from Orders. Cashfree must also approve the account for production
-payments (KYC); until then use the sandbox keys. If Cashfree rejects server calls in production with an IP or domain message, add the
-API's address / the customer site address in the Cashfree dashboard (Developers settings).
-
-## Online payments (PhonePe and Paytm)
-
-Only used when `PAYMENT_METHODS` includes `phonepe` and/or `paytm`. Both are official payment-gateway integrations (PhonePe **Standard
-Checkout v2**, Paytm **PG**): the diner is sent to the gateway's own page to pay by UPI, card or net banking, and comes back to the order
-page. The money goes through the gateway to the restaurant's own merchant account; MezMitra never holds it.
-
-Each restaurant brings its own merchant account: **Admin -> Payments** -> turn on *Online payments (PhonePe)* or *(Paytm)* and enter
-- PhonePe: **Client ID**, **Client Version** (usually `1`), **Client Secret** (PhonePe Business dashboard -> Developer Settings),
-- Paytm: **Merchant ID** and the 16-character **Merchant Key** (Paytm dashboard -> Developers -> API keys),
-
-and say whether they are the **sandbox/staging** keys or the **live/production** ones (neither gateway can tell from the key). Secrets are
-stored encrypted and never shown again; *Test connection* proves the keys. A restaurant uses **one** online gateway at a time
-(Razorpay, Cashfree, PhonePe or Paytm).
-
-How a payment is confirmed: `POST /api/public/orders/:token/pay/:provider` opens a payment at the gateway and returns where to send the diner
-(a link for PhonePe, a form post for Paytm). Coming back, the order page calls `.../pay/:provider/verify`, which sends nothing: the **server
-asks the gateway** (PhonePe order status; Paytm transaction status, whose reply must carry Paytm's own valid signature) and only marks the
-order paid for exactly the right amount. A payment made on an earlier attempt is found before a new one is opened. Refunds (admin -> order ->
-*Refund*) work for both. Paytm posts the browser back to `/api/public/paytm/callback/:token`, which only passes the diner on to the order page.
-
-Not built yet: the gateways' **webhooks** (a payment is recorded when the diner returns to the page, or opens it again; if they never do, staff
-can reconcile from the gateway dashboard). **Not yet tried against real PhonePe/Paytm accounts**: the code follows their published docs and
-is tested against fakes, so do a first run with sandbox/staging keys and use *Test connection*. For Paytm *live* the docs print no production
-hosts, so two candidates are tried (`secure.paytmpayments.com` / `securegw.paytmpayments.in`, then `securegw.paytm.in`); set `PAYTM_THEIA_BASE`
-and `PAYTM_STATUS_BASE` if Paytm tells you otherwise.
+**Not yet tried against a real PhonePe account**: the code follows their published docs and is tested against fakes, so before relying
+on it, place a very small real order, pay it, and refund it.
 
 ## Payment webhooks (Razorpay, PhonePe)
 
@@ -218,14 +190,17 @@ See API.md "Payment webhooks".
 Only used when `PAYMENT_METHODS` includes `razorpay`.
 
 Each restaurant brings its own Razorpay account: **Admin -> Payments** -> enter the Key ID and Key Secret from the Razorpay
-dashboard (use `rzp_test_...` keys first), press **Test connection**, then turn online payments on. Secrets are stored encrypted
+dashboard, press **Test connection**, then turn online payments on. **The live server (`NODE_ENV=production`) accepts only live keys
+(`rzp_live_...`)**: a test key's payments are pretend, so anyone could get an order marked paid. A local run also accepts
+`rzp_test_...` keys for trying things out. Migration `028` switches Razorpay off (and cash on, if needed) for any restaurant that had
+a test key saved. Secrets are stored encrypted
 and are never sent back to the browser. Diners then see **Pay online** on their order page; the API creates the Razorpay order,
 the browser opens Razorpay Checkout, and the API verifies Razorpay's HMAC signature before marking the order paid. If a
 restaurant has no keys the diner is simply told to pay at the counter, and staff can record the payment (**Orders -> Record cash payment**).
 
-Paying online also **accepts the order**: once the gateway has confirmed the money, a pending order becomes accepted by itself (staff do not press Accept; they press Complete when it is served). Cash and UPI orders still wait for staff.
+Paying online also **accepts the order**: once the gateway has confirmed the money, a pending order becomes accepted by itself (staff do not press Accept; they press Complete when it is served). Cash orders still wait for staff.
 
-**Scan to pay (QR):** under *Pay online* the diner can tap *Or scan a QR code to pay*. The API makes a Razorpay **UPI QR** for that order (single use, fixed amount; `POST /api/public/orders/:token/razorpay-qr`) and the page asks `.../razorpay-qr/verify` every 3 seconds; the server asks Razorpay and marks the order paid (and accepted) when a captured payment of the exact amount shows up. Razorpay must have switched **UPI QR** on for the account (an on-demand feature, ask Razorpay support); if not, the diner is told to use *Pay online* instead. A plain UPI QR (restaurant's own UPI ID) cannot do this: only a payment gateway can tell us a payment arrived.
+**Scan to pay (QR):** under *Pay online* the diner can tap *Or scan a QR code to pay*. The API makes a Razorpay **UPI QR** for that order (single use, fixed amount; `POST /api/public/orders/:token/razorpay-qr`) and the page asks `.../razorpay-qr/verify` every 3 seconds; the server asks Razorpay and marks the order paid (and accepted) when a captured payment of the exact amount shows up. Razorpay must have switched **UPI QR** on for the account (an on-demand feature, ask Razorpay support); if not, the diner is told to use *Pay online* instead.
 
 Not built yet: a Razorpay **webhook**. Today a payment is confirmed when the diner's browser returns from Checkout; if the diner
 closes the tab right after paying, staff must reconcile it from the Razorpay dashboard. A webhook endpoint is the recommended next step before taking live payments.
@@ -269,7 +244,7 @@ The free plans are fine for demos and first restaurants; for real daily use move
    breaks if the address changes. Changing a variable on Cloudflare needs a new deployment (the value is baked in at build time).
 5. **Before real restaurants:** change or delete the demo accounts from `backend/src/seed.js`, there is no public sign-up (restaurants are added by you, from the Owner console), and add your custom domains (Cloudflare Pages -> Custom domains; Render -> Custom domains).
 
-- If you add a Content-Security-Policy header to the customer site, allow Cashfree (`script-src https://sdk.cashfree.com`, `frame-src https://sdk.cashfree.com https://payments.cashfree.com https://sandbox.cashfree.com`, `connect-src https://api.cashfree.com https://sandbox.cashfree.com`) and Razorpay Checkout: `script-src https://checkout.razorpay.com`, `frame-src https://api.razorpay.com https://checkout.razorpay.com`, `connect-src https://lumberjack.razorpay.com` plus your API origin.
+- If you add a Content-Security-Policy header to the customer site, allow Razorpay Checkout: `script-src https://checkout.razorpay.com`, `frame-src https://api.razorpay.com https://checkout.razorpay.com`, `connect-src https://lumberjack.razorpay.com` plus your API origin.
 - Any other Node 22 host works for the API (`npm run start -w backend`, `NODE_ENV=production`, the variables above); any static host with a fallback to `index.html` works for the sites.
 - Back up regularly: `pg_dump "$DATABASE_URL" > backup.sql` (store it somewhere other than the database provider).
 

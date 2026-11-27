@@ -18,6 +18,7 @@ import { api, apiPage } from '../lib/api.js';
 import { cx } from '../lib/cx.js';
 import { orderItemsSummary } from '../lib/format.js';
 import { useClampPage, useDebouncedValue, useDocumentTitle, useMediaQuery, useQuery } from '../lib/hooks.js';
+import { paidVia } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 import OrderDetailModal from './orders/OrderDetailModal.jsx';
 
@@ -79,14 +80,12 @@ function OrderCard({ order, fresh, fmt, onOpen, selected }) {
               <span className="text-lg font-semibold leading-none text-slate-900 tabular-nums">{fmt.money(order.total)}</span>
               <span className="mt-1 text-xs text-slate-500">
                 {order.payment_status === 'paid'
-                  ? `Paid${order.payment_method === 'cash' ? ' · Cash' : order.payment_method === 'upi' ? ' · UPI' : ' · Online'}`
+                  ? `Paid${paidVia(order.payment_method)}`
                   : order.payment_status === 'refunded'
                     ? 'Refunded'
-                    : order.payment_claim
-                      ? 'Customer says paid'
-                      : order.status === 'cancelled'
-                        ? ''
-                        : 'Unpaid'}
+                    : order.status === 'cancelled'
+                      ? ''
+                      : 'Unpaid'}
               </span>
             </span>
             <span className="inline-flex items-center gap-0.5 text-sm font-medium text-slate-800">

@@ -1,7 +1,7 @@
 import { decryptSecret } from './crypto.js';
 import { GATEWAYS } from './gateways.js';
 import { markAttemptPaid } from './onlinePayments.js';
-import { fetchRazorpayOrderPayments, fetchRazorpayQrPayments } from './razorpay.js';
+import { fetchRazorpayOrderPayments, fetchRazorpayQrPayments, razorpayReady } from './razorpay.js';
 
 // The safety net behind the webhooks. A webhook can be missed (the server was asleep or down, the gateway gave up retrying), and
 // a diner can pay and close the page. So every few minutes the server asks the gateway about the online payments that are still open
@@ -14,7 +14,7 @@ const MAX_PER_RUN = 50;
 /** Asks the gateway about one open attempt. Returns { paymentId } when the right amount has arrived, otherwise null. */
 async function arrived(attempt, settings) {
   if (attempt.provider === 'razorpay') {
-    if (!settings.razorpay_key_id || !settings.razorpay_key_secret_enc) return null;
+    if (!razorpayReady(settings)) return null;
     const creds = { keyId: settings.razorpay_key_id, keySecret: decryptSecret(settings.razorpay_key_secret_enc) };
     const list = attempt.provider_order_id.startsWith('qr_')
       ? await fetchRazorpayQrPayments({ ...creds, qrId: attempt.provider_order_id })
@@ -33,7 +33,7 @@ export async function reconcileOnce(db, { log = console } = {}) {
   const { rows } = await db.query(
     `SELECT p.id AS attempt_id, p.order_id, p.provider, p.provider_order_id, p.amount_paise, o.vendor_id
        FROM payments p JOIN orders o ON o.id = p.order_id
-      WHERE p.status = 'created' AND p.provider IN ('razorpay', 'phonepe', 'paytm')
+      WHERE p.status = 'created' AND p.provider IN ('razorpay', 'phonepe')
         AND p.created_at < now() - make_interval(mins => $1) AND p.created_at > now() - make_interval(hours => $2)
         AND o.payment_status <> 'paid' AND o.status <> 'cancelled'
       ORDER BY p.id LIMIT $3`,

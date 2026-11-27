@@ -5,7 +5,7 @@ import ConfirmSheet from '../components/ConfirmSheet';
 import { Button, LinkButton } from '../components/Button';
 import DishImage from '../components/DishImage';
 import EmptyState from '../components/EmptyState';
-import { ArrowLeftIcon, CardIcon, CartIcon, CashIcon, PhoneIcon, PlusIcon, SpinnerIcon, TrashIcon } from '../components/Icons';
+import { ArrowLeftIcon, CardIcon, CartIcon, CashIcon, PlusIcon, SpinnerIcon, TrashIcon } from '../components/Icons';
 import QuantityStepper from '../components/QuantityStepper';
 import BillSummary from '../components/BillSummary';
 import { useToast } from '../components/Toast';
@@ -30,17 +30,16 @@ export default function CartPage() {
   const toast = useToast();
   usePageTitle(`Your cart - ${menu.vendor.name}`);
 
-  const canOnline = ['razorpay', 'cashfree', 'phonepe', 'paytm'].some((name) => menu.payment_options?.[name] === true);
-  const canUpi = menu.payment_options?.upi === true;
+  const canOnline = ['razorpay', 'phonepe'].some((name) => menu.payment_options?.[name] === true);
   const canCounter = menu.payment_options?.cash === true;
-  const available = [canCounter && 'counter', canUpi && 'upi', canOnline && 'online'].filter(Boolean);
-  // A restaurant that has not set up a way to pay (for example no UPI ID yet) cannot take orders; the server refuses them too.
+  const available = [canCounter && 'counter', canOnline && 'online'].filter(Boolean);
+  // A restaurant that has not set up a way to pay cannot take orders; the server refuses them too.
   const cannotPay = available.length === 0;
 
   const dishById = useMemo(() => new Map(menu.items.map((i) => [i.id, i])), [menu.items]);
   const saved = useMemo(() => getJSON(checkoutKey(token), {}) ?? {}, [token]);
   const [note, setNote] = useState(typeof saved.note === 'string' ? saved.note.slice(0, MAX_NOTE) : '');
-  const [payPref, setPayPref] = useState(['online', 'upi'].includes(saved.payPref) ? saved.payPref : 'counter');
+  const [payPref, setPayPref] = useState(saved.payPref === 'online' ? 'online' : 'counter');
   const pref = available.includes(payPref) ? payPref : available[0];
 
   // Fake-order guard: a restaurant may ask for the 4-digit code printed on the table ('required'), let diners type it if they like
@@ -340,15 +339,6 @@ export default function CartPage() {
                     icon={<CashIcon className="size-5" />}
                     title="Pay at the counter"
                     text="Settle up with the staff when you are done."
-                  />
-                )}
-                {canUpi && (
-                  <PayOption
-                    checked={pref === 'upi'}
-                    onSelect={() => setPayPref('upi')}
-                    icon={<PhoneIcon className="size-5" />}
-                    title="Pay with a UPI app"
-                    text="Google Pay, PhonePe, Paytm or any UPI app - you'll see how to pay once you place the order."
                   />
                 )}
                 {canOnline && (

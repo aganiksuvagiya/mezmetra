@@ -20,7 +20,7 @@ export const vendorOut = (v, kitchen = null) => ({
   logo_url: logoUrl(v),
   // Whether diners are asked for the code printed on their table: 'off', 'optional' (may skip it) or 'required' (stops orders from people who only have the link).
   table_code_mode: v.table_code_mode ?? 'off',
-  // Ways of paying the product offers right now ('upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm'); the admin hides the rest.
+  // Ways of paying the product offers right now ('cash', 'razorpay', 'phonepe'); the admin hides the rest.
   payment_methods: [...config.paymentMethods],
   // True for the platform owner's account (SUPER_ADMIN_EMAILS): the admin then shows the Platform section.
   is_super_admin: kitchen ? false : isSuperAdminEmail(v.email),
@@ -142,8 +142,6 @@ const orderBase = (o, items) => ({
   status: o.status,
   payment_status: o.payment_status,
   payment_method: o.payment_method,
-  // Set when the diner says they paid by UPI; staff still have to confirm it before the order counts as paid.
-  payment_claim: o.claimed_at ? { method: 'upi', reference: o.claim_reference, claimed_at: o.claimed_at } : null,
   subtotal: toRupees(o.subtotal_paise),
   tax: toRupees(o.tax_paise),
   total: toRupees(o.total_paise),

@@ -2,6 +2,15 @@ import { config } from '../config.js';
 import { HttpError } from './errors.js';
 import { hmacSha256Hex, safeEqual } from './crypto.js';
 
+/**
+ * May this Key ID take a diner's money here? On the live server only a live key may: a test key's payments are pretend, so anyone
+ * could get an order marked "Paid" without paying.
+ */
+export const isUsableKeyId = (keyId) => !config.razorpayLiveOnly || String(keyId ?? '').startsWith('rzp_live_');
+
+/** True when these payment settings hold Razorpay keys that can be used here. */
+export const razorpayReady = (s) => Boolean(s?.razorpay_key_id && s.razorpay_key_secret_enc && isUsableKeyId(s.razorpay_key_id));
+
 const authHeader = (keyId, keySecret) => `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`;
 
 async function call(path, { keyId, keySecret, method = 'GET', body }) {

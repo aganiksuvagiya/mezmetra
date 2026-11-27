@@ -49,7 +49,7 @@ Base URL: `/api` (the dev servers of both web apps proxy `/api` to `http://local
   "ranges": { "weekly_days": 7, "payment_days": 30, "top_days": 30 }
 }
 ```
-Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter), `upi`, `razorpay`, `cashfree`, `phonepe` or `paytm` (online).
+Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter), `razorpay` or `phonepe` (online); `upi`, `cashfree` or `paytm` appear only for orders paid before those were removed.
 
 ### Categories
 `category` = `{ id, name, description, is_active, sort_order, item_count, created_at, updated_at }`
@@ -86,26 +86,22 @@ Revenue only counts **paid** orders. `payment_methods[].method`: `cash` (counter
 
 **Order numbers.** `number` is the restaurant's own order number (#1, #2, #3 ... counted per restaurant, never reused after a delete); show this one to people (admin lists, receipts, reports, the diner's order page). `id` is the internal key of the shared orders table: it is what the admin URLs (`/api/admin/orders/:id`, `/api/admin/tables/:id/bill`) take, and it is not meant to be shown.
 - `status`: `pending` -> `accepted` -> `completed`; `cancelled` from pending/accepted.
-- `payment_status`: `unpaid` | `paid` | `refunded`. `payment_method`: `cash` | `upi` | `razorpay` | `cashfree` | `phonepe` | `paytm` | `null`. `pay_pref`: what the diner chose (`counter` | `upi` | `online`).
-- `payment_claim`: `null`, or `{ method: "upi", reference, claimed_at }` when the diner says they paid through a UPI app. It is only a claim: the order stays `unpaid` until staff confirm.
+- `payment_status`: `unpaid` | `paid` | `refunded`. `payment_method`: `cash` | `razorpay` | `phonepe` | `null` (orders paid before UPI, Cashfree and Paytm were removed still say `upi`, `cashfree` or `paytm`). `pay_pref`: what the diner chose (`counter` | `online`).
 - `items[]` = `{ id, name, quantity, unit_price, instructions, options: [{ group, name, price }], line_total }`
 - `receipt_url` is `null` until paid, then `/api/admin/orders/:id/receipt.pdf` (needs the auth header -> fetch as blob and open).
 - `GET /api/admin/orders?status=pending|accepted|completed|cancelled|active&payment=paid|unpaid&q=&page=&per_page=` (`active` = pending + accepted; `q` matches a table number or an exact order number)
 - `GET /api/admin/orders/:id`
 - `PATCH /api/admin/orders/:id/status` `{ status: "accepted"|"completed"|"cancelled" }` -> order.
   409 codes: `INVALID_TRANSITION`, `PAYMENT_REQUIRED` (complete needs payment first), `ALREADY_PAID` (cannot cancel a paid order).
-- `POST /api/admin/orders/:id/cash-payment` (no body) -> order marked paid by cash. 409 `ALREADY_PAID` / `ORDER_CANCELLED` / `METHOD_NOT_AVAILABLE` (cash is not in `PAYMENT_METHODS`; the default is UPI only).
-- `POST /api/admin/orders/:id/upi-payment` `{ reference? }` -> staff confirm the money arrived by UPI; marks the order paid (`payment_method: "upi"`). Defaults the reference to the diner's claimed one. 409 `ALREADY_PAID` / `ORDER_CANCELLED` / `DUPLICATE_REFERENCE`.
+- `POST /api/admin/orders/:id/cash-payment` (no body) -> order marked paid by cash. 409 `ALREADY_PAID` / `ORDER_CANCELLED` / `METHOD_NOT_AVAILABLE` (cash is not in `PAYMENT_METHODS`).
 - `DELETE /api/admin/orders/:id` -> 204
 - `GET /api/admin/orders/:id/receipt.pdf` -> application/pdf (409 `NOT_PAID` before payment)
 
 ### Payment settings
-`settings` = `{ cash_enabled, upi_enabled, upi_id, razorpay_enabled, razorpay_key_id, razorpay_secret_set, razorpay_mode: "test"|"live"|null, razorpay_configured, cashfree_enabled, cashfree_app_id, cashfree_secret_set, cashfree_mode: "test"|"live"|null, cashfree_configured, phonepe_enabled, phonepe_client_id, phonepe_client_version, phonepe_secret_set, phonepe_env: "sandbox"|"live", phonepe_configured, paytm_enabled, paytm_mid, paytm_key_set, paytm_website, paytm_env: "sandbox"|"live", paytm_configured }`
-- `GET /api/admin/payment-settings` -> includes `methods_available` (the ways of paying the product offers, from `PAYMENT_METHODS`, default `["upi"]`). Switching on a method that is not available is a 400. `GET /api/auth/me` returns the same list as `payment_methods`.
-- `PUT /api/admin/payment-settings` `{ cash_enabled?, upi_enabled?, upi_id? (name@bank, "" clears it), razorpay_enabled?, razorpay_key_id?, razorpay_key_secret?, cashfree_enabled?, cashfree_app_id?, cashfree_secret?, phonepe_enabled?, phonepe_client_id?, phonepe_client_version?, phonepe_client_secret?, phonepe_env?, paytm_enabled?, paytm_mid?, paytm_merchant_key? (exactly 16 characters), paytm_website?, paytm_env? }` - secrets are **write-only**; only one online gateway can be on (400 otherwise)
-  (never returned); omit it to keep the stored one. At least one method must stay on.
-- `POST /api/admin/payment-settings/test` (body `{ provider: "cashfree" | "phonepe" | "paytm" }`, empty for Razorpay) -> `{ ok: true, mode }`, or 502 `RAZORPAY_BAD_KEYS` / `RAZORPAY_ERROR` / `CASHFREE_BAD_KEYS` / `CASHFREE_ERROR` / `PHONEPE_BAD_KEYS` / `PHONEPE_ERROR` / `PAYTM_BAD_KEYS` / `PAYTM_ERROR` with a readable message.
-- Only one online gateway can be on at a time: switching both on is a 400 (switch one off in the same request).
+`settings` = `{ methods_available, cash_enabled, razorpay_enabled, razorpay_key_id, razorpay_secret_set, razorpay_mode: "test"|"live"|null, razorpay_configured, razorpay_live_only, phonepe_enabled, phonepe_client_id, phonepe_client_version, phonepe_secret_set, phonepe_configured, webhook_url_razorpay, webhook_url_phonepe, razorpay_webhook_set, phonepe_webhook_set }`
+- `GET /api/admin/payment-settings` -> the settings. `methods_available` is what the product offers (from `PAYMENT_METHODS`, default `["cash","razorpay","phonepe"]`). Switching on a method that is not available is a 400. `GET /api/auth/me` returns the same list as `payment_methods`.
+- `PUT /api/admin/payment-settings` `{ cash_enabled?, razorpay_enabled?, razorpay_key_id?, razorpay_key_secret?, razorpay_webhook_secret?, phonepe_enabled?, phonepe_client_id?, phonepe_client_version?, phonepe_client_secret?, phonepe_webhook_username?, phonepe_webhook_password? }` - secrets are **write-only** (never returned); omit one to keep the stored one. PhonePe keys are always the live ones. On the live server (`razorpay_live_only: true`, i.e. `NODE_ENV=production`) a `rzp_test_...` key is a 400, a saved test key counts as not configured (diners are not offered Razorpay and nothing it reports marks an order paid), and `/test` answers 409 `RAZORPAY_TEST_KEY`. At least one method must stay on, and only one online gateway can be on at a time: switching both on is a 400 (switch one off in the same request).
+- `POST /api/admin/payment-settings/test` (body `{ provider: "phonepe" }`, empty for Razorpay) -> `{ ok: true, mode }`, or 502 `RAZORPAY_BAD_KEYS` / `RAZORPAY_ERROR` / `PHONEPE_BAD_KEYS` / `PHONEPE_ERROR` with a readable message.
 
 ## Public (customer app; no auth)
 
@@ -116,13 +112,13 @@ A table's QR code opens `<customer-app>/t/<token>`. `<token>` is the 32-hex stri
 {
   "vendor": { "name": "Demo Kitchen", "currency": "INR", "tax_percent": 5, "theme": { "primary": "#2f6f62", "accent": "#e8872a", "style": "classic" }, "logo_url": null },
   "table": { "number": "T-01" },
-  "payment_options": { "cash": false, "upi": true, "razorpay": false, "cashfree": false, "phonepe": false, "paytm": false },
+  "payment_options": { "cash": true, "razorpay": false, "phonepe": false },
   "categories": [{ "id": 1, "name": "Pizza", "description": "..." }],
   "items": [{ "id": 3, "category_id": 1, "category_name": "Pizza", "name": "...", "description": "...", "price": 499, "is_featured": true, "photo_url": null, "option_groups": [] }]
 }
 ```
 Only active items inside active categories are returned (featured first). 404 unknown token, 409 `TABLE_UNAVAILABLE` (table switched off).
-`payment_options` = `{ cash, upi, razorpay, cashfree, phonepe, paytm }`: a method is true only when the product offers it (`PAYMENT_METHODS`, default UPI only) **and** the restaurant switched it on (`upi` also needs a UPI ID, `razorpay`, `cashfree`, `phonepe` and `paytm` need keys). Any of those four true means the diner can choose `pay_pref: "online"`. When all are false the restaurant cannot take orders yet (see 409 `PAYMENTS_NOT_SET_UP` below).
+`payment_options` = `{ cash, razorpay, phonepe }`: a method is true only when the product offers it (`PAYMENT_METHODS`) **and** the restaurant switched it on (`razorpay` and `phonepe` also need keys). Either of those two true means the diner can choose `pay_pref: "online"`. When all are false the restaurant cannot take orders yet (see 409 `PAYMENTS_NOT_SET_UP` below).
 
 ### `POST /api/public/t/:token/orders` - place an order
 Header `Idempotency-Key: <8-80 chars [A-Za-z0-9_-]>` - **send one per checkout attempt** (generate when the customer taps
@@ -131,40 +127,33 @@ Header `Idempotency-Key: <8-80 chars [A-Za-z0-9_-]>` - **send one per checkout a
 Body:
 ```json
 { "items": [{ "item_id": 3, "quantity": 2, "instructions": "less spicy", "option_ids": [11, 14] }],
-  "note": "optional note for the table", "pay_pref": "counter" }   // pay_pref: counter | upi | online
+  "note": "optional note for the table", "pay_pref": "counter" }   // pay_pref: counter | online
 ```
 Do **not** send prices; the server prices everything. Returns 201 `public order` (below). Errors: 400 `OPTION_REQUIRED`,
-`OPTION_TOO_MANY`, `INVALID_OPTION`; 409 `ITEM_UNAVAILABLE` (a dish was switched off - ask the diner to review the cart), `TABLE_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE` (the chosen `pay_pref` is not offered; omit `pay_pref` to get the first offered one), `PAYMENTS_NOT_SET_UP` (the restaurant offers no way to pay yet, for example no UPI ID).
+`OPTION_TOO_MANY`, `INVALID_OPTION`; 409 `ITEM_UNAVAILABLE` (a dish was switched off - ask the diner to review the cart), `TABLE_UNAVAILABLE`, `PAYMENT_METHOD_UNAVAILABLE` (the chosen `pay_pref` is not offered; omit `pay_pref` to get the first offered one), `PAYMENTS_NOT_SET_UP` (the restaurant offers no way to pay yet).
 
 ### `GET /api/public/orders/:orderToken` - follow an order (poll every few seconds)
-`public order` = `{ token, number, can_cancel, table_number, status, payment_status, payment_method, payment_claim, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, upi, razorpay, cashfree, phonepe, paytm }, upi }`
+`public order` = `{ token, number, can_cancel, table_number, status, payment_status, payment_method, subtotal, tax, total, note, items[], total_quantity, created_at, accepted_at, completed_at, paid_at, vendor: { name, currency, theme }, payment_options: { cash, razorpay, phonepe } }`
 (`items[]` as in admin orders.) There is no numeric id; `number` is the restaurant's own order number, the one to show and say aloud.
-`upi` is `null` unless the order is unpaid, not cancelled and UPI is enabled; then it is `{ vpa, payee_name, amount, query }` where `query` is the ready-made, server-built query string of the payment link (exact amount included).
 
-### Pay with a UPI app (Google Pay, PhonePe, Paytm ...) - no payment gateway needed
-1. When `order.upi` is present, build a link by prefixing `order.upi.query`: `upi://pay?` (phone offers all UPI apps), `tez://upi/pay?` (Google Pay), `phonepe://pay?`, `paytmmp://pay?`. The amount is already inside; never compute it client side. On a computer show the `upi://pay?...` link as a QR code.
-2. A plain UPI link cannot report whether the payment succeeded. When the diner returns to the page ask "Did your payment go through?" and call
-   `POST /api/public/orders/:orderToken/upi-claim` `{ reference? }` (optional UPI reference, 6-30 letters/digits) -> `public order` with `payment_claim` set. **The order is still unpaid**; staff confirm in the admin panel (`POST /api/admin/orders/:id/upi-payment`), after which polling shows `payment_status: "paid"`, `payment_method: "upi"`.
-   `POST /api/public/orders/:orderToken/cancel` (no body) -> `public order`: the diner cancels their own order. Allowed only while `can_cancel` is true on the order (the kitchen has not accepted it, nothing is paid, no UPI claim and no online payment started); otherwise 409 `CANNOT_CANCEL` with a sentence for the diner. Asking again for an already cancelled order answers with it. The restaurant sees it under Cancelled in the admin.
-   409 `UPI_NOT_AVAILABLE`, `ORDER_CANCELLED`.
+### Cancel an order (by the diner)
+`POST /api/public/orders/:orderToken/cancel` (no body) -> `public order`. Allowed only while `can_cancel` is true on the order (the kitchen has not accepted it, nothing is paid and no online payment started); otherwise 409 `CANNOT_CANCEL` with a sentence for the diner. Asking again for an already cancelled order answers with it. The restaurant sees it under Cancelled in the admin.
 
 ### Online payment by scanning a QR (Razorpay UPI QR)
 1. `POST /api/public/orders/:orderToken/razorpay-qr` (no body) -> `{ qr_id, image_url, amount, vendor_name }`: a single-use, fixed-amount UPI QR for this order (the same one is returned on a reload; a closed one is replaced). 409 `RAZORPAY_NOT_CONFIGURED`, `ALREADY_PAID`, `ORDER_CANCELLED`, `RAZORPAY_QR_UNAVAILABLE` (Razorpay refused, for example "UPI QR" is not switched on for the account).
 2. Show `image_url`, then call `POST /api/public/orders/:orderToken/razorpay-qr/verify` (no body) every few seconds -> `public order`. It becomes `payment_status: "paid"` (and `accepted`) only when Razorpay reports a `captured` payment of the exact amount on that QR.
 
-### Online payment (Cashfree)
-1. `POST /api/public/orders/:orderToken/cashfree` (no body) -> `{ payment_session_id, cashfree_order_id, mode: "sandbox"|"production", amount, vendor_name }`. A retry reuses the open session.
-   409 `CASHFREE_NOT_CONFIGURED` (message already says "pay another way"), `ALREADY_PAID`, `ORDER_CANCELLED`; 502 `CASHFREE_*`.
-2. Load `https://sdk.cashfree.com/js/v3/cashfree.js` and call `Cashfree({ mode }).checkout({ paymentSessionId: payment_session_id, redirectTarget: "_modal" })`.
-3. When the window closes, and whenever the diner comes back to the order page, call `POST /api/public/orders/:orderToken/cashfree/verify` (no body). The server asks Cashfree and returns the `public order`;
-   `payment_status` becomes `"paid"` (`payment_method: "cashfree"`) only when Cashfree reports `PAID` for the exact amount. 409 `PAYMENT_AMOUNT_MISMATCH` if the amounts differ.
+### Online payment (PhonePe)
+1. `POST /api/public/orders/:orderToken/pay/phonepe` (no body) -> `{ provider, client: { type: "redirect", url }, amount, vendor_name }`: send the browser to `client.url` (PhonePe's own page), which brings the diner back to the order page.
+   409 `GATEWAY_NOT_CONFIGURED` (message already says "pay another way"), `ALREADY_PAID`, `ORDER_CANCELLED`; 502 `PHONEPE_*`.
+2. Whenever the diner comes back to the order page, call `POST /api/public/orders/:orderToken/pay/phonepe/verify` (no body) -> `public order`. The server asks PhonePe and marks the order paid (`payment_method: "phonepe"`) only when PhonePe reports the payment completed for the exact amount.
 
 ### Online payment (Razorpay Checkout)
 1. `POST /api/public/orders/:orderToken/razorpay` (no body) -> `{ key_id, razorpay_order_id, amount_paise, amount, currency, vendor_name }`.
    409 `RAZORPAY_NOT_CONFIGURED` (message already says "pay at the counter"), `ALREADY_PAID`, `ORDER_CANCELLED`; 502 `RAZORPAY_*`.
 2. Load `https://checkout.razorpay.com/v1/checkout.js` and open Checkout with `{ key: key_id, order_id: razorpay_order_id, amount: amount_paise, currency, name: vendor_name }`.
 3. In the checkout `handler(response)` call `POST /api/public/orders/:orderToken/razorpay/verify` with
-   `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }` (the three fields of `response`) -> `public order` with `payment_status: "paid"`. A `pending` order also becomes `accepted` at that moment (`accepted_at` set); the same goes for Cashfree.
+   `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }` (the three fields of `response`) -> `public order` with `payment_status: "paid"`. A `pending` order also becomes `accepted` at that moment (`accepted_at` set); the same goes for PhonePe.
    400 `PAYMENT_SIGNATURE_INVALID` / `PAYMENT_NOT_FOUND`.
 
 If the diner pays at the counter, staff record it in the admin panel; the order page just keeps polling until `payment_status` becomes `paid`.
@@ -177,7 +166,7 @@ Only for accounts listed in `SUPER_ADMIN_EMAILS` (`GET /api/auth/me` has `is_sup
 
 - `GET /api/platform/overview` -> `{ restaurants: { total, active, suspended, new_30d }, orders_30d, revenue_30d }` (revenue = paid orders only, rupees).
 - `GET /api/platform/restaurants?q=&status=active|suspended&page=&per_page=` -> `{ data: restaurant[], meta: { page, per_page, total } }`, newest first.
-  `restaurant` = `{ id, name, email, created_at, status: "active"|"suspended", suspended_at, suspended_reason, is_platform_owner, tables, items, orders_total, orders_30d, revenue_total, last_order_at, upi_ready }`.
+  `restaurant` = `{ id, name, email, created_at, status: "active"|"suspended", suspended_at, suspended_reason, is_platform_owner, tables, items, orders_total, orders_30d, revenue_total, last_order_at }`.
 - `POST /api/platform/restaurants` `{ name (2-100), email, password (8-200) }` -> 201 the new `restaurant`. The only way a restaurant account comes to exist (there is no public sign-up: `POST /api/auth/signup` is gone). 400 `VALIDATION_ERROR`, 409 `EMAIL_TAKEN`.
 - `POST /api/platform/restaurants/:id/profile` `{ name (2-100), email }` -> the updated `restaurant`. Fixes a restaurant's name or login email (same password). Saving without a change adds nothing to the record. 409 `EMAIL_TAKEN`, 409 `RESERVED_EMAIL` (an email listed in `SUPER_ADMIN_EMAILS`), 409 `CANNOT_EDIT_OWNER` for a platform owner's account, 404 unknown id.
 - `GET /api/platform/activity?action=&q=&page=&per_page=` -> `{ data: entry[], meta }`, newest first, across all restaurants. `entry` = `{ id, action: create|update|suspend|reactivate|set_password|delete (and `login_as` on old entries: that feature was removed), by, restaurant: { id|null, name, email }, detail, at }`; `restaurant.id` is null once the restaurant has been deleted. `q` matches the restaurant's name or email or the owner's email.
@@ -227,8 +216,8 @@ and its own secrets (write-only: `razorpay_webhook_secret`, `phonepe_webhook_use
 - `item.diet` (admin and public): `"veg"` | `"egg"` | `"nonveg"` | `"jain"` | `null` (not marked). Send it on `POST`/`PATCH /api/admin/items`; `null` clears it, leaving it out keeps it. Diners see the green / amber / red mark and can filter the menu by it.
 - `order.ready_at` (admin and public): set when staff press **Mark ready** (`POST /api/admin/orders/:id/ready`, only for an `accepted` order; pressing it again keeps the first time; 409 `INVALID_TRANSITION` otherwise). The order stays `accepted` until `completed`; the diner's order page shows "Your order is ready!" with a vibration and chime.
 - **Call the waiter / ask for the bill.** Diner: `GET /api/public/t/:token/requests` -> `{ waiter, bill, waiter_since, bill_since }` (which are open, and when each was made; a phone compares `*_since` with the request it asked for, so it says "Waiter called" only about its own and a newcomer at the same table can still ask); `POST /api/public/t/:token/requests { kind: "waiter" | "bill" }` -> 201 (new) or 200 `already_asked: true` (one open request of each kind per table). Staff: `GET /api/admin/requests` -> open `[{ id, table_number, kind, created_at }]`; `POST /api/admin/requests/:id/done` (twice is fine). The admin chimes and reads it out ("Table 3 is calling the waiter.") and shows a banner until Done.
-- **Table bill.** `GET /api/admin/tables/:id/bill` -> `{ table_number, count, total, orders: [{ id, status, total, created_at, items: [{ name, quantity }] }] }`: every unpaid, non-cancelled order of the table. `POST /api/admin/tables/:id/settle { method: "cash" | "upi" }` marks all of them paid together -> `{ settled, total, method }` (409 `NOTHING_TO_PAY`, 409 `METHOD_NOT_AVAILABLE`). A UPI settle carries no reference number (one payment covers several orders).
-- **Refund.** `POST /api/admin/orders/:id/refund` (no body) gives an online (Razorpay) payment back in full: `payment_status` becomes `"refunded"` (no longer revenue) and a pending/accepted order is cancelled too. 409 `NOT_PAID`, `ALREADY_REFUNDED`, `REFUND_MANUAL` (cash/UPI: hand the money back yourself), `RAZORPAY_NOT_CONFIGURED`; 502 `RAZORPAY_*` if Razorpay refuses. The diner's order page shows "Refunded".
+- **Table bill.** `GET /api/admin/tables/:id/bill` -> `{ table_number, count, total, orders: [{ id, status, total, created_at, items: [{ name, quantity }] }] }`: every unpaid, non-cancelled order of the table. `POST /api/admin/tables/:id/settle { method: "cash" }` marks all of them paid together -> `{ settled, total, method }` (409 `NOTHING_TO_PAY`, 409 `METHOD_NOT_AVAILABLE`).
+- **Refund.** `POST /api/admin/orders/:id/refund` (no body) gives an online (Razorpay or PhonePe) payment back in full: `payment_status` becomes `"refunded"` (no longer revenue) and a pending/accepted order is cancelled too. 409 `NOT_PAID`, `ALREADY_REFUNDED`, `REFUND_MANUAL` (cash, or an order paid a way that was removed: give the money back the way it was paid), `RAZORPAY_NOT_CONFIGURED`; 502 `RAZORPAY_*` / `PHONEPE_*` if the gateway refuses. The diner's order page shows "Refunded".
 - **Table code (fake-order guard).** Every table has a random 4-digit `code` (admin `table.code`; `POST /api/admin/tables/:id/code` makes a new one, so an old printed card stops working). `PATCH /api/admin/vendor { table_code_mode: "off" | "optional" | "required" }` chooses how strictly diners are asked for it (default `off`; the vendor object carries `table_code_mode`). The public menu has `table.code_mode` (never the code itself). `POST /api/public/t/:token/orders` takes `table_code`: **required** — missing is 403 `TABLE_CODE_REQUIRED`, wrong is 403 `TABLE_CODE_WRONG`; **optional** — it may be left out, but a code that is sent must be right (403 `TABLE_CODE_WRONG`); **off** — it is ignored. Orders placed with the right code have `table_code_verified: true`. The printed QR card shows the code unless the mode is `off`.
 - `GET /api/admin/items?status=sold_out` filters; list `meta.sold_out` is the number of sold-out dishes in the whole menu.
 - `POST /api/admin/items/restock` -> `{ restocked: n }` puts every sold-out dish back in stock.
@@ -240,12 +229,3 @@ All take `from` and `to` (`YYYY-MM-DD`, the restaurant's own days; both default 
 - `GET /api/admin/reports/summary` -> `{ from, to, timezone, sales: { orders, subtotal, tax, total, by_method: [{ method, orders, amount }] }, placed: { total, completed, cancelled, open, unpaid, unpaid_value }, top_items: [{ name, quantity, revenue }] }`. `sales` counts paid orders by the day they were paid (same as the dashboard); `placed` counts orders by the day they were placed.
 - `GET /api/admin/reports/orders.csv` -> UTF-8 CSV (with BOM), one row per order placed or paid in the period; text cells that start with `= + - @` are prefixed with `'`.
 - `GET /api/admin/reports/report.pdf` -> A4 PDF with the summary, best sellers and the order list.
-
-## UPI app buttons
-
-- `upi_pay_buttons` (boolean, default `false`) in `GET`/`PUT /api/admin/payment-settings`: show the Google Pay / PhonePe / Paytm buttons. Turn it on only for a business (merchant) UPI ID: Google Pay and PhonePe usually refuse these pre-filled links for a personal UPI ID ("bank limit exceeded", "security reasons").
-  A business ID's link also carries `mc=5812` (merchant category code) and `tr=MZ<order id>` (transaction reference); a personal ID's link does not.
-- The restaurant's own UPI QR: a business UPI ID from **PhonePe Business** or **Paytm for Business** accepts money only through its own QR (a payment link is answered with "as per UPI guidelines, payment through a link is not allowed for this merchant"). `PUT /api/admin/payment-settings/upi-qr` (raw image bytes, `Content-Type: image/jpeg|png|webp`, up to 1 MB; 415 for anything else) stores it, `DELETE` removes it; both return the settings, whose `upi_qr_url` is the image's address or `null`. `GET /api/public/vendors/:id/upi-qr?v=N` serves the image (public, cacheable). While a QR is saved the public order's `upi` block has `qr_url` (the diner scans it) and `pay_buttons` is `false`.
-- The public order's `upi` is `{ vpa, pay_buttons, payee_name, amount, query }`; `query` is always sent, because the order page uses it for the QR code. With the buttons off the page shows how to pay by typing the UPI ID.
-
-- `POST /api/public/orders/:token/pay/:provider` and `.../verify` (`phonepe` | `paytm`): see README, "Online payments (PhonePe and Paytm)".

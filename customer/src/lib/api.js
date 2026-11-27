@@ -121,13 +121,6 @@ export const createOrder = (tableToken, payload, idempotencyKey, opts) =>
 
 export const getOrder = (orderToken, opts) => request(`/api/public/orders/${enc(orderToken)}`, opts);
 
-/** The diner says they paid through a UPI app. Staff still confirm it; this never marks the order paid. */
-export const claimUpiPayment = (orderToken, reference) =>
-  request(`/api/public/orders/${enc(orderToken)}/upi-claim`, {
-    method: 'POST',
-    body: reference ? { reference } : {},
-  });
-
 export const startRazorpay = (orderToken) =>
   request(`/api/public/orders/${enc(orderToken)}/razorpay`, { method: 'POST' });
 
@@ -135,21 +128,14 @@ export const startRazorpay = (orderToken) =>
 export const cancelOrder = (orderToken) => request(`/api/public/orders/${enc(orderToken)}/cancel`, { method: 'POST' });
 
 /**
- * PhonePe / Paytm: the server opens the payment and says where to send the diner (a page to go to, or a form to post). Later it asks
- * the gateway whether the money arrived; nothing is sent from here.
+ * PhonePe: the server opens the payment and says which page to send the diner to. Later it asks PhonePe whether the money arrived;
+ * nothing is sent from here.
  */
 export const startGatewayPayment = (orderToken, provider) =>
   request(`/api/public/orders/${enc(orderToken)}/pay/${enc(provider)}`, { method: 'POST' });
 
 export const verifyGatewayPayment = (orderToken, provider) =>
   request(`/api/public/orders/${enc(orderToken)}/pay/${enc(provider)}/verify`, { method: 'POST' });
-
-/** Cashfree: the server creates the payment session; later it asks Cashfree whether the money arrived (nothing is sent from here). */
-export const startCashfree = (orderToken) =>
-  request(`/api/public/orders/${enc(orderToken)}/cashfree`, { method: 'POST' });
-
-export const verifyCashfree = (orderToken) =>
-  request(`/api/public/orders/${enc(orderToken)}/cashfree/verify`, { method: 'POST' });
 
 /** Which waiter / bill requests of this table are open: { waiter, bill }. */
 export const getServiceRequests = (tableToken, opts) => request(`/api/public/t/${enc(tableToken)}/requests`, opts);

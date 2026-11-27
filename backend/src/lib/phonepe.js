@@ -3,17 +3,15 @@ import { config } from '../config.js';
 import { HttpError } from './errors.js';
 
 // PhonePe Payment Gateway, "Standard Checkout v2" (OAuth). Each restaurant brings its own merchant account, so every call carries
-// that restaurant's client id / version / secret and says whether they are PhonePe's sandbox or live ones.
+// that restaurant's client id / version / secret. They are always its live keys: payments are real money.
 // Docs: developer.phonepe.com -> Payment Gateway -> Website integration -> Standard Checkout -> API integration.
-const SANDBOX = { api: 'https://api-preprod.phonepe.com/apis/pg-sandbox', token: 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token' };
 const LIVE = { api: 'https://api.phonepe.com/apis/pg', token: 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token' };
 
 /** What a client id / client version may look like (the values come from the PhonePe Business dashboard). */
 export const CLIENT_ID_RE = /^[A-Za-z0-9_.-]{4,80}$/;
 export const CLIENT_VERSION_RE = /^[A-Za-z0-9_.-]{1,10}$/;
 
-const hostsFor = (env) =>
-  config.phonepeApiBase ? { api: config.phonepeApiBase, token: `${config.phonepeApiBase}/v1/oauth/token` } : env === 'live' ? LIVE : SANDBOX;
+const hosts = () => (config.phonepeApiBase ? { api: config.phonepeApiBase, token: `${config.phonepeApiBase}/v1/oauth/token` } : LIVE);
 
 async function http(url, init) {
   let res;
@@ -28,13 +26,13 @@ async function http(url, init) {
 
 // Tokens last days; keep them per restaurant (and per secret, so changing the secret takes effect at once) and refresh a minute early.
 const tokens = new Map();
-const cacheKey = (c) => `${c.env}|${c.clientId}|${c.clientVersion}|${createHash('sha256').update(c.clientSecret).digest('hex').slice(0, 16)}`;
+const cacheKey = (c) => `${c.clientId}|${c.clientVersion}|${createHash('sha256').update(c.clientSecret).digest('hex').slice(0, 16)}`;
 
 async function getToken(creds, { force = false } = {}) {
   const key = cacheKey(creds);
   const cached = tokens.get(key);
   if (!force && cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
-  const { res, json } = await http(hostsFor(creds.env).token, {
+  const { res, json } = await http(hosts().token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -45,8 +43,8 @@ async function getToken(creds, { force = false } = {}) {
     }).toString(),
   });
   if (!res.ok || !json.access_token) {
-    // Wrong client id / version / secret (or sandbox keys used as live, and the other way round) all end up here.
-    throw new HttpError(502, 'PHONEPE_BAD_KEYS', json.message || 'PhonePe did not accept these keys. Check the Client ID, Client Version, Client Secret and whether they are sandbox or live.');
+    // Wrong client id / version / secret (or test keys, which the live gateway does not know) all end up here.
+    throw new HttpError(502, 'PHONEPE_BAD_KEYS', json.message || 'PhonePe did not accept these keys. Check the Client ID, Client Version and Client Secret: they must be your live keys, not test keys.');
   }
   const expiresAt = Number(json.expires_at) > 0 ? Number(json.expires_at) * 1000 : Date.now() + 5 * 60_000;
   tokens.set(key, { token: json.access_token, expiresAt });
@@ -54,7 +52,7 @@ async function getToken(creds, { force = false } = {}) {
 }
 
 async function call(creds, path, { method = 'GET', body } = {}) {
-  const url = `${hostsFor(creds.env).api}${path}`;
+  const url = `${hosts().api}${path}`;
   const run = async (token) =>
     http(url, {
       method,
@@ -94,7 +92,7 @@ export const getPhonepeOrderStatus = (creds, merchantOrderId) => call(creds, `/c
 export const refundPhonepe = (creds, { merchantRefundId, originalMerchantOrderId, amountPaise }) =>
   call(creds, '/payments/v2/refund', { method: 'POST', body: { merchantRefundId, originalMerchantOrderId, amount: amountPaise } });
 
-/** Used by the admin "Test connection" button: asking for a token proves the three keys and the sandbox/live choice. */
+/** Used by the admin "Test connection" button: asking for a token proves the three keys. */
 export const pingPhonepe = (creds) => getToken(creds, { force: true }).then(() => true);
 
 /** What PhonePe sends in the webhook's Authorization header: SHA256("username:password"), as hex (the username and password are typed in PhonePe's dashboard). */

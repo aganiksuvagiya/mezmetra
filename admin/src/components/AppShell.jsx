@@ -129,7 +129,7 @@ function SoundToggle({ pill = false }) {
   );
 }
 
-/** The notification bell: how many things are waiting for staff (orders to accept, customers calling, UPI payments to confirm). */
+/** The notification bell: how many things are waiting for staff (orders to accept, customers calling). */
 function NotificationBell({ onOpen, open }) {
   const { notifications } = useLiveOrders();
   const n = notifications.length;

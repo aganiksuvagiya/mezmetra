@@ -11,10 +11,10 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { api, apiBlob } from '../lib/api.js';
 import { formatNumber } from '../lib/format.js';
 import { downloadUrl, useAction, useDocumentTitle, useQuery } from '../lib/hooks.js';
+import { METHOD_LABEL } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 
 const MAX_DAYS = 92;
-const METHOD_LABEL = { upi: 'UPI apps', cash: 'Cash', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)' };
 const PRESETS = [
   ['today', 'Today'],
   ['yesterday', 'Yesterday'],

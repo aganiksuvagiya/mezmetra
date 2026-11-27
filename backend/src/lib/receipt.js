@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { PAYMENT_LABELS } from './paymentLabels.js';
 
 // The built-in PDF fonts have no rupee glyph, so amounts are printed as "Rs 399.00".
 const money = (rupees) => `Rs ${Number(rupees).toFixed(2)}`;
@@ -23,7 +24,7 @@ export function writeReceipt(res, { vendor, order }) {
     ['Receipt no.', `#${order.number}`],
     ['Table', order.table_number],
     ['Date', formatDate(order.paid_at ?? order.created_at, vendor.timezone)],
-    ['Payment', `${{ razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)', upi: 'UPI' }[order.payment_method] ?? 'Cash'} - ${order.payment_status.toUpperCase()}`],
+    ['Payment', `${PAYMENT_LABELS[order.payment_method] ?? 'Cash'} - ${order.payment_status.toUpperCase()}`],
   ];
   for (const [label, value] of meta) {
     const y = doc.y;

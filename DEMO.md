@@ -14,9 +14,8 @@ A ready-made demo restaurant, **Tea Post**: 20 chai, coffee, snack and cold-drin
 4. The demo photos are stock photos (credits below) kept in `backend/seed-assets/tea-post/`; seeding a new database (for example Aiven)
    attaches them automatically. For the real pitch upload Tea Post's own photos:
    Admin -> **Menu -> Items** -> edit an item -> **Photo** (the browser shrinks them automatically).
-5. Payments are **UPI only** for now. The demo restaurants are seeded with a placeholder UPI ID (`mezmitra.demo@okaxis`, or `SEED_UPI_ID`),
-   which UPI apps reject. Before the meeting put a real UPI ID in Admin -> **Payments** (it must **not** be the account on the phone you
-   pay from: apps refuse paying yourself). Cash and Razorpay are switched off in the product (`PAYMENT_METHODS`).
+5. The demo restaurants take **cash** at the counter. To show online payment as well on a **local run**, enter Razorpay **test** keys in
+   Admin -> **Payments** before the meeting. (The live site takes live keys only, and PhonePe always does, so a payment there is real money.)
 
 ## Photos in the demo
 
@@ -55,9 +54,9 @@ appreciated). They are *not* Tea Post's own food, so use them for the demo only 
 2. **Browse.** Chef's picks, category chips, search ("chai").
 3. **Order.** Tap **+** on *Cutting Chai* (one tap), open *Masala Chai* (choose Large, less sugar), add *Bun Maska*.
    Open the cart, add a note ("no sugar in one"), and **Place order**.
-4. **Pay.** Tap *Pay with UPI app* (the amount is already filled in), pay in Google Pay / PhonePe / Paytm, come back and tap *I've paid*.
+4. **Pay.** The order page says to pay at the counter. (On a local run with Razorpay test keys, tap *Pay online* instead: the order turns "Paid" by itself.)
 5. **Kitchen side.** On the laptop open Admin, switch **New-order sound** on in the sidebar (one click; browsers need it), then place
-   the order from the phone: the laptop chimes and reads the order out ("New order. Table 3. 2 items."; language, voice and speed are in Admin -> Settings -> New-order alerts), the tab title shows `(1)` and Admin -> **Orders** has the order, live. **Accept**, press **Confirm UPI payment** once the money is in, **Complete**.
+   the order from the phone: the laptop chimes and reads the order out ("New order. Table 3. 2 items."; language, voice and speed are in Admin -> Settings -> New-order alerts), the tab title shows `(1)` and Admin -> **Orders** has the order, live. **Accept**, press **Record cash payment** once you have the money, **Complete**.
    The customer's phone updates by itself ("Your order is being prepared", then "Order completed").
 6. **Owner's view.** **Dashboard**: today's revenue, top-selling items, payment split. **Appearance**: change the colours and
    show the menu on the phone changing. **Menu -> Items**: switch an item off, change a price.
@@ -72,6 +71,6 @@ appreciated). They are *not* Tea Post's own food, so use them for the demo only 
 
 ## Limits to be upfront about
 
-- Online payments confirm automatically only with a gateway (Cashfree or Razorpay); plain UPI links need a staff confirmation.
+- Online payments need the restaurant's own gateway keys (Razorpay or PhonePe) and then confirm by themselves; cash is recorded by staff.
 - The in-page camera scanner needs `https`; on plain `http` use the phone's own camera app.
 - This is a local demo database. Production needs the Aiven database and hosting (see README).

@@ -8,7 +8,7 @@ import { orderItemsSummary, timeAgo } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
 import { useFmt } from '../lib/useFmt.js';
 import { Button } from './Button.jsx';
-import { BellIcon, CardIcon, CheckCircleIcon, CheckIcon, OrdersIcon, ReceiptIcon } from './icons.jsx';
+import { BellIcon, CheckCircleIcon, CheckIcon, OrdersIcon, ReceiptIcon } from './icons.jsx';
 import Modal from './Modal.jsx';
 import SidePanel from './SidePanel.jsx';
 import { useToast } from './Toast.jsx';
@@ -17,13 +17,11 @@ import { useToast } from './Toast.jsx';
 const KINDS = {
   waiter: { icon: BellIcon, tile: 'bg-amber-100 text-amber-700', text: 'text-amber-700', edge: 'shadow-[inset_3px_0_0_var(--color-amber-400)]', action: 'Mark done' },
   bill: { icon: ReceiptIcon, tile: 'bg-amber-100 text-amber-700', text: 'text-amber-700', edge: 'shadow-[inset_3px_0_0_var(--color-amber-400)]', action: 'Mark done' },
-  order: { icon: OrdersIcon, tile: 'bg-brand-50 text-brand-700', text: 'text-brand-700', edge: 'shadow-[inset_3px_0_0_var(--color-brand-500)]', action: 'View order' },
-  claim: { icon: CardIcon, tile: 'bg-emerald-100 text-emerald-700', text: 'text-emerald-700', edge: 'shadow-[inset_3px_0_0_var(--color-emerald-500)]', action: 'View order' },
-};
+  order: { icon: OrdersIcon, tile: 'bg-brand-50 text-brand-700', text: 'text-brand-700', edge: 'shadow-[inset_3px_0_0_var(--color-brand-500)]', action: 'View order' },};
 
 /**
  * The notification list that opens when the bell is pressed: everything waiting for staff right now (customers calling the waiter
- * or asking for the bill, orders waiting to be accepted, UPI payments to confirm), newest first. An entry disappears as soon as it
+ * or asking for the bill, orders waiting to be accepted), newest first. An entry disappears as soon as it
  * is dealt with. "Done" finishes a customer request; an order entry (or its "View" button) opens that order on the Orders page.
  * On a wide screen it is docked against the right edge like the order panel (the page shrinks to make room, nothing is dimmed);
  * on a phone it is a full-screen drawer.
@@ -67,12 +65,6 @@ export default function NotificationsPanel({ onClose }) {
         return { label: 'Waiter call', title: `Table ${n.table}`, detail: 'Is calling the waiter.' };
       case 'bill':
         return { label: 'Bill request', title: `Table ${n.table}`, detail: 'Would like the bill.' };
-      case 'claim':
-        return {
-          label: `Payment to confirm · #${n.order.number}`,
-          title: `Table ${n.order.table_number}`,
-          detail: `Says they paid ${fmt.money(n.order.total)} by UPI.`,
-        };
       default:
         return {
           label: `New order · #${n.order.number}`,
@@ -82,7 +74,7 @@ export default function NotificationsPanel({ onClose }) {
     }
   };
 
-  const description = 'Orders to accept, customers waiting and payments to confirm.';
+  const description = 'Orders to accept and customers waiting.';
   const list = (
     <>
       {notifications.length === 0 ? (

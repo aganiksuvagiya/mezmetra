@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { createRestaurantAccount, emailField, emailInUse, newRestaurantSchema } from '../lib/accounts.js';
 import { conflict, HttpError, notFound, parse } from '../lib/errors.js';
 import { toRupees } from '../lib/money.js';
+import { razorpayReady } from '../lib/razorpay.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
 
 // The platform owner's console: every restaurant on the product with enough numbers to see who is active, a page per restaurant
@@ -70,17 +71,14 @@ const restaurantOut = (r) => ({
   orders_30d: Number(r.orders_30d),
   revenue_total: toRupees(Number(r.revenue_total_paise)),
   last_order_at: r.last_order_at,
-  upi_ready: Boolean(r.upi_ready),
 });
 
 const SELECT_RESTAURANTS = `
   SELECT v.id, v.name, v.email, v.created_at, v.suspended_at, v.suspended_reason,
          (SELECT count(*) FROM dining_tables t WHERE t.vendor_id = v.id) AS tables,
          (SELECT count(*) FROM items i WHERE i.vendor_id = v.id) AS items,
-         o.orders_total, o.orders_30d, o.revenue_total_paise, o.last_order_at,
-         COALESCE(s.upi_enabled AND s.upi_id IS NOT NULL, false) AS upi_ready
+         o.orders_total, o.orders_30d, o.revenue_total_paise, o.last_order_at
     FROM vendors v
-    LEFT JOIN vendor_payment_settings s ON s.vendor_id = v.id
     LEFT JOIN LATERAL (
       SELECT count(*) AS orders_total,
              count(*) FILTER (WHERE created_at >= now() - interval '30 days') AS orders_30d,
@@ -254,15 +252,12 @@ export function platformRouter(db) {
       db.query(`SELECT action, actor_email, detail, created_at FROM platform_audit WHERE target_vendor_id = $1 ORDER BY id DESC LIMIT 10`, [id]),
     ]);
     const st = settings.rows[0];
-    // Per way of paying: is it switched on by the restaurant, is it set up (keys / UPI ID present), does the product offer it at all.
+    // Per way of paying: is it switched on by the restaurant, is it set up (keys present), does the product offer it at all.
     const way = (key, enabled, configured) => ({ key, enabled: Boolean(enabled), configured: Boolean(configured), offered: config.paymentMethods.has(key) });
     const payment = [
       way('cash', st ? st.cash_enabled : true, true),
-      way('upi', st?.upi_enabled, st?.upi_id),
-      way('razorpay', st?.razorpay_enabled, st?.razorpay_key_id && st?.razorpay_key_secret_enc),
-      way('cashfree', st?.cashfree_enabled, st?.cashfree_app_id && st?.cashfree_secret_enc),
+      way('razorpay', st?.razorpay_enabled, razorpayReady(st)),
       way('phonepe', st?.phonepe_enabled, st?.phonepe_client_id && st?.phonepe_client_version && st?.phonepe_secret_enc),
-      way('paytm', st?.paytm_enabled, st?.paytm_mid && st?.paytm_key_enc),
     ];
     res.json({
       data: {

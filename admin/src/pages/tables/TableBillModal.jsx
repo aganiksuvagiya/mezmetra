@@ -13,7 +13,7 @@ const STATUS = { pending: 'Pending', accepted: 'Preparing', completed: 'Served' 
 
 /**
  * A table's running bill: everything it ordered that is not paid yet, added up, with one button to take the payment for all of
- * it together (cash, or UPI the staff have seen arrive). Orders that come in afterwards get a bill of their own.
+ * it together in cash. Orders that come in afterwards get a bill of their own.
  */
 export default function TableBillModal({ table, onClose, onChanged }) {
   const fmt = useFmt();
@@ -21,23 +21,23 @@ export default function TableBillModal({ table, onClose, onChanged }) {
   const { vendor } = useAuth();
   const q = useQuery(() => api(`/api/admin/tables/${table.id}/bill`), [table.id], { interval: 8000 });
   const [run, busy] = useAction();
-  const [confirm, setConfirm] = useState(null); // 'cash' | 'upi' | null
+  const [confirm, setConfirm] = useState(false); // "Paid by cash" was pressed and waits for the "Yes"
   const [error, setError] = useState(null);
 
-  const methods = vendor?.payment_methods ?? ['cash', 'upi'];
+  const cashOffered = vendor?.payment_methods?.includes('cash') ?? true;
   const bill = q.data;
 
-  const settle = (method) =>
+  const settle = () =>
     run(async () => {
       setError(null);
       try {
-        const done = await api(`/api/admin/tables/${table.id}/settle`, { method: 'POST', body: { method } });
+        const done = await api(`/api/admin/tables/${table.id}/settle`, { method: 'POST', body: { method: 'cash' } });
         toast.success(`${done.settled} ${done.settled === 1 ? 'order' : 'orders'} paid (${fmt.money(done.total)}) for table ${table.number}.`);
         onChanged?.();
         onClose();
       } catch (e) {
         setError(e.message);
-        setConfirm(null);
+        setConfirm(false);
         q.reload();
       }
     });
@@ -47,27 +47,18 @@ export default function TableBillModal({ table, onClose, onChanged }) {
       <Button variant="secondary" onClick={onClose}>
         Close
       </Button>
-      {bill && bill.count > 0 && !confirm && (
-        <>
-          {methods.includes('upi') && (
-            <Button variant="secondary" disabled={busy} onClick={() => setConfirm('upi')}>
-              Paid by UPI
-            </Button>
-          )}
-          {methods.includes('cash') && (
-            <Button disabled={busy} onClick={() => setConfirm('cash')}>
-              Paid by cash
-            </Button>
-          )}
-        </>
+      {bill && bill.count > 0 && cashOffered && !confirm && (
+        <Button disabled={busy} onClick={() => setConfirm(true)}>
+          Paid by cash
+        </Button>
       )}
       {bill && bill.count > 0 && confirm && (
         <>
-          <Button variant="secondary" disabled={busy} onClick={() => setConfirm(null)}>
+          <Button variant="secondary" disabled={busy} onClick={() => setConfirm(false)}>
             Back
           </Button>
-          <Button busy={busy} onClick={() => settle(confirm)}>
-            Yes, {fmt.money(bill.total)} received by {confirm === 'upi' ? 'UPI' : 'cash'}
+          <Button busy={busy} onClick={settle}>
+            Yes, {fmt.money(bill.total)} received in cash
           </Button>
         </>
       )}

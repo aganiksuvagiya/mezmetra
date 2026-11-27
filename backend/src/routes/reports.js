@@ -4,6 +4,7 @@ import { HttpError, parse } from '../lib/errors.js';
 import { toCsv } from '../lib/csv.js';
 import { toRupees } from '../lib/money.js';
 import { writeReportPdf } from '../lib/reportPdf.js';
+import { methodsFor } from '../lib/paymentLabels.js';
 
 // Sales reports for the restaurant's accountant. Days are the restaurant's own calendar days (its time zone).
 // "Money received" is counted on the day the payment was recorded, exactly like the dashboard; the order list shows every
@@ -18,8 +19,6 @@ const dateString = z
   .refine((s) => !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().startsWith(s), 'That date does not exist');
 
 const rangeSchema = z.object({ from: dateString.optional(), to: dateString.optional() });
-
-const METHODS = ['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm'];
 
 export function reportsRouter(db) {
   const router = Router();
@@ -87,7 +86,7 @@ export function reportsRouter(db) {
         subtotal: sum(paid, 'subtotal'),
         tax: sum(paid, 'tax'),
         total: sum(paid, 'total'),
-        by_method: METHODS.map((method) => {
+        by_method: methodsFor(paid.map((o) => o.payment_method)).map((method) => {
           const list = paid.filter((o) => o.payment_method === method);
           return { method, orders: list.length, amount: sum(list, 'total') };
         }),

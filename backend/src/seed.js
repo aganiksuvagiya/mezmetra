@@ -4,8 +4,6 @@ import { createDb } from './db.js';
 import { migrate } from './migrate.js';
 import { toPaise } from './lib/money.js';
 
-const DEMO_UPI_ID = process.env.SEED_UPI_ID || 'mezmitra.demo@okaxis';
-
 // Demo data for local development and sales demos. Re-running is safe: a vendor that already exists is skipped.
 // Change these (or set SEED_EMAIL / SEED_PASSWORD / TEAPOST_PASSWORD) before using the app for real.
 export const DEMO = {
@@ -231,9 +229,8 @@ async function seedVendor(db, def, { log }) {
       [def.name, def.email, hash, def.taxPercent ?? 0, def.theme?.primary ?? '#2f6f62', def.theme?.accent ?? '#e8872a'],
     );
     const vendorId = vendor.rows[0].id;
-    // Demo restaurants take UPI out of the box. The UPI ID is a placeholder: replace it in Admin -> Payments with one you own
-    // (and that is not the account you pay from) before trying a real payment.
-    await t.query(`INSERT INTO vendor_payment_settings (vendor_id, upi_enabled, upi_id) VALUES ($1, true, $2)`, [vendorId, def.upiId ?? DEMO_UPI_ID]);
+    // Demo restaurants take cash at the counter out of the box; Razorpay or PhonePe keys are added in Admin -> Payments.
+    await t.query(`INSERT INTO vendor_payment_settings (vendor_id) VALUES ($1)`, [vendorId]);
 
     for (const [ci, cat] of def.menu.entries()) {
       const c = await t.query(`INSERT INTO categories (vendor_id, name, description, sort_order) VALUES ($1, $2, $3, $4) RETURNING id`, [

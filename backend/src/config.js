@@ -24,19 +24,25 @@ function proxyHops(value, fallback) {
   return bool(value, false) ? 1 : false;
 }
 
-// Which ways of paying the product offers at all. For now only UPI; set PAYMENT_METHODS=upi,cash,razorpay,cashfree,phonepe,paytm to
-// bring the others back (each restaurant still chooses among them in Admin -> Payments).
-const KNOWN_PAYMENT_METHODS = ['upi', 'cash', 'razorpay', 'cashfree', 'phonepe', 'paytm'];
+// Which ways of paying the product offers at all: cash at the counter, Razorpay and PhonePe. Each restaurant still chooses among
+// them in Admin -> Payments.
+const KNOWN_PAYMENT_METHODS = ['cash', 'razorpay', 'phonepe'];
+// Ways of paying that were removed from the product. A deployment that still lists one must keep starting: it is ignored, with a note.
+const REMOVED_PAYMENT_METHODS = ['upi', 'cashfree', 'paytm'];
 function paymentMethods(value) {
-  const list = (value || 'upi')
+  const asked = (value || KNOWN_PAYMENT_METHODS.join(','))
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  const unknown = list.filter((m) => !KNOWN_PAYMENT_METHODS.includes(m));
-  if (unknown.length > 0 || list.length === 0) {
+  const dropped = asked.filter((m) => REMOVED_PAYMENT_METHODS.includes(m));
+  const unknown = asked.filter((m) => !KNOWN_PAYMENT_METHODS.includes(m) && !REMOVED_PAYMENT_METHODS.includes(m));
+  if (unknown.length > 0 || asked.length === 0) {
     throw new Error(`PAYMENT_METHODS must list some of: ${KNOWN_PAYMENT_METHODS.join(', ')} (got "${value}")`);
   }
-  return new Set(list);
+  if (dropped.length > 0) console.warn(`[mezmitra] PAYMENT_METHODS: ${dropped.join(', ')} no longer exist and are ignored`);
+  const list = asked.filter((m) => KNOWN_PAYMENT_METHODS.includes(m));
+  // Only removed ones listed (the old default was "upi"): offer cash, so restaurants can go on taking orders.
+  return new Set(list.length > 0 ? list : ['cash']);
 }
 
 // Accounts (by email) that run the platform: they get the "Platform" section in the admin to see every restaurant and
@@ -80,7 +86,7 @@ export const config = {
   autoMigrate: bool(env.AUTO_MIGRATE, true),
   appSecret,
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
-  // A Set (read at request time, so tests can switch it): 'upi' | 'cash' | 'razorpay' | 'cashfree' | 'phonepe' | 'paytm'.
+  // A Set (read at request time, so tests can switch it): 'cash' | 'razorpay' | 'phonepe'.
   paymentMethods: paymentMethods(env.PAYMENT_METHODS),
   // A Set of lower-case emails (read at request time, so tests can change it).
   superAdminEmails: emailList(env.SUPER_ADMIN_EMAILS),
@@ -98,14 +104,11 @@ export const config = {
   // Where the customer web app lives; this base URL is what gets encoded in table QR codes.
   customerAppUrl: (env.CUSTOMER_APP_URL || 'http://localhost:5174').replace(/\/+$/, ''),
   razorpayApiBase: env.RAZORPAY_API_BASE || 'https://api.razorpay.com/v1',
-  // Empty = Cashfree's own servers (sandbox for TEST App IDs, production otherwise). Tests point it at a fake.
-  cashfreeApiBase: (env.CASHFREE_API_BASE || '').replace(/\/+$/, ''),
-  // PhonePe PG and Paytm PG. Empty = the gateway's own servers (the restaurant picks sandbox or live in Admin -> Payments). Tests point
-  // these at fakes. Paytm has two hosts: "theia" (start a payment, the pay page) and "status" (status, refund).
+  // The live server takes only Razorpay's live keys (rzp_live_...); a local or test run also accepts test keys.
+  razorpayLiveOnly: isProd,
+  // PhonePe PG. Empty = PhonePe's own live servers. Tests point it at a fake.
   phonepeApiBase: (env.PHONEPE_API_BASE || '').replace(/\/+$/, ''),
-  paytmTheiaBase: (env.PAYTM_THEIA_BASE || '').replace(/\/+$/, ''),
-  paytmStatusBase: (env.PAYTM_STATUS_BASE || '').replace(/\/+$/, ''),
-  // The public address of this API (Paytm sends the diner's browser back to it). Empty = taken from the incoming request.
+  // The public address of this API (the webhook addresses are built on it). Empty = taken from the incoming request.
   apiPublicUrl: (env.API_PUBLIC_URL || '').replace(/\/+$/, ''),
   trustProxy: proxyHops(env.TRUST_PROXY, isProd),
 };

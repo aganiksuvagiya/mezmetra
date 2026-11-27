@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Badge } from '../components/Badge.jsx';
 import { Button } from '../components/Button.jsx';
-import UpiQrBox from '../components/UpiQrBox.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import { Alert, ErrorState } from '../components/EmptyState.jsx';
-import { focusFirstInvalid, Input, PasswordInput, Select, SwitchField } from '../components/Field.jsx';
+import { focusFirstInvalid, Input, PasswordInput, SwitchField } from '../components/Field.jsx';
 import { ExternalIcon, PlugIcon } from '../components/icons.jsx';
 import { Skeleton } from '../components/Spinner.jsx';
 import WebhookBox from '../components/WebhookBox.jsx';
@@ -14,16 +13,8 @@ import { useAction, useDocumentTitle, useQuery } from '../lib/hooks.js';
 import { methodsAvailable } from '../lib/payments.js';
 
 const KEY_ID_RE = /^rzp_(test|live)_[A-Za-z0-9]{6,40}$/;
-const APP_ID_RE = /^[A-Za-z0-9_-]{6,60}$/;
-const UPI_RE = /^[a-zA-Z0-9._-]{2,64}@[a-zA-Z][a-zA-Z0-9.-]{1,48}$/;
-
 const PP_ID_RE = /^[A-Za-z0-9_.-]{4,80}$/;
 const PP_VERSION_RE = /^[A-Za-z0-9_.-]{1,10}$/;
-const MID_RE = /^[A-Za-z0-9_@.-]{6,30}$/;
-const PAYTM_KEY_LENGTH = 16;
-
-// Cashfree's test (sandbox) App IDs start with TEST; every other one is a live account.
-const cfModeOf = (appId) => (/^TEST/i.test(appId) ? 'test' : appId ? 'live' : null);
 const modeOf = (keyId) => (keyId.startsWith('rzp_live_') ? 'live' : keyId.startsWith('rzp_test_') ? 'test' : null);
 
 function ModeBadge({ mode }) {
@@ -57,87 +48,52 @@ function PaymentsForm({ settings, onSaved }) {
   const toast = useToast();
   const [saveAction, saving] = useAction();
   const [testAction, testing] = useAction();
-  const [cfTestAction, cfTesting] = useAction();
   const [ppTestAction, ppTesting] = useAction();
-  const [ptTestAction, ptTesting] = useAction();
 
   const [cash, setCash] = useState(settings.cash_enabled);
   const [online, setOnline] = useState(settings.razorpay_enabled);
-  const [upi, setUpi] = useState(settings.upi_enabled);
-  const [upiId, setUpiId] = useState(settings.upi_id ?? '');
-  const [payButtons, setPayButtons] = useState(settings.upi_pay_buttons ?? false);
   const [keyId, setKeyId] = useState(settings.razorpay_key_id ?? '');
   const [secret, setSecret] = useState('');
-  const [cashfree, setCashfree] = useState(settings.cashfree_enabled ?? false);
-  const [cfAppId, setCfAppId] = useState(settings.cashfree_app_id ?? '');
-  const [cfSecret, setCfSecret] = useState('');
-  const [cfTestResult, setCfTestResult] = useState(null);
   const [phonepe, setPhonepe] = useState(settings.phonepe_enabled ?? false);
   const [ppClientId, setPpClientId] = useState(settings.phonepe_client_id ?? '');
   const [ppVersion, setPpVersion] = useState(settings.phonepe_client_version ?? '');
   const [ppSecret, setPpSecret] = useState('');
-  const [ppEnv, setPpEnv] = useState(settings.phonepe_env ?? 'sandbox');
   const [ppTestResult, setPpTestResult] = useState(null);
   // Webhook secrets (write-only): typed once, here and in the gateway's dashboard.
   const [rzHookSecret, setRzHookSecret] = useState('');
   const [ppHookUser, setPpHookUser] = useState('');
   const [ppHookPass, setPpHookPass] = useState('');
-  const [paytm, setPaytm] = useState(settings.paytm_enabled ?? false);
-  const [ptMid, setPtMid] = useState(settings.paytm_mid ?? '');
-  const [ptKey, setPtKey] = useState('');
-  const [ptWebsite, setPtWebsite] = useState(settings.paytm_website ?? '');
-  const [ptEnv, setPtEnv] = useState(settings.paytm_env ?? 'sandbox');
-  const [ptTestResult, setPtTestResult] = useState(null);
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [testResult, setTestResult] = useState(null);
 
-  // Only the ways of paying the product offers right now are shown (today: UPI only).
+  // Only the ways of paying the product offers right now are shown.
   const avail = methodsAvailable(settings);
   const showCash = avail.has('cash');
   const showRazorpay = avail.has('razorpay');
-  const showCashfree = avail.has('cashfree');
   const showPhonepe = avail.has('phonepe');
-  const showPaytm = avail.has('paytm');
-  // The plain "UPI ID" way of paying (QR + UPI ID, staff confirm) is shown only while the product offers it; remove `upi` from
-  // PAYMENT_METHODS on the server to hide the switch and the UPI ID card (the restaurant's saved UPI ID is kept).
-  const showUpi = avail.has('upi');
-  const upiOnly = avail.size === 1 && avail.has('upi');
 
   const savedKeyId = settings.razorpay_key_id ?? '';
+  // The live server takes no Razorpay test keys (a test payment moves no money).
+  const liveOnly = Boolean(settings.razorpay_live_only);
+  const savedTestKey = liveOnly && modeOf(savedKeyId) === 'test';
   const keysChanged = showRazorpay && (keyId.trim() !== savedKeyId || secret.trim() !== '');
-  const savedCfAppId = settings.cashfree_app_id ?? '';
-  const cfChanged = showCashfree && (cfAppId.trim() !== savedCfAppId || cfSecret.trim() !== '');
-  const cfMode = cfModeOf(cfAppId.trim() || savedCfAppId);
   const savedPpId = settings.phonepe_client_id ?? '';
   const savedPpVersion = settings.phonepe_client_version ?? '';
-  const ppChanged =
-    showPhonepe && (ppClientId.trim() !== savedPpId || ppVersion.trim() !== savedPpVersion || ppSecret.trim() !== '' || ppEnv !== (settings.phonepe_env ?? 'sandbox'));
-  const savedPtMid = settings.paytm_mid ?? '';
-  const ptChanged =
-    showPaytm &&
-    (ptMid.trim() !== savedPtMid || ptKey.trim() !== '' || ptWebsite.trim() !== (settings.paytm_website ?? '') || ptEnv !== (settings.paytm_env ?? 'sandbox'));
-  const upiChanged = showUpi && (upi !== settings.upi_enabled || upiId.trim() !== (settings.upi_id ?? '') || payButtons !== (settings.upi_pay_buttons ?? false));
+  const ppChanged = showPhonepe && (ppClientId.trim() !== savedPpId || ppVersion.trim() !== savedPpVersion || ppSecret.trim() !== '');
   const hooksChanged = (showRazorpay && rzHookSecret.trim() !== '') || (showPhonepe && (ppHookUser.trim() !== '' || ppHookPass.trim() !== ''));
   const dirty =
     hooksChanged ||
     (showCash && cash !== settings.cash_enabled) ||
     (showRazorpay && online !== settings.razorpay_enabled) ||
-    (showCashfree && cashfree !== (settings.cashfree_enabled ?? false)) ||
     (showPhonepe && phonepe !== (settings.phonepe_enabled ?? false)) ||
-    (showPaytm && paytm !== (settings.paytm_enabled ?? false)) ||
     keysChanged ||
-    cfChanged ||
-    ppChanged ||
-    ptChanged ||
-    upiChanged;
+    ppChanged;
   const mode = modeOf(keyId.trim() || savedKeyId);
 
   const clearFeedback = () => {
     setTestResult(null);
-    setCfTestResult(null);
     setPpTestResult(null);
-    setPtTestResult(null);
     setFormError(null);
   };
 
@@ -146,26 +102,15 @@ function PaymentsForm({ settings, onSaved }) {
     const id = keyId.trim();
     const sec = secret.trim();
     if (id) {
-      if (!KEY_ID_RE.test(id)) next.keyId = 'Key ID looks like rzp_test_xxxxxxxx or rzp_live_xxxxxxxx.';
+      if (!KEY_ID_RE.test(id)) next.keyId = `Key ID looks like ${liveOnly ? '' : 'rzp_test_xxxxxxxx or '}rzp_live_xxxxxxxx.`;
+      // A test key saved earlier does not stop other changes, as long as online payments stay off.
+      else if (liveOnly && modeOf(id) === 'test' && (online || id !== savedKeyId)) {
+        next.keyId = 'Test keys do not work on the live site. Enter a Key ID that starts with rzp_live_.';
+      }
     } else if (savedKeyId) {
       next.keyId = 'A saved Key ID can’t be removed. Enter a new one to replace it.';
     }
     if (sec && sec.length < 8) next.secret = 'That Key Secret looks too short.';
-    const vpa = upiId.trim();
-    if (showUpi && vpa && !UPI_RE.test(vpa)) next.upiId = 'A UPI ID looks like name@bank, e.g. shop@okhdfcbank or 9876543210@ybl.';
-    if (showUpi && upi && !vpa) next.upiId = 'Enter your UPI ID to turn on UPI payments.';
-    const cid = cfAppId.trim();
-    const csec = cfSecret.trim();
-    if (cid) {
-      if (!APP_ID_RE.test(cid)) next.cfAppId = 'The App ID is a short code of letters and numbers, from your Cashfree dashboard.';
-    } else if (savedCfAppId) {
-      next.cfAppId = 'A saved App ID can’t be removed. Enter a new one to replace it.';
-    }
-    if (csec && csec.length < 8) next.cfSecret = 'That Secret Key looks too short.';
-    if (cashfree) {
-      if (!cid && !savedCfAppId) next.cfAppId = 'Enter your Cashfree App ID to turn on online payments.';
-      if (!csec && !settings.cashfree_secret_set) next.cfSecret = 'Enter your Cashfree Secret Key to turn on online payments.';
-    }
     const ppId = ppClientId.trim();
     const ppVer = ppVersion.trim();
     const ppSec = ppSecret.trim();
@@ -179,17 +124,7 @@ function PaymentsForm({ settings, onSaved }) {
         if (!ppSec && !settings.phonepe_secret_set) next.ppSecret = 'Enter your PhonePe Client Secret to turn on online payments.';
       }
     }
-    const mid = ptMid.trim();
-    const pkey = ptKey.trim();
-    if (showPaytm) {
-      if (mid && !MID_RE.test(mid)) next.ptMid = 'The Merchant ID is the code from your Paytm dashboard (letters and numbers).';
-      if (pkey && pkey.length !== PAYTM_KEY_LENGTH) next.ptKey = `A Paytm Merchant Key is exactly ${PAYTM_KEY_LENGTH} characters.`;
-      if (paytm) {
-        if (!mid && !savedPtMid) next.ptMid = 'Enter your Paytm Merchant ID to turn on online payments.';
-        if (!pkey && !settings.paytm_key_set) next.ptKey = 'Enter your Paytm Merchant Key to turn on online payments.';
-      }
-    }
-    if (online) {
+    if (showRazorpay && online) {
       if (!id && !savedKeyId) next.keyId = 'Enter your Razorpay Key ID to turn on online payments.';
       if (!sec && !settings.razorpay_secret_set) next.secret = 'Enter your Razorpay Key Secret to turn on online payments.';
     }
@@ -200,13 +135,9 @@ function PaymentsForm({ settings, onSaved }) {
     e.preventDefault();
     const form = e.currentTarget;
     clearFeedback();
-    if (!(showCash && cash) && !(showRazorpay && online) && !(showCashfree && cashfree) && !(showPhonepe && phonepe) && !(showPaytm && paytm) && !(showUpi && upi)) {
+    if (!(showCash && cash) && !(showRazorpay && online) && !(showPhonepe && phonepe)) {
       setErrors({});
-      setFormError(
-        upiOnly
-          ? 'Turn on UPI payments and enter your UPI ID, or diners won’t be able to pay.'
-          : 'Keep at least one payment method turned on, or diners won’t be able to pay.',
-      );
+      setFormError('Keep at least one payment method turned on, or diners won’t be able to pay.');
       return;
     }
     const found = validate();
@@ -218,32 +149,18 @@ function PaymentsForm({ settings, onSaved }) {
     const body = {};
     if (cash !== settings.cash_enabled) body.cash_enabled = cash;
     if (online !== settings.razorpay_enabled) body.razorpay_enabled = online;
-    if (showCashfree && cashfree !== (settings.cashfree_enabled ?? false)) body.cashfree_enabled = cashfree;
-    if (showUpi && upi !== settings.upi_enabled) body.upi_enabled = upi;
-    if (showUpi && upiId.trim() !== (settings.upi_id ?? '')) body.upi_id = upiId.trim();
-    if (showUpi && payButtons !== (settings.upi_pay_buttons ?? false)) body.upi_pay_buttons = payButtons;
     if (keyId.trim() && keyId.trim() !== savedKeyId) body.razorpay_key_id = keyId.trim();
     if (secret.trim()) body.razorpay_key_secret = secret.trim();
-    if (cfAppId.trim() && cfAppId.trim() !== savedCfAppId) body.cashfree_app_id = cfAppId.trim();
-    if (cfSecret.trim()) body.cashfree_secret = cfSecret.trim();
     if (showPhonepe) {
       if (phonepe !== (settings.phonepe_enabled ?? false)) body.phonepe_enabled = phonepe;
       if (ppClientId.trim() && ppClientId.trim() !== savedPpId) body.phonepe_client_id = ppClientId.trim();
       if (ppVersion.trim() && ppVersion.trim() !== savedPpVersion) body.phonepe_client_version = ppVersion.trim();
       if (ppSecret.trim()) body.phonepe_client_secret = ppSecret.trim();
-      if (ppEnv !== (settings.phonepe_env ?? 'sandbox')) body.phonepe_env = ppEnv;
     }
     if (showRazorpay && rzHookSecret.trim()) body.razorpay_webhook_secret = rzHookSecret.trim();
     if (showPhonepe && (ppHookUser.trim() || ppHookPass.trim())) {
       body.phonepe_webhook_username = ppHookUser.trim();
       body.phonepe_webhook_password = ppHookPass.trim();
-    }
-    if (showPaytm) {
-      if (paytm !== (settings.paytm_enabled ?? false)) body.paytm_enabled = paytm;
-      if (ptMid.trim() && ptMid.trim() !== savedPtMid) body.paytm_mid = ptMid.trim();
-      if (ptKey.trim()) body.paytm_merchant_key = ptKey.trim();
-      if (ptWebsite.trim() !== (settings.paytm_website ?? '')) body.paytm_website = ptWebsite.trim();
-      if (ptEnv !== (settings.paytm_env ?? 'sandbox')) body.paytm_env = ptEnv;
     }
     if (Object.keys(body).length === 0) {
       toast.info('No changes to save.');
@@ -258,34 +175,22 @@ function PaymentsForm({ settings, onSaved }) {
         const { fields, formError: message } = splitFieldErrors(error, [
           'razorpay_key_id',
           'razorpay_key_secret',
-          'upi_id',
-          'cashfree_app_id',
-          'cashfree_secret',
           'phonepe_client_id',
           'phonepe_client_version',
           'phonepe_client_secret',
           'razorpay_webhook_secret',
           'phonepe_webhook_username',
           'phonepe_webhook_password',
-          'paytm_mid',
-          'paytm_merchant_key',
-          'paytm_website',
         ]);
         setErrors({
           keyId: fields.razorpay_key_id,
           secret: fields.razorpay_key_secret,
-          upiId: fields.upi_id,
-          cfAppId: fields.cashfree_app_id,
-          cfSecret: fields.cashfree_secret,
           ppClientId: fields.phonepe_client_id,
           ppVersion: fields.phonepe_client_version,
           ppSecret: fields.phonepe_client_secret,
           rzHook: fields.razorpay_webhook_secret,
           ppHookUser: fields.phonepe_webhook_username,
           ppHookPass: fields.phonepe_webhook_password,
-          ptMid: fields.paytm_mid,
-          ptKey: fields.paytm_merchant_key,
-          ptWebsite: fields.paytm_website,
         });
         setFormError(message);
         if (Object.keys(fields).length) focusFirstInvalid(form);
@@ -304,30 +209,18 @@ function PaymentsForm({ settings, onSaved }) {
       }
     });
 
-  const testCashfree = () =>
-    cfTestAction(async () => {
-      setCfTestResult(null);
+  const testPhonepe = () =>
+    ppTestAction(async () => {
+      setPpTestResult(null);
       try {
-        const result = await api('/api/admin/payment-settings/test', { method: 'POST', body: { provider: 'cashfree' } });
-        setCfTestResult({ ok: true, message: `Connected. Cashfree accepted your ${result.mode === 'live' ? 'live' : 'test'} keys.` });
+        await api('/api/admin/payment-settings/test', { method: 'POST', body: { provider: 'phonepe' } });
+        setPpTestResult({ ok: true, message: 'Connected. PhonePe accepted your keys.' });
       } catch (error) {
-        setCfTestResult({ ok: false, message: error.message });
-      }
-    });
-
-  const testGateway = (provider, action, setResult, label) =>
-    action(async () => {
-      setResult(null);
-      try {
-        const result = await api('/api/admin/payment-settings/test', { method: 'POST', body: { provider } });
-        setResult({ ok: true, message: `Connected. ${label} accepted your ${result.mode === 'live' ? 'live' : 'test'} keys.` });
-      } catch (error) {
-        setResult({ ok: false, message: error.message });
+        setPpTestResult({ ok: false, message: error.message });
       }
     });
 
   const canTest = settings.razorpay_configured && !keysChanged;
-  const canTestCf = settings.cashfree_configured && !cfChanged;
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4 sm:space-y-6">
@@ -337,7 +230,7 @@ function PaymentsForm({ settings, onSaved }) {
         <CardHeader
           id="methods"
           title="Payment methods"
-          description={upiOnly ? 'Diners pay with a UPI app. Turn it on and enter your UPI ID below.' : 'Choose how diners can pay. At least one must stay on.'}
+          description="Choose how diners can pay. At least one must stay on."
         />
         <div className="divide-y divide-slate-100 p-4 sm:p-5 [&>*]:py-5 [&>:first-child]:pt-0 [&>:last-child]:pb-0">
           {showCash && (
@@ -353,50 +246,15 @@ function PaymentsForm({ settings, onSaved }) {
               />
             </div>
           )}
-          {showUpi && (
-            <div>
-              <SwitchField
-                label="UPI apps (Google Pay, PhonePe, Paytm…)"
-                description="Diners tap their UPI app with the amount already filled in, pay, then tell us they paid. You confirm it in Orders."
-                checked={upi}
-                onChange={(v) => {
-                  setUpi(v);
-                  clearFeedback();
-                }}
-              />
-            </div>
-          )}
-          {showCashfree && (
-            <div>
-              <SwitchField
-                label="Online payments (Cashfree)"
-                description="Diners pay by UPI, card or net banking on their phone, and the order is marked paid automatically once the money arrives. Needs your Cashfree keys below. Only one online gateway can be on at a time."
-                checked={cashfree}
-                onChange={(v) => {
-                  setCashfree(v);
-                  if (v) {
-                    setOnline(false);
-                    setPhonepe(false);
-                    setPaytm(false);
-                  }
-                  clearFeedback();
-                }}
-              />
-            </div>
-          )}
           {showRazorpay && (
             <div>
               <SwitchField
                 label="Online payments (Razorpay)"
-                description={`Diners pay by UPI, card or net banking on their phone. Needs your Razorpay keys below.${showCashfree ? ' Only one online gateway can be on at a time.' : ''}`}
+                description={`Diners pay by UPI, card or net banking on their phone. Needs your Razorpay keys below.${showPhonepe ? ' Only one online gateway can be on at a time.' : ''}`}
                 checked={online}
                 onChange={(v) => {
                   setOnline(v);
-                  if (v) {
-                    setCashfree(false);
-                    setPhonepe(false);
-                    setPaytm(false);
-                  }
+                  if (v) setPhonepe(false);
                   clearFeedback();
                 }}
               />
@@ -406,33 +264,11 @@ function PaymentsForm({ settings, onSaved }) {
             <div>
               <SwitchField
                 label="Online payments (PhonePe)"
-                description="Diners are sent to PhonePe's secure page to pay by UPI, card or net banking, and the order is marked paid automatically once PhonePe confirms the money. Needs your PhonePe Business keys below. Only one online gateway can be on at a time."
+                description={`Diners are sent to PhonePe's secure page to pay by UPI, card or net banking, and the order is marked paid automatically once PhonePe confirms the money. Needs your PhonePe Business keys below.${showRazorpay ? ' Only one online gateway can be on at a time.' : ''}`}
                 checked={phonepe}
                 onChange={(v) => {
                   setPhonepe(v);
-                  if (v) {
-                    setOnline(false);
-                    setCashfree(false);
-                    setPaytm(false);
-                  }
-                  clearFeedback();
-                }}
-              />
-            </div>
-          )}
-          {showPaytm && (
-            <div>
-              <SwitchField
-                label="Online payments (Paytm)"
-                description="Diners are sent to Paytm's secure page to pay by UPI, wallet, card or net banking, and the order is marked paid automatically once Paytm confirms the money. Needs your Paytm merchant keys below. Only one online gateway can be on at a time."
-                checked={paytm}
-                onChange={(v) => {
-                  setPaytm(v);
-                  if (v) {
-                    setOnline(false);
-                    setCashfree(false);
-                    setPhonepe(false);
-                  }
+                  if (v) setOnline(false);
                   clearFeedback();
                 }}
               />
@@ -441,172 +277,19 @@ function PaymentsForm({ settings, onSaved }) {
         </div>
       </Card>
 
-      {showUpi && (
-        <Card as="section" aria-labelledby="upi">
-          <CardHeader id="upi" title="UPI ID" description="Money from UPI apps goes straight to your UPI ID." />
-          <div className="space-y-3 p-4 sm:p-5">
-            <Input
-              label="Your UPI ID"
-              value={upiId}
-              onChange={(e) => {
-                setUpiId(e.target.value);
-                setErrors((p) => ({ ...p, upiId: undefined }));
-                clearFeedback();
-              }}
-              error={errors.upiId}
-              placeholder="shopname@okhdfcbank"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              inputMode="email"
-              hint="Find it in your UPI app under your profile. Diners see it when they pay."
-            />
-            <UpiQrBox
-              initialUrl={settings.upi_qr_url}
-              upiId={upiId}
-              onUseUpiId={(id) => {
-                setUpiId(id);
-                setErrors((p) => ({ ...p, upiId: undefined }));
-                clearFeedback();
-              }}
-            />
-            <SwitchField
-              label="Show UPI app buttons (Google Pay, PhonePe, Paytm)"
-              description="Turn this on only if your UPI ID is a business ID that accepts payment links (some bank business IDs do). A PhonePe Business or Paytm for Business ID does not: upload its QR above instead. For an ordinary personal UPI ID, Google Pay and PhonePe usually refuse these buttons (“bank limit exceeded”, “security reasons”). With it off, diners pay by typing your UPI ID."
-              checked={payButtons}
-              onChange={(v) => {
-                setPayButtons(v);
-                clearFeedback();
-              }}
-            />
-            <Alert tone="warning">
-              A plain UPI link can’t tell us whether the payment went through, so each UPI order shows “Customer says paid” and you press
-              <strong> Confirm payment</strong> after you see the money in your bank or UPI app. Some UPI apps may refuse a pre-filled amount for a
-              personal UPI ID: <strong>Google Pay in particular blocks them</strong> with a “bank limit exceeded” message, while PhonePe and Paytm usually work. A PhonePe Business or Paytm for Business ID accepts money only through its own QR (upload it above). {showRazorpay || showCashfree ? 'Online payments (below) are' : 'An online payment gateway is'} the way to have orders marked paid by themselves.
-            </Alert>
-          </div>
-        </Card>
-      )}
-
-      {showCashfree && (
-        <Card as="section" aria-labelledby="cashfree">
-          <CardHeader
-            id="cashfree"
-            title="Cashfree keys"
-            description="Used to take online payments. Cashfree confirms each payment, so orders are marked paid by themselves."
-            actions={<ModeBadge mode={cfMode} />}
-          />
-          <div className="space-y-4 p-4 sm:p-5">
-            {cfMode === 'live' && (
-              <Alert tone="warning">
-                <strong>Live keys take real money.</strong> Every online payment from a diner will be charged to a real card or UPI account. Use test keys (the
-                App ID starts with <code className="rounded bg-amber-100 px-1">TEST</code>) while you are trying things out.
-              </Alert>
-            )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="App ID"
-                value={cfAppId}
-                onChange={(e) => {
-                  setCfAppId(e.target.value);
-                  setErrors((p) => ({ ...p, cfAppId: undefined }));
-                  clearFeedback();
-                }}
-                error={errors.cfAppId}
-                placeholder="TEST10xxxxxxxxxxxx"
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                hint="Safe to show; it identifies your account."
-              />
-              <PasswordInput
-                label="Secret Key"
-                value={cfSecret}
-                onChange={(e) => {
-                  setCfSecret(e.target.value);
-                  setErrors((p) => ({ ...p, cfSecret: undefined }));
-                  clearFeedback();
-                }}
-                error={errors.cfSecret}
-                placeholder={settings.cashfree_secret_set ? 'Saved – leave blank to keep' : 'Paste your Secret Key'}
-                autoComplete="new-password"
-                autoCapitalize="none"
-                spellCheck={false}
-                hint={settings.cashfree_secret_set ? 'A secret is saved. It is stored encrypted and never shown again.' : 'Stored encrypted and never shown again.'}
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <Button variant="secondary" icon={PlugIcon} busy={cfTesting} disabled={!canTestCf} onClick={testCashfree}>
-                {cfTesting ? 'Testing…' : 'Test connection'}
-              </Button>
-              <p className="min-w-0 flex-1 basis-48 text-xs text-slate-500">
-                {!settings.cashfree_configured
-                  ? 'Save your App ID and Secret Key first, then test them.'
-                  : cfChanged
-                    ? 'Save your changes first. The test uses the keys that are saved.'
-                    : 'Makes one harmless call to Cashfree with your saved keys.'}
-              </p>
-            </div>
-            {cfTestResult && (
-              <Alert tone={cfTestResult.ok ? 'success' : 'error'} role="status">
-                {cfTestResult.message}
-              </Alert>
-            )}
-
-            <details className="group rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700">
-              <summary className="cursor-pointer font-medium text-slate-900">Where do I find my Cashfree keys?</summary>
-              <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-slate-600">
-                <li>
-                  Sign in to the{' '}
-                  <a href="https://merchant.cashfree.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-brand-700 underline underline-offset-2">
-                    Cashfree Merchant Dashboard <ExternalIcon size={13} />
-                  </a>
-                  .
-                </li>
-                <li>Use the Test / Production switch at the top to choose which keys you want.</li>
-                <li>
-                  Open <strong>Payment Gateway</strong>, then <strong>Developers</strong> and <strong>API Keys</strong>.
-                </li>
-                <li>
-                  Generate (or view) your keys. Copy the <strong>App ID</strong> and the <strong>Secret Key</strong> into the fields above.
-                </li>
-                <li>The Secret Key is shown only once. If you lose it, generate a new one and paste the new pair here.</li>
-              </ol>
-              <p className="mt-3 text-xs text-slate-500">Start with the Test keys. Switch to Production keys only when Cashfree has approved your account for real payments.</p>
-            </details>
-          </div>
-        </Card>
-      )}
-
       {showPhonepe && (
         <Card as="section" aria-labelledby="phonepe">
           <CardHeader
             id="phonepe"
             title="PhonePe keys"
             description="Used to take online payments. PhonePe confirms each payment, so orders are marked paid by themselves."
-            actions={<ModeBadge mode={settings.phonepe_configured ? (ppEnv === 'live' ? 'live' : 'test') : null} />}
+            actions={<ModeBadge mode={settings.phonepe_configured ? 'live' : null} />}
           />
           <div className="space-y-4 p-4 sm:p-5">
-            {ppEnv === 'live' && (
-              <Alert tone="warning">
-                <strong>Live keys take real money.</strong> Every online payment from a diner will be charged to a real card or UPI account. Choose
-                <strong> Sandbox</strong> while you are trying things out.
-              </Alert>
-            )}
-            <Select
-              label="Which keys are these?"
-              value={ppEnv}
-              onChange={(e) => {
-                setPpEnv(e.target.value);
-                clearFeedback();
-              }}
-              hint="PhonePe cannot tell from the keys, so say whether they are its test (sandbox) keys or your real (live) ones."
-              wrapperClassName="max-w-xs"
-            >
-              <option value="sandbox">Sandbox (test keys)</option>
-              <option value="live">Live (real money)</option>
-            </Select>
+            <Alert tone="warning">
+              <strong>Use your live keys.</strong> Every online payment from a diner is charged to a real card or UPI account. PhonePe test keys do not
+              work here.
+            </Alert>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="Client ID"
@@ -662,7 +345,7 @@ function PaymentsForm({ settings, onSaved }) {
               changed={ppChanged}
               busy={ppTesting}
               result={ppTestResult}
-              onTest={() => testGateway('phonepe', ppTestAction, setPpTestResult, 'PhonePe')}
+              onTest={testPhonepe}
             />
             <WebhookBox
               url={settings.webhook_url_phonepe}
@@ -723,123 +406,13 @@ function PaymentsForm({ settings, onSaved }) {
                   .
                 </li>
                 <li>
-                  Open <strong>Developer Settings</strong>. Turn <strong>Test Mode</strong> on to see the sandbox keys, off for the live ones.
+                  Open <strong>Developer Settings</strong> and make sure <strong>Test Mode</strong> is off, so you see your live keys.
                 </li>
                 <li>
-                  Copy the <strong>Client ID</strong>, <strong>Client Version</strong> and <strong>Client Secret</strong> into the fields above, and pick the matching
-                  Sandbox / Live choice.
+                  Copy the <strong>Client ID</strong>, <strong>Client Version</strong> and <strong>Client Secret</strong> into the fields above.
                 </li>
               </ol>
-              <p className="mt-3 text-xs text-slate-500">Start with the Sandbox keys. Switch to Live only after PhonePe has activated your account for real payments.</p>
-            </details>
-          </div>
-        </Card>
-      )}
-
-      {showPaytm && (
-        <Card as="section" aria-labelledby="paytm">
-          <CardHeader
-            id="paytm"
-            title="Paytm keys"
-            description="Used to take online payments. Paytm confirms each payment, so orders are marked paid by themselves."
-            actions={<ModeBadge mode={settings.paytm_configured ? (ptEnv === 'live' ? 'live' : 'test') : null} />}
-          />
-          <div className="space-y-4 p-4 sm:p-5">
-            {ptEnv === 'live' && (
-              <Alert tone="warning">
-                <strong>Live keys take real money.</strong> Every online payment from a diner will be charged to a real card or UPI account. Choose
-                <strong> Staging</strong> while you are trying things out.
-              </Alert>
-            )}
-            <Select
-              label="Which keys are these?"
-              value={ptEnv}
-              onChange={(e) => {
-                setPtEnv(e.target.value);
-                clearFeedback();
-              }}
-              hint="Paytm gives separate staging (test) and production keys. Say which ones you are entering."
-              wrapperClassName="max-w-xs"
-            >
-              <option value="sandbox">Staging (test keys)</option>
-              <option value="live">Production (real money)</option>
-            </Select>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="Merchant ID (MID)"
-                value={ptMid}
-                onChange={(e) => {
-                  setPtMid(e.target.value);
-                  setErrors((p) => ({ ...p, ptMid: undefined }));
-                  clearFeedback();
-                }}
-                error={errors.ptMid}
-                placeholder="From the Paytm dashboard"
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                hint="Safe to show; it identifies your account."
-              />
-              <PasswordInput
-                label="Merchant Key"
-                value={ptKey}
-                onChange={(e) => {
-                  setPtKey(e.target.value);
-                  setErrors((p) => ({ ...p, ptKey: undefined }));
-                  clearFeedback();
-                }}
-                error={errors.ptKey}
-                placeholder={settings.paytm_key_set ? 'Saved – leave blank to keep' : 'Paste your 16-character key'}
-                autoComplete="new-password"
-                autoCapitalize="none"
-                spellCheck={false}
-                hint={settings.paytm_key_set ? 'A key is saved. It is stored encrypted and never shown again.' : 'Stored encrypted and never shown again.'}
-              />
-            </div>
-            <Input
-              label="Website name (optional)"
-              value={ptWebsite}
-              onChange={(e) => {
-                setPtWebsite(e.target.value);
-                setErrors((p) => ({ ...p, ptWebsite: undefined }));
-                clearFeedback();
-              }}
-              error={errors.ptWebsite}
-              placeholder={ptEnv === 'live' ? 'DEFAULT' : 'WEBSTAGING'}
-              autoComplete="off"
-              autoCapitalize="characters"
-              spellCheck={false}
-              hint={`Leave empty to use ${ptEnv === 'live' ? 'DEFAULT' : 'WEBSTAGING'}. Change it only if Paytm gave your account a different website name.`}
-              wrapperClassName="max-w-xs"
-            />
-            <TestRow
-              gateway="Paytm"
-              what="Merchant ID and Merchant Key"
-              configured={settings.paytm_configured}
-              changed={ptChanged}
-              busy={ptTesting}
-              result={ptTestResult}
-              onTest={() => testGateway('paytm', ptTestAction, setPtTestResult, 'Paytm')}
-            />
-            <details className="group rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700">
-              <summary className="cursor-pointer font-medium text-slate-900">Where do I find my Paytm keys?</summary>
-              <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-slate-600">
-                <li>
-                  Sign in to the{' '}
-                  <a href="https://dashboard.paytmpayments.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-brand-700 underline underline-offset-2">
-                    Paytm Payments dashboard <ExternalIcon size={13} />
-                  </a>
-                  .
-                </li>
-                <li>
-                  Choose <strong>Test</strong> (staging) or <strong>Live</strong> (production) at the top, then open <strong>Developers</strong> and{' '}
-                  <strong>API Keys</strong>.
-                </li>
-                <li>
-                  Copy the <strong>Merchant ID</strong> and the <strong>Merchant Key</strong> into the fields above, and pick the matching Staging / Production choice.
-                </li>
-              </ol>
-              <p className="mt-3 text-xs text-slate-500">Start with the staging keys. Switch to production only after Paytm has activated your account for real payments.</p>
+              <p className="mt-3 text-xs text-slate-500">PhonePe gives live keys once it has activated your account for payment gateway payments.</p>
             </details>
           </div>
         </Card>
@@ -854,11 +427,23 @@ function PaymentsForm({ settings, onSaved }) {
           actions={<ModeBadge mode={mode} />}
         />
         <div className="space-y-4 p-4 sm:p-5">
-          {mode === 'live' && (
-            <Alert tone="warning">
-              <strong>Live keys take real money.</strong> Every online payment from a diner will be charged to a real card or UPI account. Use test keys (starting
-              with <code className="rounded bg-amber-100 px-1">rzp_test_</code>) while you are trying things out.
+          {savedTestKey ? (
+            <Alert>
+              <strong>The saved key is a test key, which does not work here.</strong> Enter your live Key ID and Key Secret to take online payments with
+              Razorpay.
             </Alert>
+          ) : liveOnly ? (
+            <Alert tone="warning">
+              <strong>Use your live keys.</strong> Every online payment from a diner is charged to a real card or UPI account. Razorpay test keys do not work
+              here.
+            </Alert>
+          ) : (
+            mode === 'live' && (
+              <Alert tone="warning">
+                <strong>Live keys take real money.</strong> Every online payment from a diner will be charged to a real card or UPI account. Use test keys
+                (starting with <code className="rounded bg-amber-100 px-1">rzp_test_</code>) while you are trying things out.
+              </Alert>
+            )
           )}
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
@@ -870,7 +455,7 @@ function PaymentsForm({ settings, onSaved }) {
                 clearFeedback();
               }}
               error={errors.keyId}
-              placeholder="rzp_test_xxxxxxxxxxxxxx"
+              placeholder={liveOnly ? 'rzp_live_xxxxxxxxxxxxxx' : 'rzp_test_xxxxxxxxxxxxxx'}
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}
@@ -899,7 +484,7 @@ function PaymentsForm({ settings, onSaved }) {
             </Button>
             <p className="min-w-0 flex-1 basis-48 text-xs text-slate-500">
               {!settings.razorpay_configured
-                ? 'Save your Key ID and Key Secret first, then test them.'
+                ? `Save your ${savedTestKey ? 'live ' : ''}Key ID and Key Secret first, then test them.`
                 : keysChanged
                   ? 'Save your changes first. The test uses the keys that are saved.'
                   : 'Makes one harmless call to Razorpay with your saved keys.'}
@@ -955,7 +540,7 @@ function PaymentsForm({ settings, onSaved }) {
                 </a>
                 .
               </li>
-              <li>Use the Test Mode / Live Mode switch at the top to choose which keys you want.</li>
+              <li>{liveOnly ? 'Set the switch at the top to Live Mode.' : 'Use the Test Mode / Live Mode switch at the top to choose which keys you want.'}</li>
               <li>
                 Open <strong>Account &amp; Settings</strong> and choose <strong>API Keys</strong>.
               </li>
@@ -964,7 +549,11 @@ function PaymentsForm({ settings, onSaved }) {
               </li>
               <li>The secret is shown only once. If you lose it, generate a new key and paste the new pair here.</li>
             </ol>
-            <p className="mt-3 text-xs text-slate-500">Start with Test Mode keys. Switch to Live keys only when you are ready to accept real payments.</p>
+            <p className="mt-3 text-xs text-slate-500">
+              {liveOnly
+                ? 'Razorpay gives live keys once it has activated your account for payments.'
+                : 'Start with Test Mode keys. Switch to Live keys only when you are ready to accept real payments.'}
+            </p>
           </details>
         </div>
       </Card>

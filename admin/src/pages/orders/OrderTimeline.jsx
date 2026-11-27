@@ -1,7 +1,6 @@
 import { cx } from '../../lib/cx.js';
 import { CheckIcon, CloseIcon } from '../../components/icons.jsx';
-
-const METHOD = { cash: 'Cash at counter', razorpay: 'Online (Razorpay)', cashfree: 'Online (Cashfree)', phonepe: 'Online (PhonePe)', paytm: 'Online (Paytm)', upi: 'UPI' };
+import { METHOD_LABEL } from '../../lib/payments.js';
 
 // The steps an order moves through one after another. "Paid" is separate: it can happen at any point (cash up front, online at the table).
 const FLOW = ['Placed', 'Accepted', 'Ready', 'Completed'];
@@ -19,7 +18,7 @@ export default function OrderTimeline({ order, fmt }) {
     { label: 'Placed', at: order.created_at },
     { label: 'Accepted', at: order.accepted_at },
     { label: 'Ready', at: order.ready_at },
-    { label: 'Paid', at: order.paid_at, detail: order.paid_at ? METHOD[order.payment_method] : null },
+    { label: 'Paid', at: order.paid_at, detail: order.paid_at ? METHOD_LABEL[order.payment_method] : null },
     { label: 'Completed', at: order.completed_at },
   ];
 

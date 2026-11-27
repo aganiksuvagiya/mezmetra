@@ -9,13 +9,14 @@ import { useToast } from '../../components/Toast.jsx';
 import { api } from '../../lib/api.js';
 import { formatMoney, formatNumber, timeAgo } from '../../lib/format.js';
 import { useAction, useDocumentTitle, useQuery } from '../../lib/hooks.js';
+import { paidVia } from '../../lib/payments.js';
 import { useFmt } from '../../lib/useFmt.js';
 import { ACTIVITY_LABELS, activityNote } from './activity.js';
 import EditRestaurantDialog from './EditRestaurantDialog.jsx';
 import SuspendDialog from './SuspendDialog.jsx';
 import { Avatar, buttonClass, Figures, Label, Panel, Row, Section } from './ui.jsx';
 
-const WAYS = { cash: 'Pay at counter', upi: 'UPI ID', razorpay: 'Razorpay', cashfree: 'Cashfree', phonepe: 'PhonePe', paytm: 'Paytm' };
+const WAYS = { cash: 'Pay at counter', razorpay: 'Razorpay', phonepe: 'PhonePe' };
 
 /** How one way of paying stands: on, set up but off, not set up, or hidden for everyone by the platform. */
 function wayState(w) {
@@ -29,10 +30,7 @@ function wayState(w) {
 const ORDER_STATUS = { pending: ['orange', 'Pending'], accepted: ['blue', 'Accepted'], completed: ['green', 'Completed'], cancelled: ['gray', 'Cancelled'] };
 function payState(o) {
   if (o.payment_status === 'refunded') return ['gray', 'Refunded'];
-  if (o.payment_status === 'paid') {
-    const via = o.payment_method === 'cash' ? ' · Cash' : o.payment_method === 'upi' ? ' · UPI' : o.payment_method ? ' · Online' : '';
-    return ['green', `Paid${via}`];
-  }
+  if (o.payment_status === 'paid') return ['green', `Paid${paidVia(o.payment_method)}`];
   return ['red', 'Unpaid'];
 }
 

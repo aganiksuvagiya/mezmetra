@@ -2,7 +2,7 @@ import { CheckCircleIcon, LogoMark } from './icons.jsx';
 
 const POINTS = [
   'Diners scan a QR code at the table and order from their phone',
-  'Accept orders, take UPI payments, print receipts',
+  'Accept orders, take cash or online payments, print receipts',
   'See today’s revenue and your best sellers at a glance',
 ];
 
@@ -19,7 +19,7 @@ function SampleOrder() {
       <p className="mt-1 text-sm text-slate-500">2× Masala Chai, 1× Bun Maska</p>
       <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-sm">
         <span className="font-semibold tabular-nums">₹135</span>
-        <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Paid · UPI</span>
+        <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Paid · Online</span>
       </div>
     </div>
   );

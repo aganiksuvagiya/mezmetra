@@ -37,7 +37,7 @@ function QrArt() {
 const STEPS = [
   ['Scan', 'Point your phone camera at the QR code on your table.'],
   ['Choose', 'Browse the menu and add what you like.'],
-  ['Order & pay', 'Send it to the kitchen, then pay with any UPI app.'],
+  ['Order & pay', 'Send it to the kitchen, then pay online or at the counter.'],
 ];
 
 export default function Landing() {

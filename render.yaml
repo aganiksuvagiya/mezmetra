@@ -22,7 +22,7 @@ services:
       - key: DATABASE_POOL_MAX
         value: "5"
       - key: PAYMENT_METHODS # the ways the product offers; each restaurant picks among them in Admin -> Payments
-        value: upi,cash,razorpay
+        value: cash,razorpay,phonepe
       - key: DATABASE_URL # Aiven "Service URI"
         sync: false
       - key: DATABASE_CA_CERT # contents of aiven-ca.pem (see README)

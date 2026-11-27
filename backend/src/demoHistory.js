@@ -146,7 +146,6 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
   slots.sort();
 
   const orders = [];
-  const usedRefs = new Set();
   for (const placed of slots) {
     const lines = buildLines(rand, menu);
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
@@ -155,10 +154,6 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
     const accepted = addMinutes(placed, between(rand, 1, 4));
     const paid = addMinutes(accepted, between(rand, 2, 12));
     const completed = addMinutes(paid, between(rand, 1, 8));
-    let ref;
-    do ref = `4${String(Math.floor(rand() * 1e11)).padStart(11, '0')}`;
-    while (usedRefs.has(ref));
-    usedRefs.add(ref);
     orders.push({
       key: `${MARK}${orders.length + 1}`,
       table: pick(rand, tables),
@@ -172,8 +167,6 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
       accepted: cancelled ? null : accepted,
       paid: cancelled ? null : paid,
       completed: cancelled ? null : completed,
-      claimedAt: cancelled ? null : addMinutes(placed, between(rand, 4, 10)),
-      ref: cancelled ? null : ref,
     });
   }
 
@@ -190,14 +183,14 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
       const params = [tz];
       const rows = chunk.map((o, index) => {
         const base = params.length;
-        params.push(vendorId, o.table.id, o.table.number, o.key, o.status, o.paid ? 'paid' : 'unpaid', o.paid ? 'upi' : null, o.subtotal, o.tax, o.total, o.note, ts(o.placed), ts(o.accepted), ts(o.completed), ts(o.paid), o.ref, ts(o.claimedAt), firstNo + start + index);
+        params.push(vendorId, o.table.id, o.table.number, o.key, o.status, o.paid ? 'paid' : 'unpaid', o.paid ? 'cash' : null, o.subtotal, o.tax, o.total, o.note, ts(o.placed), ts(o.accepted), ts(o.completed), ts(o.paid), firstNo + start + index);
         const p = (i) => `$${base + i}`;
         const at = (i) => `(${p(i)}::timestamp AT TIME ZONE $1)`;
-        return `(${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, 'upi', ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${at(12)}, ${at(13)}, ${at(14)}, ${at(15)}, ${p(16)}, ${at(17)}, ${p(18)})`;
+        return `(${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, 'counter', ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${at(12)}, ${at(13)}, ${at(14)}, ${at(15)}, ${p(16)})`;
       });
       const inserted = await t.query(
         `INSERT INTO orders (vendor_id, table_id, table_number, idempotency_key, status, payment_status, payment_method, pay_pref,
-                             subtotal_paise, tax_paise, total_paise, note, created_at, accepted_at, completed_at, paid_at, claim_reference, claimed_at, order_no)
+                             subtotal_paise, tax_paise, total_paise, note, created_at, accepted_at, completed_at, paid_at, order_no)
          VALUES ${rows.join(', ')} RETURNING id, idempotency_key`,
         params,
       );
@@ -216,13 +209,13 @@ export async function generateHistory(db, { vendorId, days = 14, orders: count =
         }
         if (o.paid) {
           const base = payParams.length;
-          payParams.push(orderId, o.ref, o.total, ts(o.paid));
-          payRows.push(`($${base + 1}, 'upi', $${base + 2}, $${base + 3}, 'paid', ($${base + 4}::timestamp AT TIME ZONE $1), ($${base + 4}::timestamp AT TIME ZONE $1))`);
+          payParams.push(orderId, o.total, ts(o.paid));
+          payRows.push(`($${base + 1}, 'cash', $${base + 2}, 'paid', ($${base + 3}::timestamp AT TIME ZONE $1), ($${base + 3}::timestamp AT TIME ZONE $1))`);
         }
       }
       await t.query(`INSERT INTO order_items (order_id, item_id, name, unit_price_paise, quantity, instructions, options, line_total_paise) VALUES ${itemRows.join(', ')}`, itemParams);
       if (payRows.length) {
-        await t.query(`INSERT INTO payments (order_id, provider, provider_payment_id, amount_paise, status, paid_at, created_at) VALUES ${payRows.join(', ')}`, payParams);
+        await t.query(`INSERT INTO payments (order_id, provider, amount_paise, status, paid_at, created_at) VALUES ${payRows.join(', ')}`, payParams);
       }
     }
   });
@@ -263,7 +256,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       console.log(`Removed ${await removeHistory(db, { vendorId: vendor.id })} sample orders from ${vendor.name}.`);
     } else {
       const r = await generateHistory(db, { vendorId: vendor.id, days, orders: orderCount });
-      console.log(`${r.restaurant}: added ${r.orders} sample orders over the last ${r.days} days (${r.paid} paid by UPI, ${r.cancelled} cancelled), Rs ${r.revenue.toFixed(2)} in sales.`);
+      console.log(`${r.restaurant}: added ${r.orders} sample orders over the last ${r.days} days (${r.paid} paid in cash, ${r.cancelled} cancelled), Rs ${r.revenue.toFixed(2)} in sales.`);
       console.log('Run the same command again to refresh the dates; add --remove to take them away.');
     }
   } finally {
