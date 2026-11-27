@@ -56,7 +56,7 @@ let warnedUnverifiedTls = false;
 
 // Aiven (and most managed Postgres) require TLS. We take the TLS settings from env instead of the
 // connection string's sslmode, so the behaviour is explicit and not subject to driver defaults.
-function buildPgConfig(connectionString) {
+export function buildPgConfig(connectionString) {
   const url = new URL(connectionString);
   const sslmode = url.searchParams.get('sslmode');
   url.searchParams.delete('sslmode');
@@ -65,6 +65,12 @@ function buildPgConfig(connectionString) {
 
   let ssl = false;
   const ca = loadCa();
+  if (config.isProd && !isLocal && !ca && !config.allowUnverifiedDbTls) {
+    throw new Error(
+      'DATABASE_CA_CERT is not set, so the database server could not be verified. Put the provider\'s CA certificate in DATABASE_CA_CERT ' +
+        '(Aiven: Service overview -> CA certificate). Only in an emergency: DATABASE_ALLOW_UNVERIFIED_TLS=true.',
+    );
+  }
   if (ca) {
     ssl = { ca, rejectUnauthorized: true };
   } else if (sslmode !== 'disable' && !isLocal) {

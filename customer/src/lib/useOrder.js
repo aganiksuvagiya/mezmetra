@@ -9,8 +9,8 @@ const MAX_BACKOFF_MS = 30_000;
 function nextDelay(order, failures) {
   if (failures > 0) return Math.min(MAX_BACKOFF_MS, FAST_MS * 2 ** (failures - 1));
   if (order.status === 'pending' || order.status === 'accepted') return FAST_MS;
-  if (order.status === 'completed' && order.payment_status !== 'paid') return SLOW_MS;
-  return null; // cancelled, or completed and paid
+  if (order.status === 'completed' && order.payment_status === 'unpaid') return SLOW_MS;
+  return null; // cancelled, or completed with nothing left to pay
 }
 
 /**

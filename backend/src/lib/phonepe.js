@@ -62,7 +62,9 @@ async function call(creds, path, { method = 'GET', body } = {}) {
   let { res, json } = await run(await getToken(creds));
   if (res.status === 401) ({ res, json } = await run(await getToken(creds, { force: true }))); // the token was revoked or expired early
   if (!res.ok) {
-    throw new HttpError(502, res.status === 401 ? 'PHONEPE_BAD_KEYS' : 'PHONEPE_ERROR', json.message || json.code || `PhonePe returned HTTP ${res.status}`);
+    const err = new HttpError(502, res.status === 401 ? 'PHONEPE_BAD_KEYS' : 'PHONEPE_ERROR', json.message || json.code || `PhonePe returned HTTP ${res.status}`);
+    err.gatewayStatus = res.status; // tells a refusal (4xx) from an answer that says nothing (5xx)
+    throw err;
   }
   return json;
 }
@@ -91,6 +93,9 @@ export const getPhonepeOrderStatus = (creds, merchantOrderId) => call(creds, `/c
 /** Gives (part of) a payment back. `state` of the answer is PENDING at first, then COMPLETED or FAILED. */
 export const refundPhonepe = (creds, { merchantRefundId, originalMerchantOrderId, amountPaise }) =>
   call(creds, '/payments/v2/refund', { method: 'POST', body: { merchantRefundId, originalMerchantOrderId, amount: amountPaise } });
+
+/** How a refund stands, asked by our own refund id: `state` is PENDING, CONFIRMED, COMPLETED or FAILED. */
+export const getPhonepeRefundStatus = (creds, merchantRefundId) => call(creds, `/payments/v2/refund/${encodeURIComponent(merchantRefundId)}/status`);
 
 /** Used by the admin "Test connection" button: asking for a token proves the three keys. */
 export const pingPhonepe = (creds) => getToken(creds, { force: true }).then(() => true);

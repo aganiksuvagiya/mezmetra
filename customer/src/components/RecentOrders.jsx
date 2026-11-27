@@ -8,7 +8,7 @@ import ConfirmSheet from './ConfirmSheet';
 // How an order reads in the list: a short word and a colour, so a glance says "still cooking", "ready", "done" or "cancelled".
 export function statusOf(o) {
   if (o.status === 'cancelled') return { label: 'Cancelled', tone: 'bg-rose-100 text-rose-800' };
-  if (o.status === 'completed') return o.paid ? { label: 'Completed', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Payment due', tone: 'bg-amber-100 text-amber-900' };
+  if (o.status === 'completed') return o.paid || o.refunded ? { label: 'Completed', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Payment due', tone: 'bg-amber-100 text-amber-900' };
   if (o.status === 'accepted') return o.ready ? { label: 'Ready', tone: 'bg-emerald-100 text-emerald-800' } : { label: 'Preparing', tone: 'bg-brand-600/10 text-link' };
   return { label: 'Received', tone: 'bg-amber-100 text-amber-900' };
 }

@@ -54,8 +54,12 @@ export function AuthProvider({ children }) {
       vendor: state.vendor,
       error: state.error,
       expired: state.expired,
-      login: (email, password) => startSession('/api/auth/login', { email, password }),
+      // `otp` is the code from the authenticator app, for an account with two-step sign-in.
+      login: (email, password, otp) => startSession('/api/auth/login', { email, password, ...(otp ? { otp } : {}) }),
       logout: () => {
+        // The server ends the session too, so a copy of the token stops working. Signing out here does not wait for it.
+        const token = auth.getToken();
+        if (token) api('/api/auth/logout', { method: 'POST', auth: false, headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
         auth.clear();
         setState({ status: 'anon', vendor: null, error: null, expired: false });
       },

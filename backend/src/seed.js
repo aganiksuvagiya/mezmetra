@@ -1,8 +1,10 @@
 import fs from 'node:fs';
-import bcrypt from 'bcryptjs';
+import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 import { migrate } from './migrate.js';
 import { toPaise } from './lib/money.js';
+import { hashPassword, passwordProblem } from './lib/passwords.js';
 
 // Demo data for local development and sales demos. Re-running is safe: a vendor that already exists is skipped.
 // Change these (or set SEED_EMAIL / SEED_PASSWORD / TEAPOST_PASSWORD) before using the app for real.
@@ -221,7 +223,7 @@ async function seedVendor(db, def, { log }) {
     log(`[seed] ${def.name} (${def.email}) already exists, nothing to do`);
     return false;
   }
-  const hash = await bcrypt.hash(def.password, 10);
+  const hash = await hashPassword(def.password);
   await db.tx(async (t) => {
     const vendor = await t.query(
       `INSERT INTO vendors (name, email, password_hash, tax_percent, theme_primary, theme_accent)
@@ -278,12 +280,24 @@ async function seedVendor(db, def, { log }) {
 
 /** Seeds every demo restaurant. Resolves to true when at least one was created. */
 export async function seed(db, { log = console.log } = {}) {
+  // The built-in demo passwords are public: a real database only gets demo accounts with passwords of its own. (An account that
+  // is there already is left alone, so SEED_DEMO does not stop a server from starting.)
+  if (db.kind !== 'pglite') {
+    const weak = [];
+    for (const d of [DEMO, TEA_POST].filter((d) => passwordProblem(d.password, { email: d.email }))) {
+      if ((await db.query(`SELECT id FROM vendors WHERE lower(email) = lower($1)`, [d.email])).rowCount === 0) weak.push(d);
+    }
+    if (weak.length) {
+      throw new Error(`Refusing to seed a real database with a public or weak demo password. Set SEED_PASSWORD and TEAPOST_PASSWORD (${weak.map((d) => d.name).join(', ')}).`);
+    }
+  }
   const demo = await seedVendor(db, { ...DEMO, menu: MENU, tables: DEMO_TABLES }, { log });
   const tea = await seedVendor(db, { ...TEA_POST, menu: TEA_POST_MENU, tables: TEA_POST_TABLES, photos: TEA_POST_PHOTOS }, { log });
   return demo || tea;
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  refuseRemoteDatabase(config);
   const db = await createDb();
   try {
     await migrate(db);

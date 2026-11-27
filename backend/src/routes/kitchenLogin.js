@@ -1,8 +1,9 @@
-import bcrypt from 'bcryptjs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { emailField, emailInUse } from '../lib/accounts.js';
 import { conflict, notFound, parse } from '../lib/errors.js';
+import { assertStrongPassword, hashPassword } from '../lib/passwords.js';
+import { forgetAll } from '../lib/rateLimit.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
 
 // The restaurant's kitchen login: an email and a password of its own that open the kitchen screen and nothing else (the API enforces that, see
@@ -16,7 +17,10 @@ const putSchema = z.object({
 
 const out = (s) => ({ configured: Boolean(s), email: s?.email ?? null, created_at: s?.created_at ?? null });
 
-export function kitchenLoginRouter(db) {
+// One answer for "somebody's login already" and "reserved": the form must not say which addresses have an account.
+const unavailable = () => conflict('EMAIL_UNAVAILABLE', "That email can't be used for the kitchen login. Use a different one.");
+
+export function kitchenLoginRouter(db, { accountLimiter }) {
   const router = Router();
 
   router.get('/', async (req, res) => {
@@ -24,15 +28,15 @@ export function kitchenLoginRouter(db) {
     res.json({ data: out(rows[0]) });
   });
 
-  router.put('/', async (req, res) => {
+  router.put('/', accountLimiter, async (req, res) => {
     const body = parse(putSchema, req.body ?? {});
+    if (body.password) assertStrongPassword(body.password, 'password', { email: body.email });
     const result = await db.tx(async (t) => {
       const existing = (await t.query(`SELECT id FROM vendor_staff WHERE vendor_id = $1 FOR UPDATE`, [req.vendorId])).rows[0];
       if (!existing && !body.password) throw conflict('PASSWORD_REQUIRED', 'Choose a password for the kitchen login.');
       // One address is one login: not a restaurant's own, not another kitchen's, and never an address reserved for a platform owner.
-      if (isSuperAdminEmail(body.email)) throw conflict('RESERVED_EMAIL', 'That email is reserved. Use another one for the kitchen.');
-      if (await emailInUse(t, body.email, { staffVendorId: req.vendorId })) throw conflict('EMAIL_TAKEN', 'That email is already used by another login. Use a different one for the kitchen.');
-      const hash = body.password ? await bcrypt.hash(body.password, 10) : null;
+      if (isSuperAdminEmail(body.email) || (await emailInUse(t, body.email, { staffVendorId: req.vendorId }))) throw unavailable();
+      const hash = body.password ? await hashPassword(body.password) : null;
       if (existing) {
         // A new password signs the kitchen out everywhere (this server's clock on both sides, as for the restaurant's own).
         await t.query(
@@ -44,6 +48,7 @@ export function kitchenLoginRouter(db) {
       }
       return (await t.query(`SELECT email, created_at FROM vendor_staff WHERE vendor_id = $1`, [req.vendorId])).rows[0];
     });
+    if (body.password) await forgetAll(db, `signin:${body.email}`); // a new password ends a lock on this sign-in
     res.json({ data: out(result) });
   });
 

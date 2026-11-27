@@ -58,7 +58,7 @@ export default function KitchenLoginCard() {
       q.reload();
     } catch (error) {
       const split = splitFieldErrors(error, ['email', 'password']);
-      const emailIssue = error?.code === 'EMAIL_TAKEN' || error?.code === 'RESERVED_EMAIL';
+      const emailIssue = error?.code === 'EMAIL_UNAVAILABLE';
       setErrors(emailIssue ? { ...split.fields, email: error.message } : { ...split.fields, ...(error?.code === 'PASSWORD_REQUIRED' ? { password: error.message } : {}) });
       setFormError(emailIssue || error?.code === 'PASSWORD_REQUIRED' ? null : split.formError);
       requestAnimationFrame(() => focusFirstInvalid(form));

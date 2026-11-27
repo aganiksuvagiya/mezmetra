@@ -17,8 +17,10 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      - key: TRUST_PROXY # Render puts exactly one proxy in front of the API
+      - key: TRUST_PROXY # trust the nearest proxy for the request's protocol and address
         value: "1"
+      - key: CLIENT_IP_HEADER # Render's traffic comes through Cloudflare, which names the visitor here: the rate limits count by it
+        value: cf-connecting-ip
       - key: DATABASE_POOL_MAX
         value: "5"
       - key: PAYMENT_METHODS # the ways the product offers; each restaurant picks among them in Admin -> Payments

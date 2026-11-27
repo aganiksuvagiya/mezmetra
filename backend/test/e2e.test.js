@@ -15,6 +15,7 @@ const { migrate } = await import('../src/migrate.js');
 const { createApp } = await import('../src/app.js');
 const { csvCell, toCsv } = await import('../src/lib/csv.js');
 const { reconcileOnce } = await import('../src/lib/reconcile.js');
+const { reconcileRefunds } = await import('../src/lib/refunds.js');
 const { createRestaurantAccount } = await import('../src/lib/accounts.js');
 const { signToken } = await import('../src/middleware/auth.js');
 const { vendorOut } = await import('../src/lib/serialize.js');
@@ -32,6 +33,11 @@ const sentMail = [];
 const fakeMailer = { configured: true, send: async (message) => void sentMail.push(message) };
 const razorpayCalls = [];
 const razorpayRefunds = []; // refunds the fake Razorpay was asked for
+const rzpTaken = new Map(); // payment id -> the refunds the fake Razorpay holds for it
+const rzpRefundPlans = new Map(); // payment id -> { answer: HTTP status to fail with, taken: false when it does not take the refund on }
+// What the fake Razorpay says about a payment. One it was not told about is captured, for the last order it was asked to create.
+const rzpPayments = new Map(); // payment id -> { status, amount, order_id, captureFails }
+let rzpLastAmount = 0;
 const qrCodes = new Map(); // fake Razorpay QR code id -> { status, payments: [] }
 
 async function listen(app) {
@@ -40,7 +46,14 @@ async function listen(app) {
   });
 }
 
+// The password behind each test login: the admin sends it when payment keys are changed, and so does this helper (unless a test
+// passes `current_password` itself, to try without it or with a wrong one).
+const passwords = new Map();
+
 async function api(method, path, { token, body, headers = {}, raw } = {}) {
+  if (method === 'PUT' && path === '/api/admin/payment-settings' && body && !('current_password' in body) && passwords.has(token)) {
+    body = { ...body, current_password: passwords.get(token) };
+  }
   const res = await fetch(`${base}${path}`, {
     method,
     headers: {
@@ -61,7 +74,9 @@ async function api(method, path, { token, body, headers = {}, raw } = {}) {
  */
 async function signupAccount({ name, email, password }) {
   const vendor = await createRestaurantAccount(db, { name, email, password });
-  return { status: 201, body: { data: { token: signToken(vendor.id), vendor: vendorOut(vendor) } } };
+  const token = signToken(vendor.id);
+  passwords.set(token, password);
+  return { status: 201, body: { data: { token, vendor: vendorOut(vendor) } } };
 }
 
 before(async () => {
@@ -90,10 +105,38 @@ before(async () => {
             qrCodes.set(id, { status: 'active', payments: [] });
             return res.end(JSON.stringify({ id, entity: 'qr_code', status: 'active', image_url: `https://rzp.test/${id}.png`, payment_amount: JSON.parse(data).payment_amount }));
           }
+          if (req.method === 'POST' && path === '/v1/orders') rzpLastAmount = JSON.parse(data).amount;
+          const one = path.match(/^\/v1\/payments\/(pay_[A-Za-z0-9]+)(\/capture)?$/);
+          if (one) {
+            const payment = rzpPayments.get(one[1]) ?? { status: 'captured', amount: rzpLastAmount, order_id: 'order_MOCK123456' };
+            if (one[2]) {
+              if (payment.captureFails) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({ error: { description: 'Capture failed' } }));
+              }
+              payment.status = 'captured';
+            }
+            const { captureFails: _, ...shown } = payment;
+            return res.end(JSON.stringify({ id: one[1], entity: 'payment', currency: 'INR', ...shown }));
+          }
           const refund = path.match(/^\/v1\/payments\/(pay_[A-Za-z0-9]+)\/refund$/);
           if (req.method === 'POST' && refund) {
             razorpayRefunds.push({ payment: refund[1], amount: JSON.parse(data).amount });
-            return res.end(JSON.stringify({ id: `rfnd_MOCK${razorpayRefunds.length}`, entity: 'refund', payment_id: refund[1], status: 'processed' }));
+            const made = { id: `rfnd_MOCK${razorpayRefunds.length}`, entity: 'refund', payment_id: refund[1], amount: JSON.parse(data).amount, status: 'processed' };
+            const plan = rzpRefundPlans.get(refund[1]);
+            if (plan?.taken !== false) rzpTaken.set(refund[1], [...(rzpTaken.get(refund[1]) ?? []), made]);
+            if (plan?.answer) {
+              res.statusCode = plan.answer;
+              return res.end(JSON.stringify({ error: { description: 'planned failure' } }));
+            }
+            return res.end(JSON.stringify(made));
+          }
+          const taken = path.match(/^\/v1\/payments\/(pay_[A-Za-z0-9]+)\/refunds$/);
+          if (taken) return res.end(JSON.stringify({ entity: 'collection', items: rzpTaken.get(taken[1]) ?? [] }));
+          const closing = path.match(/^\/v1\/payments\/qr_codes\/(qr_[A-Za-z0-9]+)\/close$/);
+          if (req.method === 'POST' && closing) {
+            if (qrCodes.has(closing[1])) qrCodes.get(closing[1]).status = 'closed';
+            return res.end(JSON.stringify({ id: closing[1], status: 'closed' }));
           }
           const qr = path.match(/^\/v1\/payments\/qr_codes\/(qr_[A-Za-z0-9]+)(\/payments)?$/);
           if (qr) {
@@ -928,7 +971,8 @@ describe('password reset by email', () => {
   const OLD = 'the-old-password-1';
   const NEW = 'a-brand-new-password-2';
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const tokenFrom = (mail) => new URL(mail.text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
+  // The token rides after '#', which browsers do not send to the web host.
+  const tokenFrom = (mail) => new URLSearchParams(new URL(mail.text.match(/https?:\/\/\S+/)[0]).hash.slice(1)).get('token');
   let oldSession;
   let vendorId;
 
@@ -952,8 +996,8 @@ describe('password reset by email', () => {
     const mail = sentMail.at(-1);
     assert.equal(mail.to, EMAIL);
     assert.match(mail.subject, /Reset your MezMitra password/);
-    assert.ok(mail.text.includes(`${config.adminAppUrl}/reset-password?token=`));
-    assert.ok(mail.html.includes('/reset-password?token='));
+    assert.ok(mail.text.includes(`${config.adminAppUrl}/reset-password#token=`));
+    assert.ok(mail.html.includes('/reset-password#token='));
     assert.equal((await api('POST', '/api/auth/forgot-password', { body: { email: 'not an email' } })).status, 400);
 
     const again = await api('POST', '/api/auth/forgot-password', { body: { email: EMAIL } });
@@ -2090,7 +2134,7 @@ describe('online payments (PhonePe)', () => {
     assert.match(a.body.data.client.url, /^https:\/\/mercury-uat\.phonepe\.example\/pay\/mz_/);
     assert.equal(a.body.data.amount, 80);
     const pay = calls.filter((c) => c.path === '/checkout/v2/pay').at(-1);
-    assert.match(pay.body.merchantOrderId, /^mz_\d+_[a-z0-9]+$/);
+    assert.match(pay.body.merchantOrderId, /^mz_[a-f0-9]{24}$/, 'random: it does not show the order\'s number');
     assert.ok(pay.body.merchantOrderId.length <= 63);
     assert.equal(pay.body.amount, 8000, 'amounts go to PhonePe in paise');
     assert.equal(pay.body.paymentFlow.type, 'PG_CHECKOUT');
@@ -2404,7 +2448,7 @@ describe('payment webhooks (the gateway tells us a payment arrived)', () => {
     assert.equal((await reconcileOnce(db, { log: { info: none, warn: none } })).paid, 0, 'nothing left to find');
   });
 
-  it('the safety net also finds a Razorpay QR payment, and skips cancelled orders and ones PhonePe has not got', async () => {
+  it('the safety net also finds a Razorpay QR payment and money paid for a cancelled order, and guesses nothing PhonePe has not got', async () => {
     const order = await place(rz);
     const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
     qrCodes.get(qr.qr_id).payments.push({ id: 'pay_RECON01', status: 'captured', amount: Math.round(order.total * 100) });
@@ -2421,7 +2465,10 @@ describe('payment webhooks (the gateway tells us a payment arrived)', () => {
 
     await reconcileOnce(db, { log: { info: none, warn: none } });
     assert.equal((await view(order)).payment_status, 'paid');
-    assert.equal((await view(cancelled)).payment_status, 'unpaid', 'a cancelled order is left alone');
+    const gone = await view(cancelled);
+    assert.deepEqual([gone.status, gone.payment_status], ['cancelled', 'paid'], 'money that arrived is recorded; the order stays cancelled');
+    const flagged = (await api('GET', '/api/admin/orders/attention', { token: pp.token })).body.data;
+    assert.ok(flagged.some((f) => f.kind === 'cancelled_paid' && f.order_number === gone.number), 'and the restaurant is told to give it back');
     assert.equal((await view(pending)).payment_status, 'unpaid', 'still pending at PhonePe: nothing is guessed');
   });
 
@@ -2689,7 +2736,7 @@ describe("kitchen login: the kitchen's own sign-in that opens the kitchen screen
     // The restaurant's own address, and another restaurant's, are taken.
     const own = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'PASS.cafe@mezmitra.test', password: PASSWORD } });
     assert.equal(own.status, 409);
-    assert.equal(own.body.error.code, 'EMAIL_TAKEN');
+    assert.equal(own.body.error.code, 'EMAIL_UNAVAILABLE');
     assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'owner@spice.test', password: PASSWORD } })).status, 409);
 
     const made = await api('PUT', '/api/admin/kitchen-login', { token: owner.token, body: { email: 'Kitchen.Pass@Mezmitra.test', password: PASSWORD } });
@@ -3000,5 +3047,1601 @@ describe('UPI, Cashfree and Paytm were removed: nothing breaks for restaurants t
     assert.equal((await api('GET', `/api/admin/orders/${row.id}/receipt.pdf`, { token })).status, 200);
     const refund = await api('POST', `/api/admin/orders/${row.id}/refund`, { token });
     assert.equal(refund.body.error.code, 'REFUND_MANUAL');
+  });
+});
+
+describe('money is counted once, and a second payment is never lost', () => {
+  const PASSWORD = 'a-long-enough-password';
+  const RZ_SECRET = 'secret-value-123';
+  const HOOK_SECRET = 'hook-secret-1234';
+  const ppAuth = createHash('sha256').update('twice-user:twice-password').digest('hex');
+  const ppOrders = new Map(); // fake PhonePe: merchantOrderId -> { amount, state }
+  const ppRefunds = [];
+  const quiet = { info: () => {}, warn: () => {} };
+  let phonepe;
+  let savedBase;
+  let rz; // the Razorpay restaurant
+  let pp; // the PhonePe restaurant
+
+  const setup = async (name, email, settings) => {
+    const token = (await signupAccount({ name, email, password: PASSWORD })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data;
+    const qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'M1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    const saved = await api('PUT', '/api/admin/payment-settings', { token, body: settings });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    return { token, itemId: item.id, qr, hookKey: saved.body.data.webhook_url_razorpay.split('/').pop() };
+  };
+  const place = async (r) => {
+    const res = await api('POST', `/api/public/t/${r.qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.data;
+  };
+  const view = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+  const idOf = async (order) => (await db.query(`SELECT id FROM orders WHERE public_token = $1`, [order.token])).rows[0].id;
+  const rows = async (order) => (await db.query(`SELECT * FROM payments WHERE order_id = $1 ORDER BY id`, [await idOf(order)])).rows;
+  const adminView = async (r, order) => (await api('GET', `/api/admin/orders/${await idOf(order)}`, { token: r.token })).body.data;
+  const cash = async (r, order) => assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/cash-payment`, { token: r.token })).status, 200);
+
+  // What the Razorpay checkout window hands back to the order page.
+  const checkoutReply = async (order, paymentId, fake) => {
+    const start = (await api('POST', `/api/public/orders/${order.token}/razorpay`)).body.data;
+    if (fake) rzpPayments.set(paymentId, { amount: start.amount_paise, order_id: start.razorpay_order_id, ...fake });
+    const signature = createHmac('sha256', RZ_SECRET).update(`${start.razorpay_order_id}|${paymentId}`).digest('hex');
+    return { razorpay_order_id: start.razorpay_order_id, razorpay_payment_id: paymentId, razorpay_signature: signature };
+  };
+  const verify = (order, body) => api('POST', `/api/public/orders/${order.token}/razorpay/verify`, { body });
+  const rzHook = (r, orderId, amount, paymentId) => {
+    const raw = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: { id: paymentId, order_id: orderId, amount, status: 'captured' } } } });
+    const signature = createHmac('sha256', HOOK_SECRET).update(raw).digest('hex');
+    return api('POST', `/api/webhooks/razorpay/${r.hookKey}`, { raw, headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': signature } });
+  };
+  const captures = (paymentId) => razorpayCalls.filter((c) => c.method === 'POST' && c.url.endsWith(`/payments/${paymentId}/capture`)).length;
+  const openPage = (order) => api('POST', `/api/public/orders/${order.token}/pay/phonepe`);
+  const ppVerify = (order) => api('POST', `/api/public/orders/${order.token}/pay/phonepe/verify`);
+  const ppHook = (r, merchantOrderId) =>
+    api('POST', `/api/webhooks/phonepe/${r.hookKey}`, { body: { event: 'checkout.order.completed', payload: { merchantOrderId } }, headers: { Authorization: ppAuth } });
+
+  before(async () => {
+    phonepe = await new Promise((resolve) => {
+      const server = http
+        .createServer((req, res) => {
+          let raw = '';
+          req.on('data', (c) => (raw += c));
+          req.on('end', () => {
+            const path = req.url.split('?')[0];
+            const send = (status, body) => {
+              res.statusCode = status;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify(body));
+            };
+            if (path === '/v1/oauth/token') return send(200, { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+            if (path === '/checkout/v2/pay') {
+              const body = JSON.parse(raw);
+              ppOrders.set(body.merchantOrderId, { amount: body.amount, state: 'PENDING' });
+              return send(200, { redirectUrl: `https://phonepe.example/pay/${body.merchantOrderId}` });
+            }
+            if (path === '/payments/v2/refund') {
+              ppRefunds.push(JSON.parse(raw));
+              return send(200, { refundId: `OMR_${ppRefunds.length}`, state: 'PENDING' });
+            }
+            const m = path.match(/^\/checkout\/v2\/order\/([^/]+)\/status$/);
+            const found = m && ppOrders.get(decodeURIComponent(m[1]));
+            if (!found) return send(404, { code: 'NOT_FOUND' });
+            return send(200, { state: found.state, amount: found.amount, paymentDetails: [{ state: found.state, transactionId: `TXN_${m[1]}` }] });
+          });
+        })
+        .listen(0, '127.0.0.1', () => resolve(server));
+    });
+    savedBase = config.phonepeApiBase;
+    config.phonepeApiBase = `http://127.0.0.1:${phonepe.address().port}`;
+    rz = await setup('Twice Razorpay Cafe', 'twice.razorpay@example.test', {
+      razorpay_enabled: true,
+      razorpay_key_id: 'rzp_test_abcdef123456',
+      razorpay_key_secret: RZ_SECRET,
+      razorpay_webhook_secret: HOOK_SECRET,
+    });
+    pp = await setup('Twice PhonePe Cafe', 'twice.phonepe@example.test', {
+      phonepe_enabled: true,
+      phonepe_client_id: 'TWICEMERCHANT',
+      phonepe_client_version: '1',
+      phonepe_client_secret: 'phonepe-client-secret-value',
+      phonepe_webhook_username: 'twice-user',
+      phonepe_webhook_password: 'twice-password',
+    });
+  });
+
+  after(async () => {
+    config.phonepeApiBase = savedBase;
+    await new Promise((r) => phonepe.close(r));
+  });
+
+  it('captures a payment Razorpay only authorized, and only then calls the order paid', async () => {
+    const order = await place(rz);
+    const body = await checkoutReply(order, 'pay_AUTHONLY01', { status: 'authorized' });
+    const r = await verify(order, body);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.data.payment_status, 'paid');
+    assert.equal(captures('pay_AUTHONLY01'), 1);
+  });
+
+  it('leaves the order unpaid while the money is not captured, and asks the page to try again', async () => {
+    const order = await place(rz);
+    const body = await checkoutReply(order, 'pay_STUCK00001', { status: 'authorized', captureFails: true });
+    const r = await verify(order, body);
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error.code, 'PAYMENT_NOT_CAPTURED');
+    assert.equal((await view(order)).payment_status, 'unpaid');
+    rzpPayments.get('pay_STUCK00001').status = 'failed';
+    assert.equal((await verify(order, body)).status, 503);
+    rzpPayments.get('pay_STUCK00001').status = 'captured';
+    assert.equal((await verify(order, body)).body.data.payment_status, 'paid');
+  });
+
+  it("refuses a payment that is another order's or for less than this order", async () => {
+    const order = await place(rz);
+    const other = await checkoutReply(order, 'pay_OTHER00001', { status: 'captured', order_id: 'order_SOMEONEELSE' });
+    assert.equal((await verify(order, other)).body.error.code, 'PAYMENT_NOT_FOUND');
+    const short = await checkoutReply(order, 'pay_SHORT00001', { status: 'captured', amount: 100 });
+    assert.equal((await verify(order, short)).body.error.code, 'PAYMENT_NOT_FOUND');
+    assert.equal((await view(order)).payment_status, 'unpaid');
+  });
+
+  it('does not turn a refunded Razorpay order back to paid when the same reply is sent again', async () => {
+    const order = await place(rz);
+    const body = await checkoutReply(order, 'pay_REPLAY0001', { status: 'captured' });
+    assert.equal((await verify(order, body)).body.data.payment_status, 'paid');
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/refund`, { token: rz.token })).status, 200);
+    const again = await verify(order, body);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.payment_status, 'refunded');
+    assert.deepEqual((await rows(order)).map((p) => p.status), ['refunded']);
+  });
+
+  it('does not turn a refunded PhonePe order back to paid when its webhook arrives again', async () => {
+    const order = await place(pp);
+    await openPage(order);
+    const [attempt] = await rows(order);
+    ppOrders.get(attempt.provider_order_id).state = 'COMPLETED'; // PhonePe keeps saying so after a refund
+    assert.equal((await ppVerify(order)).body.data.payment_status, 'paid');
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/refund`, { token: pp.token })).status, 200);
+    const hook = await ppHook(pp, attempt.provider_order_id);
+    assert.equal(hook.body.data.paid, undefined);
+    assert.equal(hook.body.data.already, true);
+    assert.equal((await ppVerify(order)).body.data.payment_status, 'refunded');
+    await reconcileOnce(db, { log: quiet });
+    assert.equal((await view(order)).payment_status, 'refunded');
+  });
+
+  it('records an online payment that arrives after cash, shows it, and gives it back without touching the order', async () => {
+    const order = await place(rz);
+    const start = (await api('POST', `/api/public/orders/${order.token}/razorpay`)).body.data;
+    await cash(rz, order);
+    const hook = await rzHook(rz, start.razorpay_order_id, start.amount_paise, 'pay_SECOND0001');
+    assert.deepEqual([hook.body.data.paid, hook.body.data.extra], [false, true]);
+    assert.equal((await rzHook(rz, start.razorpay_order_id, start.amount_paise, 'pay_SECOND0001')).body.data.already, true);
+
+    const seen = await adminView(rz, order);
+    assert.equal(seen.payment_method, 'cash');
+    assert.deepEqual(seen.extra_payments.map((p) => [p.method, p.amount, p.status]), [['razorpay', 40, 'paid']]);
+    assert.equal((await view(order)).second_payment, true);
+    const waiting = (await api('GET', '/api/admin/orders/attention', { token: rz.token })).body.data;
+    const mine = waiting.find((p) => p.order_id === seen.id);
+    assert.deepEqual([mine.kind, mine.order_number, mine.amount, mine.method], ['paid_twice', seen.number, 40, 'razorpay']);
+    assert.ok(!(await api('GET', '/api/admin/orders/attention', { token: pp.token })).body.data.some((p) => p.order_id === seen.id));
+
+    const path = `/api/admin/orders/${seen.id}/extra-payments/${seen.extra_payments[0].id}/refund`;
+    assert.equal((await api('POST', path)).status, 401);
+    assert.equal((await api('POST', path, { token: pp.token })).status, 404, "another restaurant cannot refund it");
+    const asked = razorpayRefunds.length;
+    const done = await api('POST', path, { token: rz.token });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(razorpayRefunds.length, asked + 1);
+    assert.deepEqual(razorpayRefunds.at(-1), { payment: 'pay_SECOND0001', amount: 4000 });
+    assert.deepEqual([done.body.data.payment_status, done.body.data.payment_method], ['paid', 'cash'], 'the order stays paid in cash');
+    assert.equal(done.body.data.extra_payments[0].status, 'refunded');
+    assert.equal((await view(order)).second_payment, false);
+    assert.equal((await api('POST', path, { token: rz.token })).body.error.code, 'ALREADY_REFUNDED');
+  });
+
+  it('does not take a held payment for an order that was paid another way', async () => {
+    const order = await place(rz);
+    const body = await checkoutReply(order, 'pay_HELD000001', { status: 'authorized' });
+    await cash(rz, order);
+    const r = await verify(order, body);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'PAYMENT_NOT_TAKEN');
+    assert.equal(captures('pay_HELD000001'), 0);
+    assert.deepEqual((await rows(order)).map((p) => p.status).sort(), ['created', 'paid']);
+  });
+
+  it('refunds the payment that paid the order, not the second one', async () => {
+    const order = await place(pp);
+    await openPage(order);
+    await openPage(order);
+    const [first, second] = await rows(order);
+    ppOrders.get(first.provider_order_id).state = 'COMPLETED';
+    ppOrders.get(second.provider_order_id).state = 'COMPLETED';
+    assert.equal((await ppVerify(order)).body.data.payment_status, 'paid');
+    const after = await rows(order);
+    assert.deepEqual(after.map((p) => p.status), ['paid', 'paid']);
+    assert.equal(after.filter((p) => p.is_extra).length, 1);
+    const counted = after.find((p) => !p.is_extra);
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/refund`, { token: pp.token })).status, 200);
+    assert.equal(ppRefunds.at(-1).originalMerchantOrderId, counted.provider_order_id);
+    assert.equal((await rows(order)).find((p) => p.is_extra).status, 'paid', 'the second payment still waits to be given back');
+  });
+
+  it('finds a second payment on a paid order in the five-minute re-check', async () => {
+    const order = await place(pp);
+    await openPage(order);
+    const [attempt] = await rows(order);
+    await cash(pp, order);
+    ppOrders.get(attempt.provider_order_id).state = 'COMPLETED';
+    await db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE id = $1`, [attempt.id]);
+    await reconcileOnce(db, { log: quiet });
+    const found = (await rows(order)).find((p) => p.provider === 'phonepe');
+    assert.deepEqual([found.status, found.is_extra], ['paid', true]);
+  });
+
+  it('finds a payment made on an old PhonePe page, and limits how many pages one order can open', async () => {
+    const order = await place(pp);
+    for (let i = 0; i < 10; i += 1) assert.equal((await openPage(order)).status, 200);
+    const stop = await openPage(order);
+    assert.equal(stop.status, 409);
+    assert.equal(stop.body.error.code, 'TOO_MANY_PAYMENT_TRIES');
+    const [oldest] = await rows(order);
+    ppOrders.get(oldest.provider_order_id).state = 'COMPLETED';
+    const again = await openPage(order);
+    assert.equal(again.body.error.code, 'ALREADY_PAID', 'never asked to pay twice');
+    assert.equal((await view(order)).payment_status, 'paid');
+  });
+});
+
+describe('rate limits count per visitor, across every instance of the API', () => {
+  let one;
+  let two; // a second instance on the same database
+  const at = (s) => `http://127.0.0.1:${s.address().port}`;
+  const login = (server, headers = {}, body = { email: 'nobody@example.test', password: 'not-the-password' }) =>
+    fetch(`${at(server)}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const remaining = (res) => Number(/remaining=(\d+)/.exec(res.headers.get('ratelimit') ?? '')?.[1]);
+  const reset = () => db.query(`DELETE FROM rate_limits`);
+
+  before(async () => {
+    one = await listen(createApp({ db, mailer: fakeMailer }));
+    two = await listen(createApp({ db, mailer: fakeMailer }));
+  });
+  after(async () => {
+    config.clientIpHeader = '';
+    await reset();
+    await new Promise((r) => one.close(r));
+    await new Promise((r) => two.close(r));
+  });
+
+  it('counts down one counter for one address, whichever instance answers', async () => {
+    await reset();
+    const seen = [];
+    for (let i = 0; i < 6; i += 1) seen.push(remaining(await login(i % 2 ? two : one)));
+    assert.deepEqual(seen, [19, 18, 17, 16, 15, 14]);
+    for (let i = 0; i < 14; i += 1) await login(one);
+    assert.equal((await login(two)).status, 429, 'the 21st failed try is refused by the other instance too');
+    assert.equal((await login(one)).status, 429);
+  });
+
+  it('ignores addresses a client makes up', async () => {
+    await reset();
+    const first = remaining(await login(one, { 'X-Forwarded-For': '203.0.113.1', 'CF-Connecting-IP': '203.0.113.2' }));
+    const second = remaining(await login(one, { 'X-Forwarded-For': '203.0.113.3', 'CF-Connecting-IP': '203.0.113.4' }));
+    assert.deepEqual([first, second], [19, 18]);
+  });
+
+  it("counts by the proxy's address header when one is configured, and falls back when it is not an address", async () => {
+    await reset();
+    config.clientIpHeader = 'cf-connecting-ip';
+    try {
+      const a1 = remaining(await login(one, { 'CF-Connecting-IP': '198.51.100.7', 'X-Forwarded-For': '10.0.0.1' }));
+      const a2 = remaining(await login(two, { 'CF-Connecting-IP': '198.51.100.7', 'X-Forwarded-For': '10.9.9.9' }));
+      const b1 = remaining(await login(one, { 'CF-Connecting-IP': '198.51.100.8' }));
+      assert.deepEqual([a1, a2, b1], [19, 18, 19]);
+      assert.equal(remaining(await login(one, { 'CF-Connecting-IP': 'not-an-address' })), 19);
+      assert.equal(remaining(await login(one)), 18, 'without the header the connection address counts');
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('does not use up the sign-in allowance with successful sign-ins', async () => {
+    await reset();
+    const email = 'limits.ok@example.test';
+    await signupAccount({ name: 'Limits Cafe', email, password: 'a-long-enough-password' });
+    for (let i = 0; i < 25; i += 1) assert.equal((await login(one, {}, { email, password: 'a-long-enough-password' })).status, 200);
+    assert.equal(remaining(await login(one)), 19);
+  });
+
+  it('starts a new window when the old one has passed', async () => {
+    await reset();
+    for (let i = 0; i < 20; i += 1) await login(one);
+    assert.equal((await login(one)).status, 429);
+    await db.query(`UPDATE rate_limits SET reset_at = now() - interval '1 second'`);
+    assert.equal((await login(one)).status, 401);
+  });
+
+  it('answers the health check without asking the database every time', async () => {
+    const real = db.query;
+    let asked = 0;
+    db.query = (...args) => {
+      asked += 1;
+      return real(...args);
+    };
+    try {
+      for (let i = 0; i < 20; i += 1) assert.equal((await fetch(`${at(one)}/api/health`)).status, 200);
+    } finally {
+      db.query = real;
+    }
+    assert.ok(asked <= 1, `${asked} database calls`);
+  });
+
+  it('does not fall over when taking a try back fails', async () => {
+    const { DbRateStore } = await import('../src/lib/rateLimit.js');
+    const store = new DbRateStore({ query: async () => Promise.reject(new Error('database is away')) }, 'login');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await store.decrement('203.0.113.1'); // express-rate-limit does not wait for this: a rejection would stop the server
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it('stops one address that floods the payment webhook, far above what a gateway sends', async () => {
+    const call = async () => {
+      const res = await fetch(`${at(two)}/api/webhooks/razorpay/${'0'.repeat(32)}`, { method: 'POST', body: '{}' });
+      await res.arrayBuffer();
+      return res;
+    };
+    assert.match((await call()).headers.get('ratelimit'), /limit=1200/);
+    for (let sent = 1; sent < 1200; sent += 100) await Promise.all(Array.from({ length: Math.min(100, 1200 - sent) }, call));
+    assert.equal((await call()).status, 429);
+  });
+});
+
+describe('the payment state machine: refunds that finish later, the re-check queue, the counter, and the record', () => {
+  const PASSWORD = 'a-long-enough-password';
+  const RZ_SECRET = 'secret-value-123';
+  const quiet = { info: () => {}, warn: () => {} };
+  // refundPlan: { answer: HTTP status to fail with, taken: false when it does not take the refund on, statusDown: true }
+  const pp = { orders: new Map(), refundState: 'PENDING', refunds: new Map(), asked: [], refundPlan: null, refundCalls: 0, onRefund: null, onStatus: null };
+  let phonepe;
+  let savedBase;
+  let ph; // the PhonePe restaurant
+  let rz; // the Razorpay restaurant
+
+  const setup = async (name, email, settings) => {
+    const token = (await signupAccount({ name, email, password: PASSWORD })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const item = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data;
+    const table = (await api('POST', '/api/admin/tables', { token, body: { number: 'S1', capacity: 2 } })).body.data;
+    const saved = await api('PUT', '/api/admin/payment-settings', { token, body: settings });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    const vendorId = (await db.query(`SELECT id FROM vendors WHERE email = $1`, [email])).rows[0].id;
+    return { token, vendorId, itemId: item.id, tableId: table.id, qr: table.qr_url.split('/').pop() };
+  };
+  const place = async (r) => {
+    await db.query(`UPDATE orders SET status = 'cancelled' WHERE vendor_id = $1 AND status = 'pending' AND payment_status = 'unpaid' AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = orders.id)`, [r.vendorId]);
+    const res = await api('POST', `/api/public/t/${r.qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.data;
+  };
+  const view = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+  const idOf = async (order) => (await db.query(`SELECT id FROM orders WHERE public_token = $1`, [order.token])).rows[0].id;
+  const rows = async (order) => (await db.query(`SELECT * FROM payments WHERE order_id = $1 ORDER BY id`, [await idOf(order)])).rows;
+  const adminView = async (r, order) => (await api('GET', `/api/admin/orders/${await idOf(order)}`, { token: r.token })).body.data;
+  const events = async (order) => (await db.query(`SELECT event, actor FROM audit_events WHERE order_id = $1 ORDER BY id`, [await idOf(order)])).rows;
+  const openPage = (order) => api('POST', `/api/public/orders/${order.token}/pay/phonepe`);
+  const ppVerify = (order) => api('POST', `/api/public/orders/${order.token}/pay/phonepe/verify`);
+  const paidByPhonePe = async (order) => {
+    assert.equal((await openPage(order)).status, 200);
+    const [attempt] = await rows(order);
+    pp.orders.get(attempt.provider_order_id).state = 'COMPLETED';
+    assert.equal((await ppVerify(order)).body.data.payment_status, 'paid');
+    return attempt;
+  };
+  const refund = async (r, order) => api('POST', `/api/admin/orders/${await idOf(order)}/refund`, { token: r.token });
+  const ageRefunds = () => db.query(`UPDATE payments SET refund_checked_at = NULL WHERE refund_state = 'pending'`);
+  const age = (order) => db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE order_id IN (SELECT id FROM orders WHERE public_token = $1)`, [order.token]);
+
+  before(async () => {
+    phonepe = await new Promise((resolve) => {
+      const server = http
+        .createServer((req, res) => {
+          let raw = '';
+          req.on('data', (c) => (raw += c));
+          req.on('end', () => {
+            const path = req.url.split('?')[0];
+            const send = (status, body) => {
+              res.statusCode = status;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify(body));
+            };
+            if (path === '/v1/oauth/token') return send(200, { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+            if (path === '/checkout/v2/pay') {
+              const body = JSON.parse(raw);
+              pp.orders.set(body.merchantOrderId, { amount: body.amount, state: 'PENDING' });
+              return send(200, { redirectUrl: `https://phonepe.example/pay/${body.merchantOrderId}` });
+            }
+            if (path === '/payments/v2/refund') {
+              const body = JSON.parse(raw);
+              pp.refundCalls += 1;
+              const answer = () => {
+                if (pp.refunds.has(body.merchantRefundId)) return send(400, { code: 'DUPLICATE_REFUND' });
+                if (pp.refundPlan?.taken !== false) pp.refunds.set(body.merchantRefundId, pp.refundState);
+                if (pp.refundPlan?.answer) return send(pp.refundPlan.answer, { code: 'PLANNED' });
+                return send(200, { refundId: `OMR_${pp.refunds.size}`, state: pp.refundState });
+              };
+              return pp.onRefund ? pp.onRefund().then(answer) : answer();
+            }
+            const status = path.match(/^\/payments\/v2\/refund\/([^/]+)\/status$/);
+            if (status) {
+              if (pp.refundPlan?.statusDown) return send(500, { code: 'DOWN' });
+              const answer = () => {
+                const state = pp.refunds.get(decodeURIComponent(status[1]));
+                return state ? send(200, { state }) : send(404, { code: 'NOT_FOUND' });
+              };
+              return pp.onStatus ? pp.onStatus().then(answer) : answer();
+            }
+            const m = path.match(/^\/checkout\/v2\/order\/([^/]+)\/status$/);
+            if (m) pp.asked.push(decodeURIComponent(m[1]));
+            const found = m && pp.orders.get(decodeURIComponent(m[1]));
+            if (!found) return send(404, { code: 'NOT_FOUND' });
+            return send(200, { state: found.state, amount: found.amount, paymentDetails: [{ state: found.state, transactionId: `TXN_${m[1]}` }] });
+          });
+        })
+        .listen(0, '127.0.0.1', () => resolve(server));
+    });
+    savedBase = config.phonepeApiBase;
+    config.phonepeApiBase = `http://127.0.0.1:${phonepe.address().port}`;
+    config.maxOpenOrdersPerTable = 1000; // these tests pile many orders onto one table on purpose
+    ph = await setup('State PhonePe Cafe', 'state.phonepe@example.test', {
+      phonepe_enabled: true,
+      phonepe_client_id: 'STATEMERCHANT',
+      phonepe_client_version: '1',
+      phonepe_client_secret: 'phonepe-client-secret-value',
+    });
+    rz = await setup('State Razorpay Cafe', 'state.razorpay@example.test', { razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: RZ_SECRET });
+  });
+
+  after(async () => {
+    config.maxOpenOrdersPerTable = 12;
+    config.phonepeApiBase = savedBase;
+    await new Promise((r) => phonepe.close(r));
+  });
+
+  const ageRequest = (order, minutes) =>
+    db.query(`UPDATE payments SET refund_requested_at = now() - make_interval(mins => $2), refund_checked_at = NULL WHERE order_id = (SELECT id FROM orders WHERE public_token = $1)`, [order.token, minutes]);
+  const states = async (order) => (await rows(order)).map((p) => [p.status, p.refund_state]);
+  const refundWith = async (plan, order) => {
+    pp.refundPlan = plan;
+    try {
+      return await refund(ph, order);
+    } finally {
+      pp.refundPlan = null;
+    }
+  };
+
+  it('records a refund the gateway took although its answer never arrived', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    const r = await refundWith({ answer: 500 }, order);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(await states(order), [['refunded', 'pending']]);
+    assert.equal((await view(order)).payment_status, 'refunded');
+  });
+
+  it('says a refund is unconfirmed, never asks twice, and records it once the gateway can be asked', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    const calls = pp.refundCalls;
+    const first = await refundWith({ answer: 500, statusDown: true }, order);
+    assert.deepEqual([first.status, first.body.error.code], [502, 'REFUND_UNCONFIRMED']);
+    assert.deepEqual(await states(order), [['paid', 'requested']]);
+    assert.equal((await adminView(ph, order)).refund_state, 'requested');
+    assert.equal((await refund(ph, order)).body.error.code, 'REFUND_IN_PROGRESS');
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/cash-payment`, { token: ph.token })).body.error.code, 'ALREADY_PAID');
+    await ageRequest(order, 6);
+    const later = await refund(ph, order);
+    assert.equal(later.status, 200, JSON.stringify(later.body));
+    assert.equal(pp.refundCalls - calls, 1, 'the gateway was asked for the money once');
+    assert.deepEqual(await states(order), [['refunded', 'pending']]);
+  });
+
+  it('settles an unconfirmed refund by itself, from the re-check', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    await refundWith({ answer: 500, statusDown: true }, order);
+    await reconcileRefunds(db, { log: quiet });
+    assert.deepEqual(await states(order), [['paid', 'requested']], 'not while the request may still be running');
+    await ageRequest(order, 6);
+    await reconcileRefunds(db, { log: quiet });
+    assert.deepEqual(await states(order), [['refunded', 'pending']]);
+    assert.equal((await view(order)).payment_status, 'refunded');
+  });
+
+  it('calls a refund failed when the gateway never took it, and lets staff try again', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    await refundWith({ answer: 500, taken: false, statusDown: true }, order);
+    await ageRequest(order, 6);
+    await reconcileRefunds(db, { log: quiet });
+    assert.deepEqual(await states(order), [['paid', 'requested']], 'a few minutes with nothing there is not yet a failure');
+    await ageRequest(order, 11);
+    await reconcileRefunds(db, { log: quiet });
+    assert.deepEqual(await states(order), [['paid', 'failed']]);
+    assert.ok((await api('GET', '/api/admin/orders/attention', { token: ph.token })).body.data.some((a) => a.kind === 'refund_failed' && a.order_number === order.number));
+    assert.equal((await refund(ph, order)).status, 200);
+    assert.deepEqual(await states(order), [['refunded', 'pending']]);
+  });
+
+  it('does not let the re-check close a request staff have just made again', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    await refundWith({ answer: 500, taken: false, statusDown: true }, order);
+    await ageRequest(order, 11);
+    // While the re-check is asking PhonePe, staff press Refund: the request is new again.
+    pp.onStatus = () => db.query(`UPDATE payments SET refund_requested_at = now() WHERE order_id = $1`, [orderId]);
+    const orderId = await idOf(order);
+    try {
+      await reconcileRefunds(db, { log: quiet });
+    } finally {
+      pp.onStatus = null;
+    }
+    assert.deepEqual(await states(order), [['paid', 'requested']]);
+  });
+
+  it('records a refund the gateway accepts even when the request had been given up on', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    const orderId = await idOf(order);
+    pp.onRefund = () => db.query(`UPDATE payments SET refund_state = 'failed' WHERE order_id = $1`, [orderId]);
+    try {
+      assert.equal((await refund(ph, order)).body.data.payment_status, 'refunded');
+    } finally {
+      pp.onRefund = null;
+    }
+    assert.deepEqual(await states(order), [['refunded', 'pending']]);
+  });
+
+  it('does not call an answer that says nothing a refund', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    pp.refundState = 'SOMETHING_ELSE';
+    pp.refundPlan = { taken: false };
+    try {
+      const r = await refund(ph, order);
+      assert.deepEqual([r.status, r.body.error.code], [502, 'REFUND_UNCONFIRMED']);
+    } finally {
+      pp.refundState = 'PENDING';
+      pp.refundPlan = null;
+    }
+    assert.deepEqual(await states(order), [['paid', 'requested']]);
+  });
+
+  it('puts a refund that stays unconfirmed on the list of money to sort out', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    await refundWith({ answer: 500, taken: false, statusDown: true }, order);
+    const listed = async () => (await api('GET', '/api/admin/orders/attention', { token: ph.token })).body.data.some((a) => a.kind === 'refund_unconfirmed' && a.order_number === order.number);
+    assert.equal(await listed(), false, 'not at once');
+    await ageRequest(order, 16);
+    assert.equal(await listed(), true);
+  });
+
+  it('leaves nothing on record when the gateway refuses outright', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    const r = await refundWith({ answer: 400, taken: false }, order);
+    assert.deepEqual([r.status, r.body.error.code], [502, 'PHONEPE_ERROR']);
+    assert.deepEqual(await states(order), [['paid', null]]);
+    assert.equal((await db.query(`SELECT 1 FROM audit_events WHERE event = 'payment.refund_refused' AND order_id = $1`, [await idOf(order)])).rowCount, 1);
+  });
+
+  it('keeps the database free while the gateway is being asked for a refund', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    let free = false;
+    // An in-memory database runs one transaction at a time: a query only gets through when none is open.
+    pp.onRefund = async () => {
+      free = await Promise.race([db.query('SELECT 1').then(() => true), new Promise((r) => setTimeout(() => r(false), 1000))]);
+    };
+    try {
+      assert.equal((await refund(ph, order)).status, 200);
+    } finally {
+      pp.onRefund = null;
+    }
+    assert.equal(free, true);
+  });
+
+  it('asks about a page older than three hours before opening another, and closes it only when the gateway says so', async () => {
+    const aged = (order) => db.query(`UPDATE payments SET created_at = now() - interval '4 hours' WHERE order_id = $1`, [order]);
+    const paidLate = await place(ph);
+    await openPage(paidLate);
+    await aged(await idOf(paidLate));
+    pp.orders.get((await rows(paidLate))[0].provider_order_id).state = 'COMPLETED';
+    assert.equal((await openPage(paidLate)).body.error.code, 'ALREADY_PAID');
+    assert.equal((await view(paidLate)).payment_status, 'paid');
+
+    const open = await place(ph);
+    await openPage(open);
+    await aged(await idOf(open));
+    await openPage(open);
+    assert.deepEqual((await rows(open)).map((p) => p.status), ['created', 'created'], 'still pending at PhonePe: kept');
+    pp.orders.get((await rows(open))[0].provider_order_id).state = 'FAILED';
+    await openPage(open);
+    assert.deepEqual((await rows(open)).map((p) => p.status), ['failed', 'created', 'created']);
+  });
+
+  it('keeps places in each pass for paid orders, however many unpaid pages are waiting', async () => {
+    await db.query(`UPDATE payments SET status = 'failed' WHERE status = 'created'`);
+    const twice = await place(ph);
+    await openPage(twice);
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(twice)}/cash-payment`, { token: ph.token })).status, 200);
+    pp.orders.get((await rows(twice))[0].provider_order_id).state = 'COMPLETED';
+    const waiting = await place(ph);
+    await db.query(
+      `INSERT INTO payments (order_id, provider, provider_order_id, amount_paise, status) SELECT $1, 'phonepe', 'mz_waiting_' || n, 4000, 'created' FROM generate_series(1, 80) AS n`,
+      [await idOf(waiting)],
+    );
+    for (const o of [twice, waiting]) await age(o);
+    assert.equal((await reconcileOnce(db, { log: quiet })).checked, 50);
+    assert.deepEqual((await rows(twice)).map((p) => [p.provider, p.status, p.is_extra]), [['phonepe', 'paid', true], ['cash', 'paid', false]]);
+    await db.query(`UPDATE payments SET status = 'failed' WHERE status = 'created'`);
+  });
+
+  it('changes nothing when PhonePe says a refund failed', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    pp.refundState = 'FAILED';
+    const r = await refund(ph, order);
+    pp.refundState = 'PENDING';
+    assert.equal(r.status, 502);
+    assert.equal(r.body.error.code, 'REFUND_FAILED');
+    assert.equal((await view(order)).payment_status, 'paid');
+    assert.deepEqual((await rows(order)).map((p) => [p.status, p.refund_state]), [['paid', null]]);
+    assert.equal((await db.query(`SELECT 1 FROM audit_events WHERE event = 'payment.refund_refused' AND order_id = $1`, [await idOf(order)])).rowCount, 1);
+  });
+
+  it('shows a refund as pending until the gateway finishes it', async () => {
+    const order = await place(ph);
+    await paidByPhonePe(order);
+    assert.equal((await refund(ph, order)).body.data.refund_state, 'pending');
+    assert.deepEqual([(await view(order)).payment_status, (await view(order)).refund_pending], ['refunded', true]);
+    await ageRefunds();
+    const [attempt] = await rows(order);
+    pp.refunds.set(attempt.refund_ref, 'COMPLETED');
+    await reconcileRefunds(db, { log: quiet });
+    assert.equal((await adminView(ph, order)).refund_state, 'processed');
+    assert.equal((await view(order)).refund_pending, false);
+    assert.deepEqual((await events(order)).map((e) => e.event), ['payment.paid', 'payment.refund', 'payment.refund_processed']);
+  });
+
+  it('counts the payment as paid again when the gateway later reports that the refund failed, and lets staff retry', async () => {
+    const order = await place(ph);
+    const attempt = await paidByPhonePe(order);
+    assert.equal((await refund(ph, order)).status, 200);
+    const [row] = await rows(order);
+    pp.refunds.set(row.refund_ref, 'FAILED');
+    await ageRefunds();
+    await reconcileRefunds(db, { log: quiet });
+    const seen = await adminView(ph, order);
+    assert.deepEqual([seen.payment_status, seen.refund_state], ['paid', 'failed']);
+    const flagged = (await api('GET', '/api/admin/orders/attention', { token: ph.token })).body.data;
+    // The kitchen had not served it, so the refund cancelled the order: it is flagged as money held for a cancelled order.
+    assert.ok(flagged.some((f) => f.order_id === seen.id && f.kind === 'cancelled_paid'));
+    // A repeated payment notice changes nothing, and the order can be refunded again.
+    pp.orders.get(attempt.provider_order_id).state = 'COMPLETED';
+    await reconcileOnce(db, { log: quiet });
+    assert.deepEqual((await rows(order)).map((p) => p.status), ['paid']);
+    assert.equal((await refund(ph, order)).body.data.refund_state, 'pending');
+  });
+
+  it('gives every open payment its turn in the re-check, however many unfinished ones are ahead', async () => {
+    await db.query(`UPDATE payments SET status = 'failed' WHERE status = 'created'`);
+    for (let i = 0; i < 60; i += 1) {
+      const o = await place(ph);
+      await openPage(o);
+    }
+    const victim = await place(rz);
+    await api('POST', `/api/public/orders/${victim.token}/razorpay-qr`).then((r) => qrCodes.get(r.body.data.qr_id).payments.push({ id: 'pay_QUEUE00001', status: 'captured', amount: 4000 }));
+    await db.query(`UPDATE payments SET created_at = now() - interval '10 minutes' WHERE status = 'created'`);
+    await reconcileOnce(db, { log: quiet });
+    await reconcileOnce(db, { log: quiet });
+    assert.equal((await view(victim)).payment_status, 'paid', 'reached by the second pass');
+    pp.asked.length = 0;
+    await reconcileOnce(db, { log: quiet });
+    await reconcileOnce(db, { log: quiet });
+    assert.equal(new Set(pp.asked).size, 60, 'and every unfinished one keeps being asked about in turn');
+  });
+
+  it('stops asking about a page the gateway calls failed, an hour after it was opened', async () => {
+    await db.query(`UPDATE payments SET status = 'failed' WHERE status = 'created'`);
+    const order = await place(ph);
+    await openPage(order);
+    const [attempt] = await rows(order);
+    pp.orders.get(attempt.provider_order_id).state = 'FAILED';
+    await age(order);
+    await reconcileOnce(db, { log: quiet });
+    assert.equal((await rows(order))[0].status, 'created', 'still young');
+    await db.query(`UPDATE payments SET created_at = now() - interval '2 hours' WHERE id = $1`, [attempt.id]);
+    await reconcileOnce(db, { log: quiet });
+    assert.equal((await rows(order))[0].status, 'failed');
+    // Should the money turn out to have arrived after all, the gateway's notice still counts it.
+    pp.orders.get(attempt.provider_order_id).state = 'COMPLETED';
+    const key = (await db.query(`SELECT webhook_key FROM vendor_payment_settings WHERE vendor_id = $1`, [ph.vendorId])).rows[0].webhook_key;
+    await api('PUT', '/api/admin/payment-settings', { token: ph.token, body: { phonepe_webhook_username: 'late-user', phonepe_webhook_password: 'late-password-1' } });
+    const auth = createHash('sha256').update('late-user:late-password-1').digest('hex');
+    await api('POST', `/api/webhooks/phonepe/${key}`, { body: { event: 'checkout.order.completed', payload: { merchantOrderId: attempt.provider_order_id } }, headers: { Authorization: auth } });
+    assert.equal((await view(order)).payment_status, 'paid', 'a delayed notice is honoured');
+  });
+
+  it('asks the gateway before taking cash, and refuses when the diner has just paid online', async () => {
+    const order = await place(ph);
+    await openPage(order);
+    const [attempt] = await rows(order);
+    pp.orders.get(attempt.provider_order_id).state = 'COMPLETED'; // paid, but nothing has told us yet
+    const r = await api('POST', `/api/admin/orders/${await idOf(order)}/cash-payment`, { token: ph.token });
+    assert.equal(r.status, 409);
+    assert.match(r.body.error.message, /paid online/);
+    assert.deepEqual([(await view(order)).payment_status, (await view(order)).payment_method], ['paid', 'phonepe']);
+    assert.deepEqual((await rows(order)).map((p) => p.provider), ['phonepe']);
+
+    const next = await place(ph);
+    await openPage(next);
+    pp.orders.get((await rows(next))[0].provider_order_id).state = 'COMPLETED';
+    const bill = await api('POST', `/api/admin/tables/${ph.tableId}/settle`, { token: ph.token, body: { method: 'cash' } });
+    assert.equal(bill.status, 409);
+    assert.equal(bill.body.error.code, 'PAID_ONLINE');
+  });
+
+  it('records who took cash, and closes the order QR code so nobody can pay it again', async () => {
+    const order = await place(rz);
+    const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
+    assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/cash-payment`, { token: rz.token })).status, 200);
+    assert.equal(qrCodes.get(qr.qr_id).status, 'closed');
+    const cash = (await rows(order)).find((p) => p.provider === 'cash');
+    assert.equal(cash.recorded_by, 'state.razorpay@example.test');
+    assert.deepEqual((await events(order)).map((e) => [e.event, e.actor]), [['payment.cash', 'state.razorpay@example.test']]);
+  });
+
+  it('counts one payment once when the page, the webhook and the re-check all report it at the same moment', async () => {
+    const order = await place(ph);
+    await openPage(order);
+    const [attempt] = await rows(order);
+    pp.orders.get(attempt.provider_order_id).state = 'COMPLETED';
+    await age(order);
+    await Promise.all([ppVerify(order), ppVerify(order), ppVerify(order), reconcileOnce(db, { log: quiet })]);
+    assert.deepEqual((await rows(order)).map((p) => [p.status, p.is_extra]), [['paid', false]]);
+    assert.deepEqual((await events(order)).map((e) => e.event), ['payment.paid']);
+  });
+
+  it('keeps a paid, refunded or half-paid order from being deleted', async () => {
+    const del = async (r, order) => api('DELETE', `/api/admin/orders/${await idOf(order)}`, { token: r.token });
+    const paid = await place(ph);
+    await paidByPhonePe(paid);
+    assert.equal((await del(ph, paid)).body.error.code, 'ORDER_HAS_PAYMENTS');
+    await refund(ph, paid);
+    assert.equal((await del(ph, paid)).status, 409);
+    const open = await place(ph);
+    await openPage(open);
+    assert.equal((await del(ph, open)).status, 409, 'a payment page is open');
+    const plain = await place(ph);
+    assert.equal((await del(ph, plain)).status, 204);
+    assert.equal((await db.query(`SELECT 1 FROM audit_events WHERE event = 'order.deleted'`)).rowCount >= 1, true);
+  });
+});
+
+describe('account protection: locks, password rules, sign-out, two-step sign-in', () => {
+  const PASSWORD = 'a-long-enough-password';
+  const OWNER = 'security.owner@mezmitra.test';
+  let guarded; // the app with the limits on
+  const at = () => `http://127.0.0.1:${guarded.address().port}`;
+  const login = (body, headers = {}) =>
+    fetch(`${at()}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const make = async (email, password = PASSWORD) => (await signupAccount({ name: 'Secure Cafe', email, password })).body.data;
+  let ownerToken;
+
+  before(async () => {
+    guarded = await listen(createApp({ db, mailer: fakeMailer }));
+    config.superAdminEmails.add(OWNER);
+    ownerToken = (await make(OWNER)).token;
+  });
+  after(async () => {
+    config.superAdminEmails.delete(OWNER);
+    config.clientIpHeader = '';
+    await db.query(`DELETE FROM rate_limits`);
+    await new Promise((r) => guarded.close(r));
+  });
+
+  it('locks one account after ten wrong tries, even for the right password, and leaves others alone', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('lock.me@example.test');
+    await make('other.one@example.test');
+    for (let i = 0; i < 10; i += 1) assert.equal((await login({ email: 'lock.me@example.test', password: 'wrong-guess-1' })).status, 401);
+    const locked = await login({ email: 'lock.me@example.test', password: PASSWORD });
+    assert.equal(locked.status, 429);
+    assert.equal(locked.body.error.code, 'ACCOUNT_LOCKED');
+    assert.equal((await login({ email: 'other.one@example.test', password: PASSWORD })).status, 200);
+    await db.query(`UPDATE rate_limits SET reset_at = now() - interval '1 second'`);
+    assert.equal((await login({ email: 'lock.me@example.test', password: PASSWORD })).status, 200, 'open again after the window');
+    const { rows } = await db.query(`SELECT event, detail FROM audit_events WHERE actor = 'lock.me@example.test'`);
+    assert.ok(rows.some((r) => r.event === 'auth.login_failed') && rows.some((r) => r.event === 'auth.locked'));
+    assert.ok(!JSON.stringify(rows).includes('wrong-guess-1'), 'no password in the record');
+  });
+
+  it('stops guessing spread over many addresses, and still lets the owner in from another one', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('spread.out@example.test');
+    config.clientIpHeader = 'cf-connecting-ip';
+    const from = (ip, password = 'wrong-guess-1') => login({ email: 'spread.out@example.test', password }, { 'CF-Connecting-IP': ip }).then((r) => r.status);
+    try {
+      for (let i = 0; i < 50; i += 1) assert.equal(await from(`198.51.100.${(i % 25) + 1}`), 401);
+      for (let i = 0; i < 3; i += 1) assert.equal(await from('203.0.113.50'), 401);
+      assert.equal(await from('203.0.113.50'), 429, 'a new address gets three tries, no more');
+      assert.equal(await from('203.0.113.50', PASSWORD), 429);
+      assert.equal(await from('203.0.113.200', PASSWORD), 200, 'the right password from elsewhere still works');
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('does not let a few addresses lock an account for everyone', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('not.shut.out@example.test');
+    config.clientIpHeader = 'cf-connecting-ip';
+    const from = (ip, password = 'wrong-guess-1') => login({ email: 'not.shut.out@example.test', password }, { 'CF-Connecting-IP': ip }).then((r) => r.status);
+    try {
+      for (const ip of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) for (let i = 0; i < 20; i += 1) await from(ip);
+      for (let i = 0; i < 4; i += 1) assert.equal(await from('203.0.113.9'), 401, 'tries from locked addresses are not counted against the account');
+      assert.equal(await from('203.0.113.9', PASSWORD), 200);
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('opens a locked sign-in again once a new password is set', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    const email = 'locked.then.reset@example.test';
+    const user = await make(email);
+    for (let i = 0; i < 11; i += 1) await login({ email, password: 'wrong-guess-1' });
+    assert.equal((await login({ email, password: PASSWORD })).status, 429);
+    sentMail.length = 0;
+    await api('POST', '/api/auth/forgot-password', { body: { email } });
+    const token = sentMail[0].text.match(/#token=([A-Za-z0-9_-]+)/)[1];
+    assert.equal((await api('POST', '/api/auth/reset-password', { body: { token, password: 'a-fresh-long-password' } })).status, 200);
+    await db.query(`DELETE FROM rate_limits WHERE key LIKE 'login:%'`);
+    assert.equal((await login({ email, password: 'a-fresh-long-password' })).status, 200);
+
+    for (let i = 0; i < 11; i += 1) await login({ email, password: 'wrong-guess-1' });
+    assert.equal((await api('POST', `/api/platform/restaurants/${user.vendor.id}/password`, { token: ownerToken, body: { password: 'set-by-the-owner-today' } })).status, 200);
+    await db.query(`DELETE FROM rate_limits WHERE key LIKE 'login:%'`);
+    assert.equal((await login({ email, password: 'set-by-the-owner-today' })).status, 200);
+  });
+
+  it('limits how often a signed-in session may try the password, whatever address it uses', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    const user = await make('stolen.session@example.test');
+    config.clientIpHeader = 'cf-connecting-ip';
+    try {
+      const tryChange = (i) =>
+        fetch(`${at()}/api/auth/change-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}`, 'CF-Connecting-IP': `198.51.100.${i}` },
+          body: JSON.stringify({ current_password: 'a-guess-at-it', new_password: 'another-long-password' }),
+        }).then(async (r) => (await r.json()).error.code);
+      for (let i = 1; i <= 10; i += 1) assert.equal(await tryChange(i), 'WRONG_PASSWORD');
+      assert.equal(await tryChange(11), 'ACCOUNT_LOCKED');
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('never takes a password with a hidden second copy of itself', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('nul.byte@example.test');
+    assert.equal((await login({ email: 'nul.byte@example.test', password: `${PASSWORD}\u0000${PASSWORD}` })).status, 401);
+    const { passwordProblem } = await import('../src/lib/passwords.js');
+    assert.ok(passwordProblem('tableseva-demo-123\u0000tableseva-demo-123'));
+  });
+
+  it('gives no session to a password changed while it was being checked', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('change.race@example.test');
+    const newer = await (await import('bcryptjs')).default.hash('changed-in-the-meantime', 4);
+    const real = db.query;
+    db.query = async (sql, params) => {
+      if (/SELECT id FROM vendors WHERE id = \$1 AND password_hash = \$2/.test(sql)) await real(`UPDATE vendors SET password_hash = $1 WHERE email = 'change.race@example.test'`, [newer]);
+      return real(sql, params);
+    };
+    try {
+      assert.equal((await login({ email: 'change.race@example.test', password: PASSWORD })).status, 401);
+    } finally {
+      db.query = real;
+    }
+  });
+
+  it('limits wrong two-step codes for the whole account, whatever address they come from', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    const email = 'codes.cap@example.test';
+    const user = await make(email);
+    const { totpCode, stepAt } = await import('../src/lib/totp.js');
+    const setup = (await api('POST', '/api/auth/2fa/setup', { token: user.token, body: { password: PASSWORD } })).body.data;
+    const enabled = (await api('POST', '/api/auth/2fa/enable', { token: user.token, body: { code: totpCode(setup.secret, stepAt() - 1) } })).body.data;
+    config.clientIpHeader = 'cf-connecting-ip';
+    const from = (ip, otp) => login({ email, password: PASSWORD, otp }, { 'CF-Connecting-IP': ip });
+    try {
+      for (let i = 1; i <= 10; i += 1) assert.equal((await from(`198.51.100.${i}`, 'AAAAA-AAAAA')).body.error.code, 'OTP_WRONG');
+      assert.equal((await from('203.0.113.9', enabled.recovery_codes[0])).body.error.code, 'ACCOUNT_LOCKED');
+      sentMail.length = 0;
+      await api('POST', '/api/auth/forgot-password', { body: { email } });
+      await api('POST', '/api/auth/reset-password', { body: { token: sentMail[0].text.match(/#token=([A-Za-z0-9_-]+)/)[1], password: 'a-fresh-long-password' } });
+      await db.query(`DELETE FROM rate_limits WHERE key LIKE 'login:%'`);
+      assert.equal((await login({ email, password: 'a-fresh-long-password', otp: enabled.recovery_codes[0] }, { 'CF-Connecting-IP': '203.0.113.9' })).status, 200);
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('lets recovery codes in when the authenticator secret cannot be read', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    const email = 'other.secret@example.test';
+    const user = await make(email);
+    const { totpCode, stepAt } = await import('../src/lib/totp.js');
+    const setup = (await api('POST', '/api/auth/2fa/setup', { token: user.token, body: { password: PASSWORD } })).body.data;
+    const enabled = (await api('POST', '/api/auth/2fa/enable', { token: user.token, body: { code: totpCode(setup.secret, stepAt() - 1) } })).body.data;
+    // As if APP_SECRET had been changed since.
+    await db.query(`UPDATE vendors SET totp_secret_enc = 'v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==:AAAA' WHERE email = $1`, [email]);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      assert.equal((await login({ email, password: PASSWORD, otp: totpCode(setup.secret) })).body.error.code, 'OTP_WRONG');
+      assert.equal((await login({ email, password: PASSWORD, otp: enabled.recovery_codes[0] })).status, 200);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it('does not let a stolen session use up the password tries of the person it was stolen from', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    const email = 'two.sessions@example.test';
+    await make(email);
+    const sessions = [];
+    for (let i = 0; i < 2; i += 1) sessions.push((await login({ email, password: PASSWORD })).body.data.token);
+    const change = (token, current_password) =>
+      fetch(`${at()}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ current_password, new_password: 'the-owner-takes-it-back' }),
+      }).then((r) => r.status);
+    for (let i = 0; i < 11; i += 1) await change(sessions[0], 'a-guess-at-it');
+    assert.equal(await change(sessions[0], PASSWORD), 429);
+    assert.equal(await change(sessions[1], PASSWORD), 200);
+  });
+
+  it('does not let a sign-in that is upgrading a hash undo a password changed in the same moment', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('rehash.race@example.test');
+    const bcrypt = (await import('bcryptjs')).default;
+    const newer = await bcrypt.hash('changed-in-the-meantime', 4);
+    const real = db.query;
+    db.query = async (sql, params) => {
+      if (/SET password_hash = \$2 WHERE id = \$1 AND password_hash/.test(sql)) await real(`UPDATE vendors SET password_hash = $1 WHERE email = 'rehash.race@example.test'`, [newer]);
+      return real(sql, params);
+    };
+    config.bcryptCost = 5;
+    try {
+      assert.equal((await login({ email: 'rehash.race@example.test', password: PASSWORD })).status, 401, 'no session for the old password');
+    } finally {
+      db.query = real;
+      config.bcryptCost = 4;
+    }
+    assert.equal((await db.query(`SELECT password_hash FROM vendors WHERE email = 'rehash.race@example.test'`)).rows[0].password_hash, newer);
+  });
+
+  it('a successful sign-in clears the count of wrong tries from that address', async () => {
+    await db.query(`DELETE FROM rate_limits`);
+    await make('forgiving@example.test');
+    for (let round = 0; round < 3; round += 1) {
+      for (let i = 0; i < 6; i += 1) await login({ email: 'forgiving@example.test', password: 'wrong-guess-1' });
+      assert.equal((await login({ email: 'forgiving@example.test', password: PASSWORD })).status, 200);
+      await db.query(`DELETE FROM rate_limits WHERE key LIKE 'login:%'`);
+    }
+  });
+
+  it('refuses passwords anyone would try, everywhere a password is chosen', async () => {
+    const { passwordProblem } = await import('../src/lib/passwords.js');
+    for (const bad of ['12345678', 'password123', 'qwertyuiop', 'abcdefgh', 'aaaaaaaaaa', 'teapost@123', 'Admin2024', 'tableseva-demo-123', 'teapost-demo-123', 'x'.repeat(73), '99887766554']) assert.ok(passwordProblem(bad), bad);
+    assert.ok(passwordProblem('my-rameshbhai-key', { email: 'rameshbhai@example.test' }));
+    for (const good of ['a-long-enough-password', 'chai & bun maska 42', 'T7#kolm-river', 'new-password-123']) assert.equal(passwordProblem(good), null, good);
+
+    const user = await make('choosy@example.test');
+    const create = await api('POST', '/api/platform/restaurants', { token: ownerToken, body: { name: 'Weak Cafe', email: 'weak.cafe@example.test', password: '12345678' } });
+    assert.equal(create.status, 400);
+    assert.equal(create.body.error.details[0].field, 'password');
+    assert.equal((await api('POST', `/api/platform/restaurants/${user.vendor.id}/password`, { token: ownerToken, body: { password: 'password123' } })).status, 400);
+    const change = await api('POST', '/api/auth/change-password', { token: user.token, body: { current_password: PASSWORD, new_password: 'qwertyuiop' } });
+    assert.equal(change.body.error.details[0].field, 'new_password');
+    assert.equal((await api('PUT', '/api/admin/kitchen-login', { token: user.token, body: { email: 'k.choosy@example.test', password: '11111111' } })).status, 400);
+  });
+
+  it('refuses the published demo passwords on the live server', async () => {
+    await createRestaurantAccount(db, { name: 'Old Demo', email: 'old.demo@example.test', password: PASSWORD });
+    const bcrypt = (await import('bcryptjs')).default;
+    await db.query(`UPDATE vendors SET password_hash = $1 WHERE email = 'old.demo@example.test'`, [await bcrypt.hash('teapost-demo-123', 4)]);
+    assert.equal((await login({ email: 'old.demo@example.test', password: 'teapost-demo-123' })).status, 200, 'a local run still allows it');
+    config.refusePublicPasswords = true;
+    try {
+      const r = await login({ email: 'old.demo@example.test', password: 'teapost-demo-123' });
+      assert.equal(r.status, 403);
+      assert.match(r.body.error.message, /public source code/);
+      assert.equal(r.body.data, undefined);
+    } finally {
+      config.refusePublicPasswords = false;
+    }
+  });
+
+  it('refuses to put demo accounts with public passwords into a real database', async () => {
+    const { seed } = await import('../src/seed.js');
+    let wrote = 0;
+    const database = (found) => ({ kind: 'pg', query: async () => ({ rowCount: found, rows: found ? [{ id: 1 }] : [] }), tx: async () => (wrote += 1) });
+    await assert.rejects(seed(database(0), { log: () => {} }), /Refusing to seed/);
+    // The accounts are there already: nothing is created, and a server with SEED_DEMO still starts.
+    assert.equal(await seed(database(1), { log: () => {} }), false);
+    assert.equal(wrote, 0);
+  });
+
+  it('upgrades an older password hash at the next sign-in', async () => {
+    await make('old.hash@example.test');
+    const rounds = async () => (await import('bcryptjs')).default.getRounds((await db.query(`SELECT password_hash FROM vendors WHERE email = 'old.hash@example.test'`)).rows[0].password_hash);
+    assert.equal(await rounds(), 4);
+    config.bcryptCost = 5;
+    try {
+      assert.equal((await login({ email: 'old.hash@example.test', password: PASSWORD })).status, 200);
+      assert.equal(await rounds(), 5);
+      assert.equal((await login({ email: 'old.hash@example.test', password: PASSWORD })).status, 200);
+    } finally {
+      config.bcryptCost = 4;
+    }
+  });
+
+  it('signing out ends that session on the server, and only that one', async () => {
+    await make('leaver@example.test');
+    const first = (await api('POST', '/api/auth/login', { body: { email: 'leaver@example.test', password: PASSWORD } })).body.data.token;
+    const second = (await api('POST', '/api/auth/login', { body: { email: 'leaver@example.test', password: PASSWORD } })).body.data.token;
+    assert.equal((await api('POST', '/api/auth/logout', { token: first })).status, 200);
+    for (const path of ['/api/auth/me', '/api/admin/orders', '/api/admin/payment-settings']) assert.equal((await api('GET', path, { token: first })).status, 401, path);
+    assert.equal((await api('GET', '/api/auth/me', { token: second })).status, 200);
+    assert.equal((await api('POST', '/api/auth/logout')).status, 401);
+  });
+
+  it('makes the same codes as an authenticator app', async () => {
+    const { base32Encode, totpCode } = await import('../src/lib/totp.js');
+    const secret = base32Encode(Buffer.from('12345678901234567890'));
+    assert.equal(secret, 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
+    // RFC 6238, SHA-1, the last six digits of its test values.
+    assert.equal(totpCode(secret, Math.floor(59 / 30)), '287082');
+    assert.equal(totpCode(secret, Math.floor(1111111109 / 30)), '081804');
+    assert.equal(totpCode(secret, Math.floor(2000000000 / 30)), '279037');
+  });
+
+  it('asks for the app code after the password once two-step sign-in is on', async () => {
+    const { stepAt, totpCode } = await import('../src/lib/totp.js');
+    const email = 'two.step@example.test';
+    const user = await make(email);
+    const go = (path, body) => api('POST', `/api/auth/2fa/${path}`, { token: user.token, body });
+    assert.equal((await go('setup', { password: 'not-my-password' })).body.error.code, 'WRONG_PASSWORD');
+    const setup = (await go('setup', { password: PASSWORD })).body.data;
+    assert.match(setup.otpauth_url, /^otpauth:\/\/totp\/MezMitra%3Atwo\.step%40example\.test\?secret=/);
+    assert.match(setup.qr, /^data:image\/png;base64,/);
+    const stored = (await db.query(`SELECT totp_secret_enc FROM vendors WHERE email = $1`, [email])).rows[0].totp_secret_enc;
+    assert.ok(!stored.includes(setup.secret), 'the secret is stored encrypted');
+    assert.equal((await api('POST', '/api/auth/login', { body: { email, password: PASSWORD } })).status, 200, 'nothing changes until a code is confirmed');
+    assert.equal((await go('enable', { code: '000000' })).body.error.code, 'OTP_WRONG');
+    const enabled = (await go('enable', { code: totpCode(setup.secret, stepAt() - 1) })).body.data;
+    assert.equal(enabled.recovery_codes.length, 8);
+
+    const signIn = (otp) => api('POST', '/api/auth/login', { body: { email, password: PASSWORD, ...(otp ? { otp } : {}) } });
+    const asked = await signIn();
+    assert.equal(asked.status, 400);
+    assert.equal(asked.body.error.code, 'OTP_REQUIRED');
+    assert.equal(asked.body.data, undefined);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email, password: 'wrong-password-9' } })).status, 401, 'the code never replaces the password');
+    assert.equal((await signIn('000000')).body.error.code, 'OTP_WRONG');
+    const code = totpCode(setup.secret, stepAt());
+    assert.equal((await signIn(code)).status, 200);
+    assert.equal((await signIn(code)).status, 400, 'a code works once');
+    assert.equal((await signIn(enabled.recovery_codes[0].toLowerCase())).status, 200);
+    assert.equal((await signIn(enabled.recovery_codes[0])).status, 400, 'a recovery code works once');
+    assert.equal((await api('GET', '/api/auth/2fa', { token: user.token })).body.data.recovery_codes_left, 7);
+
+    assert.equal((await go('disable', { password: PASSWORD, code: '000000' })).status, 400);
+    assert.equal((await go('disable', { password: PASSWORD, code: enabled.recovery_codes[1] })).status, 200);
+    assert.equal((await signIn()).status, 200);
+  });
+
+  it('is not for the kitchen login, and a new password from the owner switches it off', async () => {
+    const { stepAt, totpCode } = await import('../src/lib/totp.js');
+    const user = await make('lost.phone@example.test');
+    await api('PUT', '/api/admin/kitchen-login', { token: user.token, body: { email: 'k.lost@example.test', password: PASSWORD } });
+    const kitchen = (await api('POST', '/api/auth/login', { body: { email: 'k.lost@example.test', password: PASSWORD } })).body.data.token;
+    assert.equal((await api('POST', '/api/auth/2fa/setup', { token: kitchen, body: { password: PASSWORD } })).status, 403);
+    const setup = (await api('POST', '/api/auth/2fa/setup', { token: user.token, body: { password: PASSWORD } })).body.data;
+    await api('POST', '/api/auth/2fa/enable', { token: user.token, body: { code: totpCode(setup.secret, stepAt()) } });
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'k.lost@example.test', password: PASSWORD } })).status, 200, 'the kitchen signs in as before');
+    assert.equal((await api('POST', `/api/platform/restaurants/${user.vendor.id}/password`, { token: ownerToken, body: { password: 'a-fresh-password-77' } })).status, 200);
+    assert.equal((await api('POST', '/api/auth/login', { body: { email: 'lost.phone@example.test', password: 'a-fresh-password-77' } })).status, 200);
+  });
+
+  it('voids a reset link once the owner has changed the login email', async () => {
+    const user = await make('old.address@example.test');
+    await api('POST', '/api/auth/forgot-password', { body: { email: 'old.address@example.test' } });
+    const token = new URLSearchParams(new URL(sentMail.at(-1).text.match(/https?:\/\/\S+/)[0]).hash.slice(1)).get('token');
+    assert.equal((await api('POST', `/api/platform/restaurants/${user.vendor.id}/profile`, { token: ownerToken, body: { name: 'Secure Cafe', email: 'new.address@example.test' } })).status, 200);
+    const r = await api('POST', '/api/auth/reset-password', { body: { token, password: 'a-fresh-password-88' } });
+    assert.equal(r.body.error.code, 'INVALID_RESET_TOKEN');
+  });
+
+  it('does not tell a restaurant which addresses have an account', async () => {
+    const user = await make('curious@example.test');
+    const taken = await api('PUT', '/api/admin/kitchen-login', { token: user.token, body: { email: OWNER, password: PASSWORD } });
+    const used = await api('PUT', '/api/admin/kitchen-login', { token: user.token, body: { email: 'leaver@example.test', password: PASSWORD } });
+    assert.deepEqual([taken.status, taken.body.error], [used.status, used.body.error]);
+  });
+});
+
+describe('abuse of ordering and payment settings', () => {
+  const PASSWORD = 'a-long-enough-password';
+  let guarded; // the app with the limits on
+  const at = () => `http://127.0.0.1:${guarded.address().port}`;
+  const post = (path, body, headers = {}) =>
+    fetch(`${at()}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  const setup = async (email, patch) => {
+    const token = (await signupAccount({ name: 'Guarded Cafe', email, password: PASSWORD })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data.id;
+    const table = (await api('POST', '/api/admin/tables', { token, body: { number: 'G1', capacity: 2 } })).body.data;
+    if (patch) assert.equal((await api('PATCH', '/api/admin/vendor', { token, body: patch })).status, 200);
+    return { token, itemId, table, qr: table.qr_url.split('/').pop() };
+  };
+  const order = (r, extra = {}, headers = {}) => post(`/api/public/t/${r.qr}/orders`, { items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }], ...extra }, headers);
+  const wrongCode = (code) => String((Number(code) + 1) % 10_000).padStart(4, '0');
+  const reset = () => db.query(`DELETE FROM rate_limits`);
+
+  before(async () => {
+    guarded = await listen(createApp({ db, mailer: fakeMailer }));
+  });
+  after(async () => {
+    config.clientIpHeader = '';
+    await reset();
+    await new Promise((r) => guarded.close(r));
+  });
+
+  it('stops table code guessing after ten wrong codes, and a bad cart tells nothing about a code', async () => {
+    await reset();
+    const r = await setup('codes@example.test', { table_code_mode: 'required' });
+    const probe = (code) => post(`/api/public/t/${r.qr}/orders`, { items: [{ item_id: 999_999, quantity: 1 }], table_code: code });
+    const right = await probe(r.table.code);
+    const wrong = await probe(wrongCode(r.table.code));
+    assert.deepEqual([right.status, right.body.error.code], [wrong.status, wrong.body.error.code], 'the same answer for a right and a wrong code');
+    await reset();
+    for (let i = 0; i < 10; i += 1) assert.equal((await order(r, { table_code: wrongCode(r.table.code) })).status, 403);
+    const locked = await order(r, { table_code: r.table.code });
+    assert.equal(locked.status, 429);
+    assert.equal(locked.body.error.code, 'TABLE_CODE_LOCKED');
+  });
+
+  it('counts only wrong codes: right ones never lock a table', async () => {
+    await reset();
+    const r = await setup('codes.right@example.test', { table_code_mode: 'required' });
+    for (let i = 0; i < 12; i += 1) assert.equal((await order(r, { table_code: r.table.code })).status, 201, `order ${i + 1}`);
+    assert.equal((await db.query(`SELECT COALESCE(sum(hits), 0) AS n FROM rate_limits WHERE key LIKE 'code:%'`)).rows[0].n, 0);
+  });
+
+  it('stops guessing at one table from many addresses, also when the tries come all at once', async () => {
+    await reset();
+    const r = await setup('codes.many@example.test', { table_code_mode: 'required' });
+    config.clientIpHeader = 'cf-connecting-ip';
+    const from = (ip, code = wrongCode(r.table.code)) => order(r, { table_code: code }, { 'CF-Connecting-IP': ip });
+    try {
+      const tries = await Promise.all(Array.from({ length: 60 }, (_, i) => from(`198.51.100.${(i % 4) + 1}`)));
+      assert.equal(tries.filter((t) => t.status === 403).length, 40);
+      assert.equal(tries.filter((t) => t.status === 429).length, 20);
+      for (let i = 0; i < 3; i += 1) assert.equal((await from('203.0.113.50')).status, 403);
+      assert.equal((await from('203.0.113.50')).status, 429, 'a new address gets three tries, no more');
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('does not let one address lock a table for the people sitting at it', async () => {
+    await reset();
+    const r = await setup('codes.one@example.test', { table_code_mode: 'required' });
+    config.clientIpHeader = 'cf-connecting-ip';
+    const from = (ip, code) => order(r, { table_code: code }, { 'CF-Connecting-IP': ip });
+    try {
+      for (let i = 0; i < 60; i += 1) await from('198.51.100.1', wrongCode(r.table.code));
+      assert.equal((await from('203.0.113.60', r.table.code)).status, 201);
+    } finally {
+      config.clientIpHeader = '';
+    }
+  });
+
+  it('starts a table afresh with a new code', async () => {
+    await reset();
+    const r = await setup('codes.new@example.test', { table_code_mode: 'required' });
+    for (let i = 0; i < 11; i += 1) await order(r, { table_code: wrongCode(r.table.code) });
+    assert.equal((await order(r, { table_code: r.table.code })).status, 429);
+    const renewed = (await api('POST', `/api/admin/tables/${r.table.id}/code`, { token: r.token })).body.data;
+    assert.equal((await order(r, { table_code: renewed.code })).status, 201);
+    const picture = await api('GET', `/api/admin/tables/${r.table.id}/qr.png`, { token: r.token });
+    assert.match(picture.headers.get('cache-control'), /no-store/, 'an old code is never shown from a cache');
+  });
+
+  it('lets only so many orders wait at one table', async () => {
+    await reset();
+    const r = await setup('flood@example.test');
+    const made = [];
+    for (let i = 0; i < 12; i += 1) made.push(await order(r, {}, { 'Idempotency-Key': `flood-key-${i}-0000` }));
+    assert.ok(made.every((m) => m.status === 201));
+    const stop = await order(r);
+    assert.equal(stop.status, 409);
+    assert.equal(stop.body.error.code, 'TOO_MANY_OPEN_ORDERS');
+    assert.equal((await order(r, {}, { 'Idempotency-Key': 'flood-key-0-0000' })).status, 200, 'a retry of an accepted order still gets it back');
+    const first = (await api('GET', '/api/admin/orders?per_page=100', { token: r.token })).body.data.at(-1);
+    await api('PATCH', `/api/admin/orders/${first.id}/status`, { token: r.token, body: { status: 'accepted' } });
+    assert.equal((await order(r)).status, 201, 'room again once staff deal with one');
+  });
+
+  it('gives a table a new link, so an old photo of the QR code stops working', async () => {
+    const r = await setup('newlink@example.test');
+    const fresh = await api('POST', `/api/admin/tables/${r.table.id}/link`, { token: r.token });
+    assert.equal(fresh.status, 200);
+    assert.notEqual(fresh.body.data.qr_url, r.table.qr_url);
+    assert.equal((await api('GET', `/api/public/t/${r.qr}`)).status, 404);
+    assert.equal((await api('GET', `/api/public/t/${fresh.body.data.qr_url.split('/').pop()}`)).status, 200);
+    const other = await setup('newlink.other@example.test');
+    assert.equal((await api('POST', `/api/admin/tables/${r.table.id}/link`, { token: other.token })).status, 404);
+  });
+
+  it('asks for the password before payment keys change, puts it on record and tells the restaurant', async () => {
+    await reset();
+    const r = await setup('keys@example.test');
+    const put = (body) => api('PUT', '/api/admin/payment-settings', { token: r.token, body });
+    const keys = { razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' };
+    const none = await put({ ...keys, current_password: undefined });
+    assert.equal(none.status, 400);
+    assert.deepEqual([none.body.error.code, none.body.error.details[0].field], ['PASSWORD_REQUIRED', 'current_password']);
+    assert.equal((await put({ ...keys, current_password: 'not-my-password' })).body.error.code, 'WRONG_PASSWORD');
+    assert.equal((await api('GET', '/api/admin/payment-settings', { token: r.token })).body.data.razorpay_key_id, null);
+    const mails = sentMail.length;
+    assert.equal((await put({ ...keys, current_password: PASSWORD })).status, 200);
+    assert.equal(sentMail.length, mails + 1);
+    assert.match(sentMail.at(-1).subject, /payment settings changed/);
+    assert.ok(!sentMail.at(-1).text.includes('secret-value-123'));
+    const { rows } = await db.query(`SELECT detail FROM audit_events WHERE event = 'settings.payment_changed' AND actor = 'keys@example.test'`);
+    assert.deepEqual(rows.at(-1).detail.changed, ['razorpay_key_id', 'razorpay_key_secret']);
+    assert.ok(!JSON.stringify(rows).includes('secret-value-123'));
+    // Switching a way of paying on or off, or saving the same key id again, needs no password.
+    assert.equal((await put({ razorpay_enabled: true, razorpay_key_id: keys.razorpay_key_id, current_password: undefined })).status, 200);
+    for (const body of [{ razorpay_webhook_secret: 'new-hook-secret-1' }, { phonepe_client_secret: 'another-secret-1' }, { razorpay_key_id: 'rzp_test_someoneelse1' }]) {
+      assert.equal((await put({ ...body, current_password: undefined })).body.error.code, 'PASSWORD_REQUIRED', Object.keys(body)[0]);
+    }
+  });
+
+  it('limits password tries on the payment form', async () => {
+    await reset();
+    const r = await setup('keys.guess@example.test');
+    const guess = () =>
+      fetch(`${at()}/api/admin/payment-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${r.token}` },
+        body: JSON.stringify({ razorpay_key_secret: 'secret-value-123', current_password: 'not-my-password' }),
+      }).then((res) => res.status);
+    for (let i = 0; i < 10; i += 1) assert.equal(await guess(), 400);
+    assert.equal(await guess(), 429);
+  });
+
+  it('opens no new payment for a suspended restaurant, on an order it already had', async () => {
+    const r = await setup('shut@example.test');
+    await api('PUT', '/api/admin/payment-settings', { token: r.token, body: { razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: 'secret-value-123' } });
+    const placed = (await api('POST', `/api/public/t/${r.qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } })).body.data;
+    await db.query(`UPDATE vendors SET suspended_at = now() WHERE email = 'shut@example.test'`);
+    for (const path of ['razorpay', 'razorpay-qr']) assert.equal((await api('POST', `/api/public/orders/${placed.token}/${path}`)).body.error.code, 'TABLE_UNAVAILABLE', path);
+    await db.query(`UPDATE vendors SET suspended_at = NULL WHERE email = 'shut@example.test'`);
+  });
+});
+
+describe('server configuration: the database, the log, local runs and the web apps\' headers', () => {
+  it('refuses a live database it cannot verify, and says how to fix it', async () => {
+    const { buildPgConfig } = await import('../src/db.js');
+    const remote = 'postgres://user:pw@db.example.test:5432/app?sslmode=require';
+    const saved = { isProd: config.isProd, ca: config.databaseCa, path: config.databaseCaPath, allow: config.allowUnverifiedDbTls };
+    Object.assign(config, { isProd: true, databaseCa: '', databaseCaPath: '', allowUnverifiedDbTls: false });
+    try {
+      assert.throws(() => buildPgConfig(remote), /DATABASE_CA_CERT/);
+      assert.throws(() => buildPgConfig('postgres://user:pw@db.example.test/app?sslmode=disable'), /DATABASE_CA_CERT/);
+      config.databaseCa = '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----';
+      const secure = buildPgConfig(remote);
+      assert.equal(secure.ssl.rejectUnauthorized, true);
+      assert.ok(secure.ssl.ca.includes('\nabc\n'));
+      Object.assign(config, { databaseCa: '', allowUnverifiedDbTls: true });
+      assert.equal(buildPgConfig(remote).ssl.rejectUnauthorized, false, 'the explicit emergency switch');
+      config.allowUnverifiedDbTls = false;
+      assert.equal(buildPgConfig('postgres://user:pw@localhost/app').ssl, false, 'a database on the same machine');
+    } finally {
+      Object.assign(config, { isProd: saved.isProd, databaseCa: saved.ca, databaseCaPath: saved.path, allowUnverifiedDbTls: saved.allow });
+    }
+  });
+
+  it('keeps a local run away from a remote database unless that is asked for', async () => {
+    const { refuseRemoteDatabase } = await import('../src/lib/guard.js');
+    const remote = { databaseUrl: 'postgres://u:p@db.example.test/app', isProd: false };
+    assert.throws(() => refuseRemoteDatabase(remote, {}), /remote database at db\.example\.test/);
+    assert.doesNotThrow(() => refuseRemoteDatabase(remote, { ALLOW_REMOTE_DB: 'true' }));
+    assert.doesNotThrow(() => refuseRemoteDatabase({ ...remote, isProd: true }, {}));
+    assert.doesNotThrow(() => refuseRemoteDatabase({ databaseUrl: '', isProd: false }, {}));
+    assert.doesNotThrow(() => refuseRemoteDatabase({ databaseUrl: 'postgres://u:p@127.0.0.1/app', isProd: false }, {}));
+  });
+
+  it('keeps tokens out of the error log, and calls an unstorable character the sender\'s mistake', async () => {
+    const { redactUrl } = await import('../src/lib/errors.js');
+    const hidden = redactUrl('/api/public/orders/1ff022bd-9e47-4dc4-803d-3eb62c2986ce/pay?token=abcDEF123&x=1 /api/webhooks/razorpay/eaab53e54d224df5b5da2e69166f4b9f');
+    assert.equal(hidden, '/api/public/orders/:token/pay?token=:token&x=1 /api/webhooks/razorpay/:token');
+    const token = (await signupAccount({ name: 'Nul Cafe', email: 'nul@example.test', password: 'a-long-enough-password' })).body.data.token;
+    const lines = [];
+    const real = console.error;
+    console.error = (...a) => lines.push(a.join(' '));
+    try {
+      const r = await api('POST', '/api/admin/categories', { token, body: { name: 'a\u0000b' } });
+      assert.equal(r.status, 400);
+    } finally {
+      console.error = real;
+    }
+    assert.deepEqual(lines, []);
+  });
+
+  it('sends a content security policy with both web apps', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const headersOf = async (path) => {
+      const doc = JSON.parse(await readFile(new URL(`../../${path}`, import.meta.url), 'utf8'));
+      return Object.fromEntries(doc.headers.find((h) => h.source === '/(.*)').headers.map((h) => [h.key, h.value]));
+    };
+    const admin = await headersOf('admin/vercel.json');
+    assert.match(admin['Content-Security-Policy'], /default-src 'self'; script-src 'self';/);
+    assert.match(admin['Content-Security-Policy'], /connect-src 'self' https:\/\/mezmitra-api\.onrender\.com;/);
+    assert.match(admin['Content-Security-Policy'], /frame-ancestors 'none'/);
+    const diner = await headersOf('customer/vercel.json');
+    assert.match(diner['Content-Security-Policy'], /object-src 'none'; base-uri 'self'; frame-ancestors 'none'/);
+    assert.match(diner['Content-Security-Policy-Report-Only'], /script-src 'self' https:\/\/\*\.razorpay\.com;/);
+    for (const h of [admin, diner, await headersOf('vercel.json')]) {
+      assert.ok(h['Permissions-Policy'] && h['X-Content-Type-Options'] && h['X-Frame-Options'] && h['Referrer-Policy']);
+    }
+  });
+});
+
+describe('a refunded order never turns paid again, whatever arrives later', () => {
+  const PASSWORD = 'a-long-enough-password';
+  const RZ_SECRET = 'secret-value-123';
+  const HOOK = 'late-hook-secret';
+  const ppOrders = new Map();
+  const quiet = { info: () => {}, warn: () => {} };
+  let phonepe;
+  let savedBase;
+
+  const setup = async (email, settings) => {
+    const token = (await signupAccount({ name: 'Late Cafe', email, password: PASSWORD })).body.data.token;
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data.id;
+    const qr = (await api('POST', '/api/admin/tables', { token, body: { number: 'L1', capacity: 2 } })).body.data.qr_url.split('/').pop();
+    const saved = await api('PUT', '/api/admin/payment-settings', { token, body: settings });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    return { token, itemId, qr, hookKey: saved.body.data.webhook_url_razorpay.split('/').pop() };
+  };
+  const place = async (r) => (await api('POST', `/api/public/t/${r.qr}/orders`, { body: { pay_pref: 'online', items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } })).body.data;
+  const idOf = async (order) => (await db.query(`SELECT id FROM orders WHERE public_token = $1`, [order.token])).rows[0].id;
+  const rows = async (order) => (await db.query(`SELECT * FROM payments WHERE order_id = $1 ORDER BY id`, [await idOf(order)])).rows;
+  const view = async (order) => (await api('GET', `/api/public/orders/${order.token}`)).body.data;
+  const refund = async (r, order) => assert.equal((await api('POST', `/api/admin/orders/${await idOf(order)}/refund`, { token: r.token })).status, 200);
+  // A served order keeps its state when refunded, so nothing but the payment status protects it.
+  const serve = async (r, order) => assert.equal((await api('PATCH', `/api/admin/orders/${await idOf(order)}/status`, { token: r.token, body: { status: 'completed' } })).status, 200);
+
+  before(async () => {
+    phonepe = await new Promise((resolve) => {
+      const server = http
+        .createServer((req, res) => {
+          let raw = '';
+          req.on('data', (c) => (raw += c));
+          req.on('end', () => {
+            const path = req.url.split('?')[0];
+            const send = (body) => {
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify(body));
+            };
+            if (path === '/v1/oauth/token') return send({ access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+            if (path === '/checkout/v2/pay') {
+              const body = JSON.parse(raw);
+              ppOrders.set(body.merchantOrderId, { amount: body.amount, state: 'PENDING' });
+              return send({ redirectUrl: 'https://phonepe.example/pay' });
+            }
+            if (path === '/payments/v2/refund') return send({ refundId: 'OMR_LATE', state: 'COMPLETED' });
+            const m = path.match(/^\/checkout\/v2\/order\/([^/]+)\/status$/);
+            const found = m && ppOrders.get(decodeURIComponent(m[1]));
+            return send(found ? { state: found.state, amount: found.amount, paymentDetails: [{ state: found.state, transactionId: `TXN_${m[1]}` }] } : {});
+          });
+        })
+        .listen(0, '127.0.0.1', () => resolve(server));
+    });
+    savedBase = config.phonepeApiBase;
+    config.phonepeApiBase = `http://127.0.0.1:${phonepe.address().port}`;
+  });
+  after(async () => {
+    config.phonepeApiBase = savedBase;
+    await new Promise((r) => phonepe.close(r));
+  });
+
+  it('records the money of a second PhonePe page that is reported only after the refund, without reviving the order', async () => {
+    const r = await setup('late.phonepe@example.test', {
+      phonepe_enabled: true,
+      phonepe_client_id: 'LATEMERCHANT',
+      phonepe_client_version: '1',
+      phonepe_client_secret: 'phonepe-client-secret-value',
+      phonepe_webhook_username: 'late-user',
+      phonepe_webhook_password: 'late-password-1',
+    });
+    const order = await place(r);
+    for (let i = 0; i < 2; i += 1) assert.equal((await api('POST', `/api/public/orders/${order.token}/pay/phonepe`)).status, 200);
+    const [first, second] = await rows(order);
+    ppOrders.get(first.provider_order_id).state = 'COMPLETED';
+    await api('POST', `/api/public/orders/${order.token}/pay/phonepe/verify`);
+    await serve(r, order);
+    await refund(r, order);
+
+    ppOrders.get(second.provider_order_id).state = 'COMPLETED';
+    const auth = createHash('sha256').update('late-user:late-password-1').digest('hex');
+    const hook = await api('POST', `/api/webhooks/phonepe/${r.hookKey}`, { body: { event: 'checkout.order.completed', payload: { merchantOrderId: second.provider_order_id } }, headers: { Authorization: auth } });
+    assert.deepEqual([hook.body.data.paid, hook.body.data.extra], [false, true]);
+    await api('POST', `/api/public/orders/${order.token}/pay/phonepe/verify`);
+    await reconcileOnce(db, { log: quiet });
+    const after = await view(order);
+    assert.deepEqual([after.payment_status, after.status, after.second_payment], ['refunded', 'completed', true]);
+    assert.ok((await api('GET', '/api/admin/orders/attention', { token: r.token })).body.data.some((a) => a.kind === 'paid_twice'));
+    const again = await api('POST', `/api/public/orders/${order.token}/pay/phonepe`);
+    assert.equal(again.body.error.code, 'ALREADY_REFUNDED', 'no new payment page for a refunded order');
+  });
+
+  const razorpay = (name) => setup(`${name}@example.test`, { razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: RZ_SECRET, razorpay_webhook_secret: HOOK });
+  const start = async (order) => (await api('POST', `/api/public/orders/${order.token}/razorpay`)).body.data;
+  const reported = (order, started, id) =>
+    api('POST', `/api/public/orders/${order.token}/razorpay/verify`, {
+      body: { razorpay_order_id: started.razorpay_order_id, razorpay_payment_id: id, razorpay_signature: createHmac('sha256', RZ_SECRET).update(`${started.razorpay_order_id}|${id}`).digest('hex') },
+    });
+  const hooked = (r, started, id, amount = started.amount_paise) => {
+    const raw = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: { id, order_id: started.razorpay_order_id, amount, status: 'captured' } } } });
+    return api('POST', `/api/webhooks/razorpay/${r.hookKey}`, { raw, headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': createHmac('sha256', HOOK).update(raw).digest('hex') } });
+  };
+  const paidByRazorpay = async (order, id) => {
+    const started = await start(order);
+    rzpPayments.set(id, { status: 'captured', amount: started.amount_paise, order_id: started.razorpay_order_id });
+    assert.equal((await reported(order, started, id)).body.data.payment_status, 'paid');
+    return started;
+  };
+
+  it('records a refund made in the Razorpay dashboard when staff press Refund', async () => {
+    const r = await razorpay('dashboard.refund');
+    const order = await place(r);
+    const started = await paidByRazorpay(order, 'pay_DASHB00001');
+    rzpTaken.set('pay_DASHB00001', [{ id: 'rfnd_DASHB1', amount: started.amount_paise, status: 'processed' }]);
+    rzpRefundPlans.set('pay_DASHB00001', { answer: 400, taken: false });
+    await refund(r, order);
+    assert.deepEqual((await rows(order)).map((p) => [p.status, p.refund_state, p.refund_id]), [['refunded', 'processed', 'rfnd_DASHB1']]);
+  });
+
+  it('takes a payment that includes the fee the diner paid, and never one that is short', async () => {
+    const r = await razorpay('fee.bearer');
+    const short = await place(r);
+    assert.equal((await hooked(r, await start(short), 'pay_SHORT00001', 3999)).body.data.mismatch, true);
+    const order = await place(r);
+    assert.equal((await hooked(r, await start(order), 'pay_WITHFEE001', 4094)).body.data.paid, true);
+    assert.equal((await view(order)).payment_status, 'paid');
+  });
+
+  it('keeps a second captured payment on a Razorpay order that was counted already', async () => {
+    const r = await razorpay('second.capture');
+    const order = await place(r);
+    const started = await paidByRazorpay(order, 'pay_FIRSTCAP01');
+    assert.equal((await hooked(r, started, 'pay_FIRSTCAP01')).body.data.already, true);
+    assert.equal((await hooked(r, started, 'pay_SECONDCAP1')).body.data.extra, true);
+    assert.equal((await hooked(r, started, 'pay_SECONDCAP1')).body.data.already, true);
+    assert.deepEqual((await rows(order)).map((p) => [p.provider_payment_id, p.is_extra]), [['pay_FIRSTCAP01', false], ['pay_SECONDCAP1', true]]);
+  });
+
+  it('keeps both payments when two notices of different captures arrive together', async () => {
+    const r = await razorpay('twin.captures');
+    const order = await place(r);
+    const started = await start(order);
+    const real = db.query;
+    // The other notice counts the attempt between this one's reading and writing.
+    db.query = async (sql, params) => {
+      if (/provider_payment_id = \$1$/.test(sql) && params[0] === 'pay_TWINSECOND') {
+        db.query = real;
+        await hooked(r, started, 'pay_TWINFIRST1');
+      }
+      return real(sql, params);
+    };
+    try {
+      assert.equal((await hooked(r, started, 'pay_TWINSECOND')).body.data.extra, true);
+    } finally {
+      db.query = real;
+    }
+    assert.deepEqual((await rows(order)).map((p) => [p.provider_payment_id, p.is_extra]), [['pay_TWINFIRST1', false], ['pay_TWINSECOND', true]]);
+  });
+
+  it('never asks for money twice: the checkout never gets a QR id, and a paid QR is found before anything new', async () => {
+    const r = await razorpay('qr.then.checkout');
+    const order = await place(r);
+    const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
+    assert.match((await start(order)).razorpay_order_id, /^order_/);
+    qrCodes.get(qr.qr_id).payments.push({ id: 'pay_QRUNSEEN01', status: 'captured', amount: 4000 });
+    qrCodes.get(qr.qr_id).status = 'closed';
+    for (const path of ['razorpay-qr', 'razorpay']) assert.equal((await api('POST', `/api/public/orders/${order.token}/${path}`)).body.error.code, 'ALREADY_PAID', path);
+    assert.equal((await view(order)).payment_status, 'paid');
+  });
+
+  it('records no cash for a bill that has changed since staff opened it', async () => {
+    const r = await razorpay('stale.bill');
+    const one = await place(r);
+    const started = await start(one);
+    const two = (await api('POST', `/api/public/t/${r.qr}/orders`, { body: { items: [{ item_id: r.itemId, quantity: 1, option_ids: [] }] } })).body.data;
+    const table = (await api('GET', '/api/admin/tables', { token: r.token })).body.data[0];
+    const shown = (await api('GET', `/api/admin/tables/${table.id}/bill`, { token: r.token })).body.data.orders.map((o) => o.id);
+    await hooked(r, started, 'pay_MIDBILL001'); // paid online while staff are looking at the bill
+    const settle = (order_ids) => api('POST', `/api/admin/tables/${table.id}/settle`, { token: r.token, body: { method: 'cash', order_ids } });
+    const stale = await settle(shown);
+    assert.deepEqual([stale.status, stale.body.error.code], [409, 'BILL_CHANGED']);
+    assert.equal((await view(two)).payment_status, 'unpaid');
+    const fresh = await settle([await idOf(two)]);
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+  });
+
+  it('records no cash on a refunded order, and does not report it as waiting for money', async () => {
+    const r = await razorpay('refunded.cash');
+    const order = await place(r);
+    await paidByRazorpay(order, 'pay_REFCASH001');
+    await serve(r, order);
+    await refund(r, order);
+    const cash = await api('POST', `/api/admin/orders/${await idOf(order)}/cash-payment`, { token: r.token });
+    assert.deepEqual([cash.status, cash.body.error.code], [409, 'ALREADY_REFUNDED']);
+    assert.equal((await api('GET', '/api/admin/reports/summary', { token: r.token })).body.data.placed.unpaid, 0);
+  });
+
+  it('does the same for Razorpay: a held payment is not taken and a captured one is flagged', async () => {
+    const r = await setup('late.razorpay@example.test', { razorpay_enabled: true, razorpay_key_id: 'rzp_test_abcdef123456', razorpay_key_secret: RZ_SECRET, razorpay_webhook_secret: HOOK });
+    const order = await place(r);
+    const start = (await api('POST', `/api/public/orders/${order.token}/razorpay`)).body.data;
+    const qr = (await api('POST', `/api/public/orders/${order.token}/razorpay-qr`)).body.data;
+    qrCodes.get(qr.qr_id).payments.push({ id: 'pay_LATEQR001', status: 'captured', amount: start.amount_paise });
+    await api('POST', `/api/public/orders/${order.token}/razorpay-qr/verify`);
+    await serve(r, order);
+    await refund(r, order);
+
+    rzpPayments.set('pay_LATEHELD01', { status: 'authorized', amount: start.amount_paise, order_id: start.razorpay_order_id });
+    const signature = createHmac('sha256', RZ_SECRET).update(`${start.razorpay_order_id}|pay_LATEHELD01`).digest('hex');
+    const held = await api('POST', `/api/public/orders/${order.token}/razorpay/verify`, { body: { razorpay_order_id: start.razorpay_order_id, razorpay_payment_id: 'pay_LATEHELD01', razorpay_signature: signature } });
+    assert.equal(held.body.error.code, 'PAYMENT_NOT_TAKEN');
+    assert.equal(razorpayCalls.filter((c) => c.url.endsWith('/payments/pay_LATEHELD01/capture')).length, 0);
+
+    const raw = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: { id: 'pay_LATECAP001', order_id: start.razorpay_order_id, amount: start.amount_paise, status: 'captured' } } } });
+    const hook = await api('POST', `/api/webhooks/razorpay/${r.hookKey}`, { raw, headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': createHmac('sha256', HOOK).update(raw).digest('hex') } });
+    assert.deepEqual([hook.body.data.paid, hook.body.data.extra], [false, true]);
+    assert.equal((await view(order)).payment_status, 'refunded');
+    for (const path of ['razorpay', 'razorpay-qr']) assert.equal((await api('POST', `/api/public/orders/${order.token}/${path}`)).body.error.code, 'ALREADY_REFUNDED', path);
   });
 });

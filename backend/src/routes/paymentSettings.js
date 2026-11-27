@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { record } from '../lib/audit.js';
 import { HttpError, conflict, parse } from '../lib/errors.js';
 import { decryptSecret, encryptSecret } from '../lib/crypto.js';
 import { GATEWAYS } from '../lib/gateways.js';
+import { paymentKeysChangedEmail } from '../lib/mailer.js';
 import { CLIENT_ID_RE, CLIENT_VERSION_RE, phonepeWebhookAuth, pingPhonepe } from '../lib/phonepe.js';
+import { checkOwnPassword } from '../lib/passwords.js';
+import { clientIp } from '../lib/rateLimit.js';
 import { isUsableKeyId, pingRazorpay, razorpayReady } from '../lib/razorpay.js';
 
 const KEY_ID = /^rzp_(test|live)_[A-Za-z0-9]{6,40}$/;
@@ -29,7 +33,22 @@ const putSchema = z.object({
   razorpay_webhook_secret: z.string().trim().min(8, 'Use at least 8 characters').max(100).optional(),
   phonepe_webhook_username: z.string().trim().min(4, 'Use at least 4 characters').max(80).optional(),
   phonepe_webhook_password: z.string().trim().min(8, 'Use at least 8 characters').max(100).optional(),
+  // Needed to change any key or secret: whoever decides where the money goes must know the password, not just hold a session.
+  current_password: z.string().min(1).max(200).optional(),
 });
+
+// The fields that decide which account receives the money, or who can say that money arrived. `saved` is the column holding the
+// current value when it can be compared (secrets are write-only, so any value sent counts as a change).
+const PROTECTED = [
+  ['razorpay_key_id', 'razorpay_key_id'],
+  ['razorpay_key_secret'],
+  ['phonepe_client_id', 'phonepe_client_id'],
+  ['phonepe_client_version', 'phonepe_client_version'],
+  ['phonepe_client_secret'],
+  ['razorpay_webhook_secret'],
+  ['phonepe_webhook_username'],
+  ['phonepe_webhook_password'],
+];
 
 const out = (s, apiBase = '') => ({
   // Ways of paying the product offers right now; the admin shows only these.
@@ -63,15 +82,28 @@ async function loadSettings(q, vendorId) {
   return rows[0];
 }
 
-export function paymentSettingsRouter(db) {
+export function paymentSettingsRouter(db, { limits, mailer }) {
   const router = Router();
+  // Password tries on this form are limited like password changes.
+  const limitPasswordTries = (req, res, next) => (req.body?.current_password ? limits.accountLimiter(req, res, next) : next());
 
   router.get('/', async (req, res) => {
     res.json({ data: out(await loadSettings(db, req.vendorId), apiBaseOf(req)) });
   });
 
-  router.put('/', async (req, res) => {
+  router.put('/', limitPasswordTries, async (req, res) => {
     const body = parse(putSchema, req.body);
+    const before = await loadSettings(db, req.vendorId);
+    const changed = PROTECTED.filter(([field, saved]) => body[field] !== undefined && (!saved || body[field] !== before[saved])).map(([field]) => field);
+    let owner = null;
+    if (changed.length > 0) {
+      owner = (await db.query(`SELECT id, name, email, password_hash FROM vendors WHERE id = $1`, [req.vendorId])).rows[0];
+      const refuse = (code, message) => {
+        throw new HttpError(400, code, message, [{ field: 'current_password', message }]);
+      };
+      if (!body.current_password) refuse('PASSWORD_REQUIRED', 'Enter your password to change payment keys.');
+      if (!(await checkOwnPassword(db, { guards: limits.guards, vendor: owner, session: req.sessionKey, password: body.current_password }))) refuse('WRONG_PASSWORD', 'Your password is not right.');
+    }
     const saved = await db.tx(async (t) => {
       const current = await loadSettings(t, req.vendorId);
       const keyId = body.razorpay_key_id ?? current.razorpay_key_id;
@@ -127,8 +159,19 @@ export function paymentSettingsRouter(db) {
           WHERE vendor_id = $1 RETURNING *`,
         [req.vendorId, cashEnabled, razorpayEnabled, keyId, secretEnc, ppEnabled, ppClientId, ppVersion, ppSecretEnc, rzWebhookEnc, ppWebhookEnc],
       );
+      // Which settings changed is put on record; their values never are.
+      const switches = ['cash_enabled', 'razorpay_enabled', 'phonepe_enabled'].filter((f) => rows[0][f] !== current[f]);
+      if (changed.length + switches.length > 0) {
+        await record(t, 'settings.payment_changed', { vendorId: req.vendorId, actor: req.vendorEmail, ip: clientIp(req), detail: { changed: [...changed, ...switches] } });
+      }
       return rows[0];
     });
+    if (changed.length > 0) {
+      // Not awaited: saving must not depend on the mail server.
+      Promise.resolve(mailer.send(paymentKeysChangedEmail({ to: owner.email, name: owner.name }))).catch((err) =>
+        console.error('[mail] could not send the payment settings notice:', err.message),
+      );
+    }
     res.json({ data: out(saved, apiBaseOf(req)) });
   });
 

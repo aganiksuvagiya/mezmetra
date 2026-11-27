@@ -1,4 +1,6 @@
+import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 import { DEMO, MENU, TEA_POST, TEA_POST_MENU } from './seed.js';
 import { toPaise } from './lib/money.js';
 
@@ -53,6 +55,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const args = process.argv.slice(2);
   const arg = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
   const email = String(arg('email', TEA_POST.email)).toLowerCase();
+  refuseRemoteDatabase(config);
   const db = await createDb();
   try {
     const vendor = (await db.query(`SELECT id, name FROM vendors WHERE lower(email) = $1`, [email])).rows[0];

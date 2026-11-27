@@ -60,7 +60,7 @@ function SetPasswordDialog({ restaurant, onClose, onDone }) {
     <Modal
       size="sm"
       title={`Set a new password for ${restaurant.name}`}
-      description="Everyone signed in as this restaurant is signed out. Tell them the new password yourself, and ask them to change it in Settings."
+      description="Everyone signed in as this restaurant is signed out, and its two-step sign-in is switched off. Tell them the new password yourself, and ask them to change it in Settings."
       onClose={onClose}
       dismissible={!busy}
       onSubmit={submit}

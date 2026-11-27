@@ -79,7 +79,7 @@ export function reportsRouter(db) {
     const paid = orders.filter((o) => o.paid_in_range);
     const placed = orders.filter((o) => o.placed_in_range);
     const sum = (list, key) => Math.round(list.reduce((n, o) => n + Math.round(o[key] * 100), 0)) / 100;
-    const unpaid = placed.filter((o) => o.payment_status !== 'paid' && o.status !== 'cancelled');
+    const unpaid = placed.filter((o) => o.payment_status === 'unpaid' && o.status !== 'cancelled');
     const summary = {
       sales: {
         orders: paid.length,

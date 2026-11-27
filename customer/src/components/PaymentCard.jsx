@@ -51,6 +51,7 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
   const toast = useToast();
   const [phase, setPhase] = useState('idle'); // idle | starting | checkout | verifying | confirm_failed | pending
   const [message, setMessage] = useState(null); // { tone, text }
+  const [released, setReleased] = useState(null); // the server did not take a held payment: its sentence, shown whatever the order's state
   const busy = useRef(false);
   const [qr, setQr] = useState(null); // { image_url } while the "scan to pay" QR is on screen
   const [qrLoading, setQrLoading] = useState(false);
@@ -92,9 +93,10 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
   }, [qr, unpaid, cancelled, order.token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // PhonePe: when the diner comes back from its page (or from a UPI app, or reopens a closed tab), ask the server whether the money
-  // arrived. The server asks PhonePe, so this can never mark an order paid by itself.
+  // arrived. The server asks PhonePe, so this can never mark an order paid by itself. Also for an order cancelled meanwhile: money
+  // paid for it has to be found, so that it can be given back.
   useEffect(() => {
-    if (!(redirectGateway && unpaid && !cancelled)) return undefined;
+    if (!(redirectGateway && unpaid)) return undefined;
     let stopped = false;
     const recheck = async () => {
       if (document.visibilityState !== 'visible' || busy.current || !payAttempted(order.token)) return;
@@ -103,8 +105,8 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
         if (!stopped && updated.payment_status === 'paid') {
           removeItem(payKey(order.token));
           onPaid(updated);
-          toast.success('Payment received. Thank you!');
-        } else if (!stopped) {
+          if (!cancelled) toast.success('Payment received. Thank you!');
+        } else if (!stopped && !cancelled) {
           // Back from PhonePe's page without a confirmed payment: say so, and let the diner check again or pay again.
           setPhase('pending');
           setMessage({
@@ -143,11 +145,25 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
             <CashIcon className="size-6" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-extrabold text-ink">Refunded</h2>
-            <p className="text-sm text-ink-soft">Your payment was returned to your account. It can take a few days to show up.</p>
+            <h2 className="text-lg font-extrabold text-ink">{order.refund_pending ? 'Refund on its way' : 'Refunded'}</h2>
+            <p className="text-sm text-ink-soft">
+              {order.refund_pending
+                ? 'The restaurant has started your refund. It can take a few days to reach your account.'
+                : 'Your payment was returned to your account. It can take a few days to show up.'}
+            </p>
           </div>
           <p className="text-lg font-extrabold tabular-nums text-ink">{formatMoney(order.total)}</p>
         </div>
+        {order.second_payment && (
+          <Alert tone="info" className="mt-3">
+            Another payment for this order also reached the restaurant. Please ask a member of staff to return it.
+          </Alert>
+        )}
+        {released && (
+          <Alert tone="info" className="mt-3">
+            {released}
+          </Alert>
+        )}
       </Card>
     );
   }
@@ -168,6 +184,16 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
           </div>
           <p className="text-lg font-extrabold tabular-nums text-ink">{formatMoney(order.total)}</p>
         </div>
+        {order.second_payment && (
+          <Alert tone="info" className="mt-3">
+            A second payment for this order also reached the restaurant. Please ask a member of staff to return it.
+          </Alert>
+        )}
+        {released && (
+          <Alert tone="info" className="mt-3">
+            {released}
+          </Alert>
+        )}
       </Card>
     );
   }
@@ -181,9 +207,14 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
           </span>
           <div>
             <h2 className="text-lg font-extrabold text-ink">Nothing to pay</h2>
-            <p className="text-sm text-ink-soft">This order was cancelled, so you have not been charged.</p>
+            <p className="text-sm text-ink-soft">This order was cancelled. If money left your account for it, please show this screen to a member of staff.</p>
           </div>
         </div>
+        {released && (
+          <Alert tone="info" className="mt-3">
+            {released}
+          </Alert>
+        )}
       </Card>
     );
   }
@@ -207,6 +238,7 @@ export default function PaymentCard({ order, onPaid, onRefresh }) {
           unverified.current = null;
           busy.current = false;
           setPhase('idle');
+          if (err.code === 'PAYMENT_NOT_TAKEN') setReleased(err.message);
           setMessage({ tone: 'error', text: errorMessage(err, 'We could not confirm your payment. If money was deducted, please show this screen to a member of staff.') });
           onRefresh();
           return;

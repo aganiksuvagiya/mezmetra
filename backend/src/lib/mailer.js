@@ -53,3 +53,17 @@ export function passwordResetEmail({ to, name, link, minutes }) {
 <p style="font-size:13px;color:#64748b">If you did not ask for this, ignore this email: your password stays as it is.</p></div>`;
   return { to, subject: 'Reset your MezMitra password', text, html };
 }
+
+/** Tells the restaurant that somebody changed where its money goes. */
+export function paymentKeysChangedEmail({ to, name }) {
+  const text = [
+    `Hi ${name},`,
+    '',
+    'The payment keys or webhook settings of your MezMitra account were just changed.',
+    'If this was you, there is nothing to do. If it was not, change your password at once, check Payments in the admin, and tell us.',
+    '',
+    'MezMitra',
+  ].join('\n');
+  const html = `<div style="font-family:system-ui,sans-serif;max-width:480px;line-height:1.5;color:#1e293b"><p>Hi ${escapeHtml(name)},</p><p>The payment keys or webhook settings of your MezMitra account were just changed.</p><p>If this was you, there is nothing to do. If it was not, change your password at once, check Payments in the admin, and tell us.</p></div>`;
+  return { to, subject: 'Your MezMitra payment settings changed', text, html };
+}

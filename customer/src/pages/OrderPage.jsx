@@ -28,6 +28,17 @@ const HEADLINE = {
   completed: ['Order completed', 'Enjoy your meal!'],
 };
 
+/** What a cancelled order says about the money: a payment can still arrive for it, and then "not charged" would be untrue. */
+function cancelledText(order) {
+  if (order.payment_status === 'paid') return 'This order was cancelled, but your payment reached the restaurant. Please ask a member of staff to return it.';
+  if (order.payment_status === 'refunded') {
+    return order.refund_pending
+      ? 'This order was cancelled and the restaurant has started your refund.'
+      : 'This order was cancelled and your payment was returned.';
+  }
+  return 'This order was cancelled, so there is nothing to pay. If you think this is a mistake, or money left your account for it, please speak to a member of staff.';
+}
+
 export default function OrderPage() {
   const { orderToken } = useParams();
   // Re-mount per order so polling state never leaks between orders.
@@ -152,9 +163,7 @@ function OrderView({ orderToken }) {
               </span>
               <div aria-live="polite">
                 <h2 className="text-lg font-extrabold text-rose-800">Order cancelled</h2>
-                <p className="text-sm text-ink-soft">
-                  This order was cancelled and you have not been charged. If you think this is a mistake, please speak to a member of staff.
-                </p>
+                <p className="text-sm text-ink-soft">{cancelledText(order)}</p>
               </div>
             </div>
           </section>

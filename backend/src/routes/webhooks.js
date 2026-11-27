@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { decryptSecret, safeEqual } from '../lib/crypto.js';
 import { HttpError, notFound } from '../lib/errors.js';
 import { GATEWAYS } from '../lib/gateways.js';
-import { markAttemptPaid } from '../lib/onlinePayments.js';
-import { isUsableKeyId, verifyWebhookSignature } from '../lib/razorpay.js';
+import { markAttemptPaid, recordSecondCapture } from '../lib/onlinePayments.js';
+import { coversAmount, isUsableKeyId, verifyWebhookSignature } from '../lib/razorpay.js';
 
 // Payment webhooks: the gateway calls our server the moment a payment succeeds, so an order turns "Paid" even when the diner has closed
 // the browser. Each restaurant has its own gateway account, so each has its own address (/api/webhooks/<gateway>/<webhook_key>) and
@@ -16,6 +16,8 @@ import { isUsableKeyId, verifyWebhookSignature } from '../lib/razorpay.js';
 
 const KEY = /^[a-f0-9]{32}$/;
 const ok = (res, extra = {}) => res.json({ data: { ok: true, ...extra } });
+// What markAttemptPaid did: the order turned paid, or a second payment was recorded on a paid order.
+const recorded = (res, outcome) => ok(res, { paid: outcome === 'paid', ...(outcome === 'extra' && { extra: true }) });
 
 export function webhooksRouter(db) {
   const router = Router();
@@ -39,7 +41,7 @@ export function webhooksRouter(db) {
   /** The payment attempt we opened for this gateway order id, for this restaurant only. Late payments (attempt marked failed) count too. */
   const attemptFor = async (provider, providerOrderId, vendorId) => {
     const { rows } = await db.query(
-      `SELECT p.id, p.order_id, p.amount_paise, p.status
+      `SELECT p.id, p.order_id, p.amount_paise, p.status, p.provider_order_id, p.provider_payment_id
          FROM payments p JOIN orders o ON o.id = p.order_id
         WHERE p.provider = $1 AND p.provider_order_id = $2 AND o.vendor_id = $3
         ORDER BY p.id DESC LIMIT 1`,
@@ -67,16 +69,25 @@ export function webhooksRouter(db) {
 
     const attempt = await attemptFor('razorpay', providerOrderId, s.vendor_id);
     if (!attempt) return ok(res, { ignored: true });
-    if (attempt.status === 'paid') return ok(res, { already: true });
-    if (Number(payment.amount) !== attempt.amount_paise) {
-      // Somebody paid a different amount than the order: not marked paid; staff see it unpaid and look at the Razorpay dashboard.
+    const done = await db.query(`SELECT 1 FROM payments WHERE provider = 'razorpay' AND provider_payment_id = $1`, [payment.id]);
+    if (done.rows[0]) return ok(res, { already: true });
+    const counted = attempt.status === 'paid' || attempt.status === 'refunded';
+    if (counted && !attempt.provider_payment_id) return ok(res, { already: true });
+    if (!coversAmount(payment.amount, attempt.amount_paise)) {
+      // Somebody paid less than the order: not marked paid; staff see it unpaid and look at the Razorpay dashboard.
       console.warn(`[webhook:razorpay] amount mismatch on ${providerOrderId}: got ${payment.amount}, expected ${attempt.amount_paise}`);
       return ok(res, { mismatch: true });
     }
-    const done = await db.query(`SELECT 1 FROM payments WHERE provider = 'razorpay' AND provider_payment_id = $1`, [payment.id]);
-    if (done.rows[0]) return ok(res, { already: true });
-    const changed = await markAttemptPaid(db, { orderId: attempt.order_id, attemptId: attempt.id, paymentId: payment.id, method: 'razorpay' });
-    return ok(res, { paid: changed });
+    // A different payment on an attempt that was counted already is more money from the diner: kept, to be given back.
+    const second = (current) => recordSecondCapture(db, { attempt: current, paymentId: payment.id, amountPaise: Number(payment.amount) });
+    if (counted) return recorded(res, await second(attempt));
+    let outcome = await markAttemptPaid(db, { orderId: attempt.order_id, attemptId: attempt.id, paymentId: payment.id, method: 'razorpay', source: 'webhook' });
+    if (!outcome) {
+      // Counted by someone else between the reading and the writing: if that was another payment, this one is more money.
+      const current = await attemptFor('razorpay', providerOrderId, s.vendor_id);
+      if (current?.provider_payment_id && current.provider_payment_id !== payment.id) outcome = await second(current);
+    }
+    return recorded(res, outcome);
   });
 
   // --- PhonePe: checkout.order.completed / checkout.order.failed ---------------------------------------------------
@@ -96,7 +107,7 @@ export function webhooksRouter(db) {
 
     const attempt = await attemptFor('phonepe', merchantOrderId, s.vendor_id);
     if (!attempt) return ok(res, { ignored: true });
-    if (attempt.status === 'paid') return ok(res, { already: true });
+    if (attempt.status === 'paid' || attempt.status === 'refunded') return ok(res, { already: true });
 
     // The call is only a nudge: ask PhonePe for the truth. (If PhonePe cannot be reached this throws and PhonePe will call again.)
     const result = await GATEWAYS.phonepe.status(GATEWAYS.phonepe.creds(s), merchantOrderId);
@@ -105,8 +116,7 @@ export function webhooksRouter(db) {
       console.warn(`[webhook:phonepe] amount mismatch on ${merchantOrderId}: got ${result.amountPaise}, expected ${attempt.amount_paise}`);
       return ok(res, { mismatch: true });
     }
-    const changed = await markAttemptPaid(db, { orderId: attempt.order_id, attemptId: attempt.id, paymentId: result.paymentId, method: 'phonepe' });
-    return ok(res, { paid: changed });
+    return recorded(res, await markAttemptPaid(db, { orderId: attempt.order_id, attemptId: attempt.id, paymentId: result.paymentId, method: 'phonepe', source: 'webhook' }));
   });
 
   return router;

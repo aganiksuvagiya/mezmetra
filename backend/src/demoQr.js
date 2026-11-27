@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 import { TEA_POST } from './seed.js';
 import { drawCredit } from './lib/credit.js';
 
@@ -17,6 +18,7 @@ const args = process.argv.slice(2);
 const arg = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
 const email = String(arg('email', TEA_POST.email)).toLowerCase();
 
+refuseRemoteDatabase(config);
 const db = await createDb();
 try {
   const vendor = (await db.query(`SELECT id, name, theme_primary FROM vendors WHERE lower(email) = $1`, [email])).rows[0];

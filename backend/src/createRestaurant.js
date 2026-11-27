@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { createDb } from './db.js';
 import { createRestaurantAccount, emailInUse, newRestaurantSchema } from './lib/accounts.js';
+import { passwordProblem } from './lib/passwords.js';
 
 // `NEW_PASSWORD='...' npm run create-restaurant -w backend -- "Restaurant name" owner@example.com`
 //
@@ -23,6 +24,9 @@ if (!parsed.success) {
       "Usage:\n  NEW_PASSWORD='a-long-password' npm run create-restaurant -w backend -- \"Restaurant name\" owner@example.com",
   );
 }
+
+const weak = passwordProblem(parsed.data.password, { email: parsed.data.email });
+if (weak) fail(`NEW_PASSWORD: ${weak}`);
 
 const target = config.databaseUrl ? new URL(config.databaseUrl).host : `the local PGlite database (${config.pgliteDir})`;
 console.log(`Database: ${target}`);

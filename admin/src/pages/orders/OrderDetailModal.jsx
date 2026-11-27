@@ -29,6 +29,57 @@ function Section({ title, children }) {
   );
 }
 
+/** Money that reached an order which had been paid already: shown until staff give it back. */
+function ExtraPayments({ order, fmt, busy, onRefund }) {
+  return (order.extra_payments ?? []).map((p) =>
+    p.status === 'paid' ? (
+      <Alert key={p.id}>
+        <p>
+          <strong>Paid twice.</strong> {fmt.money(p.amount)} by {GATEWAY_NAME[p.method] ?? p.method} arrived after this order had already been paid.
+          {p.refund_state === 'failed' ? ' The last refund did not go through.' : ''}
+          {p.refund_state === 'requested' ? ' A refund was sent but not confirmed yet: we are checking, so don’t give it back another way.' : ' Give it back to the customer.'}
+        </p>
+        <Button variant="secondary" size="sm" className="mt-2" disabled={busy} onClick={() => onRefund(p)}>
+          Refund {fmt.money(p.amount)}
+        </Button>
+      </Alert>
+    ) : (
+      <Alert key={p.id} tone="info">
+        A second payment of {fmt.money(p.amount)} ({GATEWAY_NAME[p.method] ?? p.method}) {p.refund_state === 'pending' ? 'is being given back.' : 'was given back.'}
+      </Alert>
+    ),
+  );
+}
+
+/** What staff have to know about the money of the order itself. */
+function MoneyNotices({ order, fmt }) {
+  const gateway = GATEWAY_NAME[order.payment_method] ?? 'the payment gateway';
+  const paid = order.payment_status === 'paid';
+  return (
+    <>
+      {paid && order.status === 'cancelled' && order.payment_method !== 'cash' && (
+        <Alert>
+          <strong>Cancelled, but paid.</strong> {fmt.money(order.total)} arrived through {gateway} for this cancelled order. Refund it to the customer.
+        </Alert>
+      )}
+      {paid && order.refund_state === 'requested' && (
+        <Alert>
+          <strong>Refund not confirmed yet.</strong> It was sent to {gateway} and may still go through: don&rsquo;t give the money back another way. We keep checking; if
+          nothing changes in a few minutes, press Refund again.
+        </Alert>
+      )}
+      {paid && order.refund_state === 'failed' && (
+        <Alert>
+          <strong>The refund did not go through.</strong> The money is still with you. Try Refund again, or check your {gateway} dashboard.
+        </Alert>
+      )}
+      {order.payment_status === 'refunded' && order.refund_state === 'pending' && (
+        <Alert tone="info">The refund is on its way. {gateway} has not finished it yet.</Alert>
+      )}
+    </>
+  );
+}
+
 function OrderBody({ order, fmt }) {
   return (
     <div className="space-y-6">
@@ -123,6 +174,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
   const [pending, setPending] = useState(null); // which action is running: 'accept' | 'ready' | 'complete' | 'receipt'
   const [actionError, setActionError] = useState(null);
   const [confirm, setConfirm] = useState(null); // 'cancel' | 'cash' | 'refund' | null
+  const [extra, setExtra] = useState(null); // the second payment being given back, while its confirmation is open
 
   const { vendor } = useAuth();
   // Cash is only a payment method while the product offers it.
@@ -139,6 +191,14 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
     onChanged();
     toast.success(message);
   };
+
+  // A refund that is refused or not confirmed still changes what is on record: show it behind the dialog's message.
+  const refundCall = (path) =>
+    api(path, { method: 'POST' }).catch((error) => {
+      q.reload();
+      onChanged();
+      throw error;
+    });
 
   const setStatus = (status, message) =>
     run(async () => {
@@ -279,6 +339,8 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
           <div className="space-y-4">
             {actionError && <Alert>{actionError}</Alert>}
             {q.error && <Alert tone="warning">Couldn&rsquo;t refresh this order ({q.error.message}). What you see may be out of date.</Alert>}
+            <MoneyNotices order={order} fmt={fmt} />
+            <ExtraPayments order={order} fmt={fmt} busy={busy} onRefund={setExtra} />
             <OrderBody order={order} fmt={fmt} />
           </div>
         )}
@@ -313,10 +375,29 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
         cancelLabel="Keep payment"
         onCancel={() => setConfirm(null)}
         onConfirm={async () => {
-          const updated = await api(`/api/admin/orders/${orderId}/refund`, { method: 'POST' });
+          const updated = await refundCall(`/api/admin/orders/${orderId}/refund`);
           setConfirm(null);
           setActionError(null);
           applyUpdate(updated, `Order #${num} refunded (${fmt.money(updated.total)}).`);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(extra)}
+        title="Refund the second payment?"
+        message={
+          extra
+            ? `${fmt.money(extra.amount)} goes back to the customer’s account through ${GATEWAY_NAME[extra.method] ?? 'the payment gateway'} (it can take a few days to show). Order #${num} itself does not change. This can’t be undone.`
+            : ''
+        }
+        confirmLabel="Refund"
+        cancelLabel="Not now"
+        onCancel={() => setExtra(null)}
+        onConfirm={async () => {
+          const updated = await refundCall(`/api/admin/orders/${orderId}/extra-payments/${extra.id}/refund`);
+          setExtra(null);
+          setActionError(null);
+          applyUpdate(updated, `Second payment of ${fmt.money(extra.amount)} refunded.`);
         }}
       />
 

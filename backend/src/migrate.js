@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -35,6 +37,7 @@ export async function migrate(db, { log = console.log } = {}) {
 
 // `npm run migrate`
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  refuseRemoteDatabase(config);
   const db = await createDb();
   try {
     await migrate(db);

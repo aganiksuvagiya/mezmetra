@@ -5,7 +5,7 @@ A ready-made demo restaurant, **Tea Post**: 20 chai, coffee, snack and cold-drin
 
 ## Before the meeting
 
-1. Start everything: `SEED_DEMO=true npm run dev` (creates Tea Post the first time; safe to repeat).
+1. Start everything with the local database (`DATABASE_URL` empty): `SEED_DEMO=true npm run dev` (creates Tea Post the first time; safe to repeat). The demo passwords are public: they do not work on the live server.
 2. Admin login: `http://localhost:5180` with the Tea Post account from the top of `backend/src/seed.js`
    (email `teapost@tableseva.local`, the password is the `TEAPOST_PASSWORD` default there).
 3. To scan with a phone on the same Wi-Fi, set your computer's address in `backend/.env` and restart the API

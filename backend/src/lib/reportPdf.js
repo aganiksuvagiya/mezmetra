@@ -94,7 +94,7 @@ export function writeReportPdf(res, report) {
         when(o.paid_at, vendor.timezone),
         String(o.table_number).slice(0, 8),
         STATUS[o.status] ?? o.status,
-        o.payment_status === 'paid' ? METHOD[o.payment_method] ?? 'Paid' : 'Unpaid',
+        o.payment_status === 'paid' ? METHOD[o.payment_method] ?? 'Paid' : o.payment_status === 'refunded' ? 'Refunded' : 'Unpaid',
         money(o.total),
       ];
       let x = left;

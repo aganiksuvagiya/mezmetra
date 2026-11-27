@@ -1,6 +1,7 @@
-import bcrypt from 'bcryptjs';
 import { config } from './config.js';
 import { createDb } from './db.js';
+import { hashPassword, passwordProblem } from './lib/passwords.js';
+import { clearSecondStep } from './routes/twoFactor.js';
 
 // `NEW_PASSWORD='...' npm run reset-password -w backend -- someone@example.com`
 //
@@ -19,7 +20,8 @@ const fail = (message) => {
 
 if (!email) fail("Which account? Usage:\n  NEW_PASSWORD='a-new-password' npm run reset-password -w backend -- you@example.com");
 if (password.length < 8) fail('NEW_PASSWORD is missing or shorter than 8 characters (the same rule as signup).');
-if (password.length > 200) fail('NEW_PASSWORD is longer than 200 characters.');
+const weak = passwordProblem(password, { email });
+if (weak) fail(`NEW_PASSWORD: ${weak}`);
 
 const target = config.databaseUrl ? new URL(config.databaseUrl).host : `the local PGlite database (${config.pgliteDir})`;
 console.log(`Database: ${target}`);
@@ -36,11 +38,13 @@ try {
     );
   }
   const vendor = found.rows[0];
-  const hash = await bcrypt.hash(password, 10);
+  const hash = await hashPassword(password);
   await db.tx(async (t) => {
     // password_changed_at makes every login token issued before now stop working, like the "Forgot password" flow does.
     await t.query(`UPDATE vendors SET password_hash = $2, password_changed_at = now() WHERE id = $1`, [vendor.id, hash]);
     await t.query(`UPDATE password_resets SET used_at = now() WHERE vendor_id = $1 AND used_at IS NULL`, [vendor.id]);
+    // For a lost phone: DISABLE_2FA=true also switches two-step sign-in off.
+    if (process.env.DISABLE_2FA === 'true') await clearSecondStep(t, vendor.id);
   });
   console.log(`Done. "${vendor.name}" (${vendor.email}) can now sign in with the new password.`);
 } finally {

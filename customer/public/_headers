@@ -5,3 +5,6 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: same-origin
+  Content-Security-Policy: object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://*.razorpay.com
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' https://*.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://mezmitra-api.onrender.com https://*.razorpay.com https://rzp.io; connect-src 'self' https://mezmitra-api.onrender.com https://*.razorpay.com; font-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://*.razorpay.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://*.razorpay.com
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()

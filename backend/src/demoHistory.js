@@ -1,4 +1,6 @@
+import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 import { migrate } from './migrate.js';
 import { TEA_POST } from './seed.js';
 
@@ -245,6 +247,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const busy = args.includes('--busy');
   const days = Math.min(MAX_DAYS, Math.max(1, Number(arg('days', busy ? 14 : 2)) || (busy ? 14 : 2)));
   const orderCount = busy ? null : Math.min(200, Math.max(1, Number(arg('orders', 4)) || 4));
+  refuseRemoteDatabase(config);
   const db = await createDb();
   try {
     await migrate(db, { log: () => {} });

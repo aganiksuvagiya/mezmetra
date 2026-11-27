@@ -21,7 +21,7 @@ const MODES = [
   },
   {
     value: 'required',
-    title: 'Required',
+    title: 'Required (safest)',
     text: 'An order is only taken when the diner types the 4-digit code printed on their table. Stops orders from people who are not at your table.',
     saved: 'Diners must now enter the table code. Print your QR cards again so they show it.',
   },

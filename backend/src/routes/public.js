@@ -5,10 +5,22 @@ import { HttpError, conflict, notFound, parse } from '../lib/errors.js';
 import { decryptSecret } from '../lib/crypto.js';
 import { safeEqual } from '../lib/crypto.js';
 import { attemptId, GATEWAYS, isRedirectGateway } from '../lib/gateways.js';
-import { createRazorpayOrder, createRazorpayQr, fetchRazorpayQr, fetchRazorpayQrPayments, razorpayReady, verifyCheckoutSignature } from '../lib/razorpay.js';
+import {
+  captureRazorpayPayment,
+  coversAmount,
+  createRazorpayOrder,
+  createRazorpayQr,
+  fetchRazorpayPayment,
+  fetchRazorpayQr,
+  fetchRazorpayQrPayments,
+  razorpayReady,
+  verifyCheckoutSignature,
+} from '../lib/razorpay.js';
 import { toRupees } from '../lib/money.js';
-import { itemOut, loadOptionGroups, loadOrderItems, logoUrl, publicOrderOut, themeOut } from '../lib/serialize.js';
-import { PAID_ONLINE_SQL } from '../lib/onlinePayments.js';
+import { itemOut, loadOptionGroups, loadPaymentNotes, loadOrderItems, logoUrl, publicOrderOut, themeOut } from '../lib/serialize.js';
+import { markAttemptPaid } from '../lib/onlinePayments.js';
+import { guardedTry } from '../lib/rateLimit.js';
+import { settleOpenAttempts } from '../lib/reconcile.js';
 
 const QR_TOKEN = /^[a-f0-9]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,7 +55,12 @@ const idempotencyKey = (req) => {
   return key && /^[A-Za-z0-9_-]{8,80}$/.test(key) ? key : null;
 };
 
-export function publicRouter(db, { orderLimiter }) {
+// Wrong table codes allowed within the window: from one address at one table, and at one table from everywhere together.
+const CODE_WINDOW_MS = 15 * 60_000;
+const CODE_TRIES_PER_ADDRESS = 10;
+const CODE_TRIES_PER_TABLE = 40;
+
+export function publicRouter(db, { orderLimiter, payLimiter, checkLimiter, guards }) {
   const router = Router();
 
   const tableByToken = async (q, token) => {
@@ -76,6 +93,25 @@ export function publicRouter(db, { orderLimiter }) {
 
   const paymentOptions = async (q, vendorId) => optionsFrom(await paymentSettings(q, vendorId));
 
+  /** A suspended restaurant takes no new payments either, also not for an order placed before it was suspended. */
+  const assertOpen = async (vendorId) => {
+    const { rows } = await db.query(`SELECT suspended_at FROM vendors WHERE id = $1`, [vendorId]);
+    if (rows[0]?.suspended_at) throw conflict('TABLE_UNAVAILABLE', "This restaurant isn't taking payments right now. Please ask a member of staff.");
+  };
+
+  /**
+   * Counts a typed table code against the limits before it is looked at (so tries made at once cannot slip past). Returns a function
+   * that takes the count back when the code turns out not to have been wrong, or null when nothing was counted.
+   */
+  const countCodeTry = async (req, code) => {
+    if (!guards || !code) return null;
+    const table = await tableByToken(db, req.params.token);
+    if (table.table_code_mode === 'off') return null;
+    const counted = await guardedTry(db, `code:${table.id}`, req, { windowMs: CODE_WINDOW_MS, perAddress: CODE_TRIES_PER_ADDRESS, inAll: CODE_TRIES_PER_TABLE });
+    if (counted.locked) throw new HttpError(429, 'TABLE_CODE_LOCKED', 'Too many wrong table codes. Please ask a member of staff to take your order.');
+    return counted.undo;
+  };
+
   const orderByToken = async (q, token, { lock = false } = {}) => {
     if (!UUID.test(token)) throw notFound('Order');
     const { rows } = await q.query(`SELECT * FROM orders WHERE public_token = $1${lock ? ' FOR UPDATE' : ''}`, [token.toLowerCase()]);
@@ -98,15 +134,20 @@ export function publicRouter(db, { orderLimiter }) {
   };
 
   const publicOrder = async (q, order) => {
-    const [items, vendor, settings] = await Promise.all([
+    const [items, vendor, settings, notes] = await Promise.all([
       loadOrderItems(q, [order.id]),
       q.query(`SELECT id, name, currency, theme_primary, theme_accent, theme_style, has_logo, logo_version FROM vendors WHERE id = $1`, [order.vendor_id]),
       paymentSettings(q, order.vendor_id),
+      loadPaymentNotes(q, [order.id]),
     ]);
     return publicOrderOut(order, items.get(order.id) ?? [], {
       vendor: { name: vendor.rows[0].name, currency: vendor.rows[0].currency, theme: themeOut(vendor.rows[0]), logo_url: logoUrl(vendor.rows[0]) },
       payment_options: optionsFrom(settings),
       can_cancel: (await cancelBlocker(q, order)) === null,
+      // A second payment arrived for this order and the restaurant has not given it back yet.
+      second_payment: (notes.get(order.id)?.extras ?? []).some((p) => p.status === 'paid'),
+      // The money is on its way back, but the gateway has not finished yet.
+      refund_pending: notes.get(order.id)?.refundState === 'pending',
     });
   };
 
@@ -206,32 +247,13 @@ export function publicRouter(db, { orderLimiter }) {
   router.post('/t/:token/orders', orderLimiter, async (req, res) => {
     const body = parse(orderSchema, req.body);
     const key = idempotencyKey(req);
+    const forgiveCode = await countCodeTry(req, body.table_code);
 
     const run = () =>
       db.tx(async (t) => {
         const table = await tableByToken(t, req.params.token);
         if (!table.is_active) {
           throw conflict('TABLE_UNAVAILABLE', 'This table is not taking orders right now. Please ask a member of staff.');
-        }
-
-        // Fake-order guard. "required": only someone who can read the code on the table gets to order. "optional": the code may be left
-        // out, but one that is typed must be right (and then the order is marked as verified). "off": the code is ignored.
-        let codeVerified = false;
-        if (table.table_code_mode !== 'off') {
-          if (body.table_code) {
-            if (!safeEqual(body.table_code, table.code)) {
-              throw new HttpError(
-                403,
-                'TABLE_CODE_WRONG',
-                table.table_code_mode === 'optional'
-                  ? "That table code isn't right. It is printed on the card on your table. Check it, or clear the box to order without it."
-                  : "That table code isn't right. It is printed on the card on your table. Please check it or ask a member of staff.",
-              );
-            }
-            codeVerified = true;
-          } else if (table.table_code_mode === 'required') {
-            throw new HttpError(403, 'TABLE_CODE_REQUIRED', 'Please enter the table code printed on your table.');
-          }
         }
 
         if (key) {
@@ -300,6 +322,36 @@ export function publicRouter(db, { orderLimiter }) {
           });
         }
 
+        // Fake-order guard. "required": only someone who can read the code on the table gets to order. "optional": the code may be left
+        // out, but one that is typed must be right (and then the order is marked as verified). "off": the code is ignored. It is checked
+        // only once the cart is good, so that a bad cart cannot be used to try codes without ordering.
+        let codeVerified = false;
+        if (table.table_code_mode !== 'off') {
+          if (body.table_code) {
+            if (!safeEqual(body.table_code, table.code)) {
+              throw new HttpError(
+                403,
+                'TABLE_CODE_WRONG',
+                table.table_code_mode === 'optional'
+                  ? "That table code isn't right. It is printed on the card on your table. Check it, or clear the box to order without it."
+                  : "That table code isn't right. It is printed on the card on your table. Please check it or ask a member of staff.",
+              );
+            }
+            codeVerified = true;
+          } else if (table.table_code_mode === 'required') {
+            throw new HttpError(403, 'TABLE_CODE_REQUIRED', 'Please enter the table code printed on your table.');
+          }
+        }
+
+        // A table cannot pile up orders nobody has looked at: past the limit, staff have to step in.
+        const waiting = await t.query(
+          `SELECT count(*) AS n FROM orders WHERE table_id = $1 AND status = 'pending' AND payment_status = 'unpaid' AND created_at > now() - interval '3 hours'`,
+          [table.id],
+        );
+        if (Number(waiting.rows[0].n) >= config.maxOpenOrdersPerTable) {
+          throw conflict('TOO_MANY_OPEN_ORDERS', 'This table already has many orders waiting. Please ask a member of staff.');
+        }
+
         const tax = Math.round((subtotal * Number(table.tax_percent)) / 100);
         // The restaurant's own next order number. Updating the vendor row also queues concurrent orders of the same restaurant, so two
         // orders can never get the same number (and a deleted order's number is never handed out again).
@@ -323,12 +375,18 @@ export function publicRouter(db, { orderLimiter }) {
 
     let result;
     try {
-      result = await run();
+      try {
+        result = await run();
+      } catch (err) {
+        // Two identical submissions raced; the unique index let one win. Return the winner.
+        if (err?.code === '23505' && key) result = await run();
+        else throw err;
+      }
     } catch (err) {
-      // Two identical submissions raced; the unique index let one win. Return the winner.
-      if (err?.code === '23505' && key) result = await run();
-      else throw err;
+      if (err?.code !== 'TABLE_CODE_WRONG') await forgiveCode?.();
+      throw err;
     }
+    await forgiveCode?.();
     res.status(result.replay ? 200 : 201).json({ data: await publicOrder(db, result.order) });
   });
 
@@ -353,10 +411,12 @@ export function publicRouter(db, { orderLimiter }) {
   });
 
   // --- Online payment (Razorpay) ------------------------------------------------------------------------------
-  router.post('/orders/:token/razorpay', orderLimiter, async (req, res) => {
+  router.post('/orders/:token/razorpay', payLimiter, async (req, res) => {
     const order = await orderByToken(db, req.params.token);
     if (order.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
     if (order.payment_status === 'paid') throw conflict('ALREADY_PAID', 'This order is already paid.');
+    await assertOpen(order.vendor_id);
+    if (order.payment_status === 'refunded') throw conflict('ALREADY_REFUNDED', 'This order was refunded. Please pay at the counter.');
 
     const { rows } = await db.query(
       `SELECT s.*, v.name AS vendor_name, v.currency FROM vendor_payment_settings s JOIN vendors v ON v.id = s.vendor_id WHERE s.vendor_id = $1`,
@@ -367,10 +427,12 @@ export function publicRouter(db, { orderLimiter }) {
       // The message is written for the diner; the restaurant sees the real reason in Payments settings.
       throw conflict('RAZORPAY_NOT_CONFIGURED', 'Online card payment is not available at this restaurant. Please pay another way.');
     }
+    // A payment the diner already made (on the checkout window or a QR code) must never be asked for twice.
+    if (await settleOpenAttempts(db, order.id)) throw conflict('ALREADY_PAID', 'This order is already paid.');
 
     const reuse = await db.query(
       `SELECT provider_order_id FROM payments
-        WHERE order_id = $1 AND provider = 'razorpay' AND status = 'created' AND amount_paise = $2
+        WHERE order_id = $1 AND provider = 'razorpay' AND status = 'created' AND amount_paise = $2 AND starts_with(provider_order_id, 'order_')
         ORDER BY id DESC LIMIT 1`,
       [order.id, order.total_paise],
     );
@@ -402,49 +464,69 @@ export function publicRouter(db, { orderLimiter }) {
     });
   });
 
-  router.post('/orders/:token/razorpay/verify', orderLimiter, async (req, res) => {
-    const body = parse(verifySchema, req.body);
-    const order = await db.tx(async (t) => {
-      const current = await orderByToken(t, req.params.token, { lock: true });
-      if (current.payment_status === 'paid') return current; // already confirmed (e.g. double submit)
+  const razorpayCreds = (s) => ({ keyId: s.razorpay_key_id, keySecret: decryptSecret(s.razorpay_key_secret_enc) });
 
-      const payment = await t.query(
-        `SELECT p.id, s.razorpay_key_id, s.razorpay_key_secret_enc FROM payments p
-           JOIN vendor_payment_settings s ON s.vendor_id = $3
-          WHERE p.order_id = $1 AND p.provider = 'razorpay' AND p.provider_order_id = $2`,
-        [current.id, body.razorpay_order_id, current.vendor_id],
+  /** Asks Razorpay about the payment the checkout window reported, takes it if it is only authorized, and records it once captured. */
+  const settleCheckout = async (order, attempt, creds, paymentId) => {
+    let payment = await fetchRazorpayPayment({ ...creds, paymentId });
+    if (payment.order_id !== attempt.provider_order_id || !coversAmount(payment.amount, attempt.amount_paise)) {
+      throw new HttpError(400, 'PAYMENT_NOT_FOUND', 'We could not match this payment to your order.');
+    }
+    const wanted = order.status !== 'cancelled' && order.payment_status === 'unpaid';
+    if (payment.status === 'authorized' && wanted) {
+      payment = await captureRazorpayPayment({ ...creds, paymentId, amountPaise: Number(payment.amount), currency: payment.currency }).catch(
+        () => fetchRazorpayPayment({ ...creds, paymentId }), // it may have been taken meanwhile
       );
-      if (!razorpayReady(payment.rows[0])) {
-        throw new HttpError(400, 'PAYMENT_NOT_FOUND', 'We could not match this payment to your order.');
-      }
-      const valid = verifyCheckoutSignature({
-        keySecret: decryptSecret(payment.rows[0].razorpay_key_secret_enc),
-        orderId: body.razorpay_order_id,
-        paymentId: body.razorpay_payment_id,
-        signature: body.razorpay_signature,
-      });
-      if (!valid) throw new HttpError(400, 'PAYMENT_SIGNATURE_INVALID', 'Payment could not be verified. If money was deducted, show this screen to staff.');
+    }
+    if (payment.status === 'captured') {
+      await markAttemptPaid(db, { orderId: order.id, attemptId: attempt.id, paymentId, method: 'razorpay', source: 'checkout' });
+      return;
+    }
+    // Held but deliberately not taken (the order is cancelled or paid another way): Razorpay releases it by itself.
+    if (!wanted) {
+      throw conflict('PAYMENT_NOT_TAKEN', 'This payment was not taken, because the order is cancelled, already paid or refunded. Any amount held by your bank comes back to you.');
+    }
+    // A 5xx on purpose: the order page tries the confirmation again and tells the diner not to pay twice.
+    throw new HttpError(503, 'PAYMENT_NOT_CAPTURED', "Your payment isn't confirmed yet. Please don't pay again; show this screen to a member of staff.");
+  };
 
-      await t.query(`UPDATE payments SET status = 'paid', provider_payment_id = $2, paid_at = now() WHERE id = $1`, [
-        payment.rows[0].id,
-        body.razorpay_payment_id,
-      ]);
-      const { rows } = await t.query(PAID_ONLINE_SQL('razorpay'), [current.id]);
-      return rows[0];
+  // The checkout window answers with a signed reply. The signature proves the reply is Razorpay's for this order; whether the money was
+  // really taken is then asked of Razorpay itself.
+  router.post('/orders/:token/razorpay/verify', checkLimiter, async (req, res) => {
+    const body = parse(verifySchema, req.body);
+    const order = await orderByToken(db, req.params.token);
+    const attempt = (
+      await db.query(
+        `SELECT id, status, provider_order_id, amount_paise FROM payments WHERE order_id = $1 AND provider = 'razorpay' AND provider_order_id = $2`,
+        [order.id, body.razorpay_order_id],
+      )
+    ).rows[0];
+    const s = attempt && (await paymentSettings(db, order.vendor_id));
+    if (!attempt || !razorpayReady(s)) throw new HttpError(400, 'PAYMENT_NOT_FOUND', 'We could not match this payment to your order.');
+    const creds = razorpayCreds(s);
+    const valid = verifyCheckoutSignature({
+      keySecret: creds.keySecret,
+      orderId: body.razorpay_order_id,
+      paymentId: body.razorpay_payment_id,
+      signature: body.razorpay_signature,
     });
-    res.json({ data: await publicOrder(db, order) });
+    if (!valid) throw new HttpError(400, 'PAYMENT_SIGNATURE_INVALID', 'Payment could not be verified. If money was deducted, show this screen to staff.');
+    // An attempt that was counted already (a second submit) or given back (the same reply sent again later) changes nothing.
+    if (attempt.status === 'created' || attempt.status === 'failed') await settleCheckout(order, attempt, creds, body.razorpay_payment_id);
+    res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
   });
 
   // --- Online payment by scanning a QR code (Razorpay UPI QR) -------------------------------------------------
   // A plain UPI QR cannot tell us it was paid. A Razorpay QR is made for this one order (single use, fixed amount), and the server
   // asks Razorpay whether money arrived on it; only then is the order marked paid (and accepted, like any online payment).
   const QR_LIFETIME_HOURS = 5;
-  const razorpayCreds = (s) => ({ keyId: s.razorpay_key_id, keySecret: decryptSecret(s.razorpay_key_secret_enc) });
 
-  router.post('/orders/:token/razorpay-qr', orderLimiter, async (req, res) => {
+  router.post('/orders/:token/razorpay-qr', payLimiter, async (req, res) => {
     const order = await orderByToken(db, req.params.token);
     if (order.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
     if (order.payment_status === 'paid') throw conflict('ALREADY_PAID', 'This order is already paid.');
+    await assertOpen(order.vendor_id);
+    if (order.payment_status === 'refunded') throw conflict('ALREADY_REFUNDED', 'This order was refunded. Please pay at the counter.');
 
     const { rows } = await db.query(
       `SELECT s.*, v.name AS vendor_name FROM vendor_payment_settings s JOIN vendors v ON v.id = s.vendor_id WHERE s.vendor_id = $1`,
@@ -454,6 +536,7 @@ export function publicRouter(db, { orderLimiter }) {
     if (!optionsFrom(s).razorpay) {
       throw conflict('RAZORPAY_NOT_CONFIGURED', 'Online payment is not available at this restaurant. Please pay another way.');
     }
+    if (await settleOpenAttempts(db, order.id)) throw conflict('ALREADY_PAID', 'This order is already paid.');
     const creds = razorpayCreds(s);
 
     // One open QR per order and amount, so reopening the page shows the same code.
@@ -494,7 +577,7 @@ export function publicRouter(db, { orderLimiter }) {
   });
 
   // The customer app calls this every few seconds while the QR is on screen. It sends nothing: the server asks Razorpay.
-  router.post('/orders/:token/razorpay-qr/verify', orderLimiter, async (req, res) => {
+  router.post('/orders/:token/razorpay-qr/verify', checkLimiter, async (req, res) => {
     const order = await orderByToken(db, req.params.token);
     if (order.payment_status !== 'paid') {
       const attempt = (
@@ -508,15 +591,8 @@ export function publicRouter(db, { orderLimiter }) {
       const s = attempt && (await paymentSettings(db, order.vendor_id));
       if (attempt && razorpayReady(s)) {
         const list = await fetchRazorpayQrPayments({ ...razorpayCreds(s), qrId: attempt.provider_order_id });
-        const hit = (list?.items ?? []).find((p) => p.status === 'captured' && Number(p.amount) === attempt.amount_paise);
-        if (hit) {
-          await db.tx(async (t) => {
-            const current = await orderByToken(t, order.public_token, { lock: true });
-            if (current.payment_status === 'paid') return; // a parallel check already recorded it
-            await t.query(`UPDATE payments SET status = 'paid', provider_payment_id = $2, paid_at = now() WHERE id = $1`, [attempt.id, hit.id]);
-            await t.query(PAID_ONLINE_SQL('razorpay'), [current.id]);
-          });
-        }
+        const hit = (list?.items ?? []).find((p) => p.status === 'captured' && coversAmount(p.amount, attempt.amount_paise));
+        if (hit) await markAttemptPaid(db, { orderId: order.id, attemptId: attempt.id, paymentId: hit.id, method: 'razorpay', source: 'qr' });
       }
     }
     res.json({ data: await publicOrder(db, await orderByToken(db, req.params.token)) });
@@ -530,45 +606,59 @@ export function publicRouter(db, { orderLimiter }) {
     return GATEWAYS[name];
   };
 
+  // How many payment pages one order may open within three hours. Every open page is asked about, so a payment made on an older one
+  // is still found; the limit keeps that list short.
+  const MAX_OPEN_PAGES = 10;
+
   const openAttempts = async (q, orderId, provider) =>
     (
       await q.query(
-        `SELECT id, provider_order_id, amount_paise FROM payments
-          WHERE order_id = $1 AND provider = $2 AND status = 'created' AND created_at > now() - interval '3 hours'
-          ORDER BY id DESC LIMIT 5`,
+        `SELECT id, provider_order_id, amount_paise, created_at > now() - interval '3 hours' AS recent,
+                created_at < now() - interval '1 hour' AS stale
+           FROM payments WHERE order_id = $1 AND provider = $2 AND status = 'created'
+          ORDER BY id DESC LIMIT 30`,
         [orderId, provider],
       )
     ).rows;
 
-  /** Asks the gateway about every open attempt of this order; the first it reports paid marks the order paid. True when the order is paid. */
+  /** Asks the gateway about every open attempt of this order and records each payment it reports. True when any money had arrived. */
   const settleAttempts = async (order, provider, settings) => {
     const gateway = GATEWAYS[provider];
     const attempts = await openAttempts(db, order.id, provider);
     if (attempts.length === 0) return false;
     const creds = gateway.creds(settings);
+    let arrived = false;
     for (const attempt of attempts) {
-      const result = await gateway.status(creds, attempt.provider_order_id);
+      let result;
+      try {
+        result = await gateway.status(creds, attempt.provider_order_id);
+      } catch (err) {
+        // A recent page that cannot be asked about stops here: the money may be on it. An old one (the gateway may no longer know
+        // it) does not keep the diner from paying; it stays open, and is asked about again here and, for a day, by the re-check.
+        if (attempt.recent) throw err;
+        console.warn(`[pay] ${provider} ${attempt.provider_order_id}: ${err.code ?? ''} ${err.message}`);
+        continue;
+      }
+      // Only the gateway's own word closes a page, and not one just opened.
+      if (result.state === 'failed' && attempt.stale) await db.query(`UPDATE payments SET status = 'failed' WHERE id = $1 AND status = 'created'`, [attempt.id]);
       if (result.state !== 'paid') continue;
       if (result.amountPaise !== attempt.amount_paise) {
         throw new HttpError(409, 'PAYMENT_AMOUNT_MISMATCH', 'The amount paid does not match this order. Please show this screen to a member of staff.');
       }
-      await db.tx(async (t) => {
-        const current = await orderByToken(t, order.public_token, { lock: true });
-        if (current.payment_status === 'paid') return; // a parallel check already recorded it
-        await t.query(`UPDATE payments SET status = 'paid', provider_payment_id = $2, paid_at = now() WHERE id = $1`, [attempt.id, result.paymentId ?? null]);
-        await t.query(PAID_ONLINE_SQL(provider), [current.id]);
-      });
-      return true;
+      await markAttemptPaid(db, { orderId: order.id, attemptId: attempt.id, paymentId: result.paymentId, method: provider, source: 'diner-page' });
+      arrived = true;
     }
-    return false;
+    return arrived;
   };
 
-  router.post('/orders/:token/pay/:provider', orderLimiter, async (req, res) => {
+  router.post('/orders/:token/pay/:provider', payLimiter, async (req, res) => {
     const provider = req.params.provider;
     const gateway = gatewayFor(provider);
     const order = await orderByToken(db, req.params.token);
     if (order.status === 'cancelled') throw conflict('ORDER_CANCELLED', 'This order was cancelled.');
     if (order.payment_status === 'paid') throw conflict('ALREADY_PAID', 'This order is already paid.');
+    await assertOpen(order.vendor_id);
+    if (order.payment_status === 'refunded') throw conflict('ALREADY_REFUNDED', 'This order was refunded. Please pay at the counter.');
 
     const { rows } = await db.query(
       `SELECT s.*, v.name AS vendor_name FROM vendor_payment_settings s JOIN vendors v ON v.id = s.vendor_id WHERE s.vendor_id = $1`,
@@ -581,12 +671,11 @@ export function publicRouter(db, { orderLimiter }) {
     }
     // A payment the diner already made must never be asked for twice: look at the earlier attempts first.
     if (await settleAttempts(order, provider, settings)) throw conflict('ALREADY_PAID', 'This order is already paid.');
-    await db.query(
-      `UPDATE payments SET status = 'failed' WHERE order_id = $1 AND provider = $2 AND status = 'created' AND created_at <= now() - interval '3 hours'`,
-      [order.id, provider],
-    );
+    if ((await openAttempts(db, order.id, provider)).filter((a) => a.recent).length >= MAX_OPEN_PAGES) {
+      throw conflict('TOO_MANY_PAYMENT_TRIES', 'The payment page was opened too many times for this order. Please pay at the counter or ask a member of staff.');
+    }
 
-    const providerOrderId = attemptId(order.id);
+    const providerOrderId = attemptId();
     const client = await gateway.start(gateway.creds(settings), {
       providerOrderId,
       order,
@@ -603,7 +692,7 @@ export function publicRouter(db, { orderLimiter }) {
 
   // The order page calls this when the diner comes back from the gateway (and whenever the page is opened again), so a payment is
   // picked up even if the browser was closed in between. It sends nothing: the server asks the gateway.
-  router.post('/orders/:token/pay/:provider/verify', orderLimiter, async (req, res) => {
+  router.post('/orders/:token/pay/:provider/verify', checkLimiter, async (req, res) => {
     const provider = req.params.provider;
     const gateway = gatewayFor(provider);
     const order = await orderByToken(db, req.params.token);

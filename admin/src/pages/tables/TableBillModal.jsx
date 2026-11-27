@@ -31,7 +31,9 @@ export default function TableBillModal({ table, onClose, onChanged }) {
     run(async () => {
       setError(null);
       try {
-        const done = await api(`/api/admin/tables/${table.id}/settle`, { method: 'POST', body: { method: 'cash' } });
+        // The orders being paid for: if the bill has changed meanwhile, the server records nothing and says so.
+        const body = { method: 'cash', order_ids: bill.orders.map((o) => o.id) };
+        const done = await api(`/api/admin/tables/${table.id}/settle`, { method: 'POST', body });
         toast.success(`${done.settled} ${done.settled === 1 ? 'order' : 'orders'} paid (${fmt.money(done.total)}) for table ${table.number}.`);
         onChanged?.();
         onClose();

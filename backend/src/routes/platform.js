@@ -1,12 +1,14 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { createRestaurantAccount, emailField, emailInUse, newRestaurantSchema } from '../lib/accounts.js';
 import { conflict, HttpError, notFound, parse } from '../lib/errors.js';
+import { assertStrongPassword, hashPassword } from '../lib/passwords.js';
+import { forgetAll } from '../lib/rateLimit.js';
 import { toRupees } from '../lib/money.js';
 import { razorpayReady } from '../lib/razorpay.js';
 import { isSuperAdminEmail } from '../lib/serialize.js';
+import { clearSecondStep } from './twoFactor.js';
 
 // The platform owner's console: every restaurant on the product with enough numbers to see who is active, a page per restaurant
 // (profile, how it takes payments, recent orders, what the owner did to it) and the owner's actions on it: add a restaurant (the only
@@ -189,6 +191,8 @@ export function platformRouter(db) {
       }
       if (Object.keys(changes).length > 0) {
         await t.query(`UPDATE vendors SET name = $2, email = $3 WHERE id = $1`, [target.id, body.name, body.email]);
+        // A reset link already sent to the old address must not work any more.
+        if (changes.email) await t.query(`UPDATE password_resets SET used_at = now() WHERE vendor_id = $1 AND used_at IS NULL`, [target.id]);
         await audit(t, req, 'update', { id: target.id, name: body.name, email: body.email }, { changes });
       }
       const { rows: fresh } = await t.query(`${SELECT_RESTAURANTS} WHERE v.id = $1`, [target.id]);
@@ -287,8 +291,9 @@ export function platformRouter(db) {
   router.post('/restaurants/:id/password', async (req, res) => {
     const id = restaurantId(req);
     const body = parse(passwordSchema, req.body ?? {});
-    const hash = await bcrypt.hash(body.password, 10);
-    await db.tx(async (t) => {
+    assertStrongPassword(body.password);
+    const hash = await hashPassword(body.password);
+    const email = await db.tx(async (t) => {
       const { rows } = await t.query(`SELECT id, name, email FROM vendors WHERE id = $1 FOR UPDATE`, [id]);
       const target = rows[0];
       if (!target) throw notFound('Restaurant');
@@ -297,8 +302,13 @@ export function platformRouter(db) {
       }
       await t.query(`UPDATE vendors SET password_hash = $2, password_changed_at = $3 WHERE id = $1`, [target.id, hash, new Date()]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE vendor_id = $1 AND used_at IS NULL`, [target.id]);
+      // The way back in for a restaurant that lost its phone: a new password from the owner also switches two-step sign-in off.
+      await clearSecondStep(t, target.id);
       await audit(t, req, 'set_password', target);
+      return target.email;
     });
+    await forgetAll(db, `signin:${email.toLowerCase()}`); // the new password ends a lock on this sign-in
+    await forgetAll(db, `otp:${id}`);
     res.json({ data: { ok: true } });
   });
 

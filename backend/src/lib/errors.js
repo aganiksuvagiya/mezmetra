@@ -31,6 +31,13 @@ export function parse(schema, data) {
   throw new HttpError(400, 'VALIDATION_ERROR', `${first.field}: ${first.message}`, details);
 }
 
+// Table, order, webhook and reset tokens are as good as keys: they never go into the log.
+export const redactUrl = (url) =>
+  String(url)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':token')
+    .replace(/[0-9a-f]{32}/gi, ':token')
+    .replace(/([?&]token=)[^&]+/gi, '$1:token');
+
 export function errorHandler(err, req, res, _next) {
   if (err instanceof HttpError) {
     return res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details } });
@@ -49,9 +56,10 @@ export function errorHandler(err, req, res, _next) {
   if (err?.code === '23503') {
     return res.status(409).json({ error: { code: 'IN_USE', message: 'This record is still referenced by other data' } });
   }
-  if (err?.code === '22P02' || err?.code === '22003') {
+  // 22021 / 22P05: a character the database cannot store (such as a NUL byte) in something the client sent.
+  if (err?.code === '22P02' || err?.code === '22003' || err?.code === '22021' || err?.code === '22P05') {
     return res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'Invalid value in request' } });
   }
-  console.error('[error]', req.method, req.originalUrl, err);
+  console.error('[error]', req.method, redactUrl(req.originalUrl), err);
   res.status(500).json({ error: { code: 'INTERNAL', message: 'Something went wrong on our side' } });
 }

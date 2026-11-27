@@ -63,6 +63,8 @@ function PaymentsForm({ settings, onSaved }) {
   const [rzHookSecret, setRzHookSecret] = useState('');
   const [ppHookUser, setPpHookUser] = useState('');
   const [ppHookPass, setPpHookPass] = useState('');
+  // Asked for whenever a key or a webhook secret changes.
+  const [password, setPassword] = useState('');
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [testResult, setTestResult] = useState(null);
@@ -90,6 +92,7 @@ function PaymentsForm({ settings, onSaved }) {
     keysChanged ||
     ppChanged;
   const mode = modeOf(keyId.trim() || savedKeyId);
+  const needsPassword = keysChanged || ppChanged || hooksChanged;
 
   const clearFeedback = () => {
     setTestResult(null);
@@ -124,6 +127,7 @@ function PaymentsForm({ settings, onSaved }) {
         if (!ppSec && !settings.phonepe_secret_set) next.ppSecret = 'Enter your PhonePe Client Secret to turn on online payments.';
       }
     }
+    if (needsPassword && !password) next.password = 'Enter your password to change payment keys.';
     if (showRazorpay && online) {
       if (!id && !savedKeyId) next.keyId = 'Enter your Razorpay Key ID to turn on online payments.';
       if (!sec && !settings.razorpay_secret_set) next.secret = 'Enter your Razorpay Key Secret to turn on online payments.';
@@ -162,6 +166,7 @@ function PaymentsForm({ settings, onSaved }) {
       body.phonepe_webhook_username = ppHookUser.trim();
       body.phonepe_webhook_password = ppHookPass.trim();
     }
+    if (needsPassword) body.current_password = password;
     if (Object.keys(body).length === 0) {
       toast.info('No changes to save.');
       return;
@@ -181,6 +186,7 @@ function PaymentsForm({ settings, onSaved }) {
           'razorpay_webhook_secret',
           'phonepe_webhook_username',
           'phonepe_webhook_password',
+          'current_password',
         ]);
         setErrors({
           keyId: fields.razorpay_key_id,
@@ -191,6 +197,7 @@ function PaymentsForm({ settings, onSaved }) {
           rzHook: fields.razorpay_webhook_secret,
           ppHookUser: fields.phonepe_webhook_username,
           ppHookPass: fields.phonepe_webhook_password,
+          password: fields.current_password,
         });
         setFormError(message);
         if (Object.keys(fields).length) focusFirstInvalid(form);
@@ -557,6 +564,26 @@ function PaymentsForm({ settings, onSaved }) {
           </details>
         </div>
       </Card>
+      )}
+
+      {needsPassword && (
+        <Card as="section" aria-labelledby="confirm-password">
+          <CardHeader id="confirm-password" title="Confirm with your password" description="Payment keys decide where your money goes, so changing them needs your password." />
+          <div className="p-4 sm:p-5">
+            <PasswordInput
+              label="Your password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setErrors((p) => ({ ...p, password: undefined }));
+              }}
+              error={errors.password}
+              autoComplete="current-password"
+              wrapperClassName="max-w-md"
+              required
+            />
+          </div>
+        </Card>
       )}
 
       <div className="flex flex-wrap items-center justify-end gap-3">

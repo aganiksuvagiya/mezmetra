@@ -80,12 +80,20 @@ export const config = {
   databaseUrl: env.DATABASE_URL || '',
   databaseCa: env.DATABASE_CA_CERT || '',
   databaseCaPath: env.DATABASE_CA_CERT_PATH || '',
+  // The live server refuses a database it cannot verify. This is the emergency way around that, and is logged loudly.
+  allowUnverifiedDbTls: bool(env.DATABASE_ALLOW_UNVERIFIED_TLS, false),
   pgliteDir: env.PGLITE_DIR || '.data/pglite',
   poolMax: Number(env.DATABASE_POOL_MAX || 5),
   // Apply pending SQL migrations when the server boots (safe: guarded by an advisory lock).
   autoMigrate: bool(env.AUTO_MIGRATE, true),
   appSecret,
   jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
+  // Work factor of password hashes. Older hashes are upgraded at the next sign-in. (Tests use a cheap one.)
+  bcryptCost: Number(env.BCRYPT_COST || (env.NODE_ENV === 'test' ? 4 : 12)),
+  // How many orders of one table may wait, unaccepted and unpaid, before it is told to call the staff.
+  maxOpenOrdersPerTable: Number(env.MAX_OPEN_ORDERS_PER_TABLE || 12),
+  // On the live server the demo accounts' passwords, which are written in the public source code, do not sign anyone in.
+  refusePublicPasswords: isProd,
   // A Set (read at request time, so tests can switch it): 'cash' | 'razorpay' | 'phonepe'.
   paymentMethods: paymentMethods(env.PAYMENT_METHODS),
   // A Set of lower-case emails (read at request time, so tests can change it).
@@ -111,4 +119,7 @@ export const config = {
   // The public address of this API (the webhook addresses are built on it). Empty = taken from the incoming request.
   apiPublicUrl: (env.API_PUBLIC_URL || '').replace(/\/+$/, ''),
   trustProxy: proxyHops(env.TRUST_PROXY, isProd),
+  // The header in which the proxy in front of the API names the visitor's address (Cloudflare, which fronts Render: cf-connecting-ip).
+  // Empty = use req.ip. Set it only where no request can reach the API without passing that proxy.
+  clientIpHeader: (env.CLIENT_IP_HEADER || '').trim().toLowerCase(),
 };

@@ -1,8 +1,13 @@
+import { randomInt } from 'node:crypto';
 import { Router } from 'express';
 import QRCode from 'qrcode';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { record } from '../lib/audit.js';
 import { conflict, notFound, parse } from '../lib/errors.js';
+import { closeOpenQrs } from '../lib/onlinePayments.js';
+import { forgetAll } from '../lib/rateLimit.js';
+import { settleOpenAttempts } from '../lib/reconcile.js';
 import { loadOrderItems, tableOut } from '../lib/serialize.js';
 import { toRupees } from '../lib/money.js';
 
@@ -27,6 +32,8 @@ const listSchema = z.object({
 });
 
 const qrLink = (token) => `${config.customerAppUrl}/t/${token}`;
+// The 4 digits printed on a table's card, from a cryptographic source.
+const randomCode = () => String(randomInt(10_000)).padStart(4, '0');
 
 // A table is "occupied" while it has an order that is still pending or accepted.
 const SELECT = `
@@ -76,9 +83,9 @@ export function tablesRouter(db) {
   router.post('/', async (req, res) => {
     const body = parse(createSchema, req.body);
     const { rows } = await db.query(
-      `INSERT INTO dining_tables (vendor_id, number, capacity, area, is_active)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *, false AS occupied`,
-      [req.vendorId, body.number, body.capacity, body.area, body.is_active],
+      `INSERT INTO dining_tables (vendor_id, number, capacity, area, is_active, code)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *, false AS occupied`,
+      [req.vendorId, body.number, body.capacity, body.area, body.is_active, randomCode()],
     );
     res.status(201).json({ data: tableOut(rows[0], qrLink(rows[0].qr_token)) });
   });
@@ -139,34 +146,66 @@ export function tablesRouter(db) {
 
   // One cash payment at the table for everything ordered so far: all its unpaid orders are marked paid together. Orders that come in
   // later get their own bill.
-  const settleSchema = z.object({ method: z.enum(['cash']) });
+  // `order_ids`: the orders on the bill staff were looking at. If the bill has changed since (an order paid online, or a new one),
+  // nothing is recorded, so the cash collected and the cash recorded cannot differ.
+  const settleSchema = z.object({ method: z.enum(['cash']), order_ids: z.array(z.coerce.number().int().positive()).max(500).optional() });
   router.post('/:id/settle', async (req, res) => {
-    const { method } = parse(settleSchema, req.body ?? {});
+    const { method, order_ids: shown } = parse(settleSchema, req.body ?? {});
     if (!config.paymentMethods.has(method)) {
       throw conflict('METHOD_NOT_AVAILABLE', "Cash payments aren't available right now.");
+    }
+    // First make sure nobody at the table has just paid online: the cash to collect would be less than the bill shown.
+    let arrivedOnline = false;
+    for (const order of (await openOrders(db, req.params.id, req.vendorId)).rows) {
+      if (await settleOpenAttempts(db, order.id)) arrivedOnline = true;
+    }
+    if (arrivedOnline) {
+      throw conflict('PAID_ONLINE', 'Some of this bill has just been paid online. Close this and open the bill again to see what is left.');
     }
     const result = await db.tx(async (t) => {
       const table = await t.query(`SELECT id FROM dining_tables WHERE id = $1 AND vendor_id = $2`, [req.params.id, req.vendorId]);
       if (!table.rows[0]) throw notFound('Table');
       const { rows } = await openOrders(t, table.rows[0].id, req.vendorId, { lock: true });
       if (rows.length === 0) throw conflict('NOTHING_TO_PAY', 'This table has no unpaid orders.');
-      for (const o of rows) {
-        await t.query(`INSERT INTO payments (order_id, provider, amount_paise, status, paid_at) VALUES ($1, $2, $3, 'paid', now())`, [o.id, method, o.total_paise]);
-        await t.query(`UPDATE orders SET payment_status = 'paid', payment_method = $2, paid_at = now() WHERE id = $1`, [o.id, method]);
+      if (shown && (shown.length !== rows.length || rows.some((o) => !shown.includes(Number(o.id))))) {
+        throw conflict('BILL_CHANGED', 'This bill has changed since you opened it. Check the new total before taking the money.');
       }
-      return { settled: rows.length, total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)) };
+      for (const o of rows) {
+        const paid = await t.query(
+          `INSERT INTO payments (order_id, provider, amount_paise, status, paid_at, recorded_by) VALUES ($1, $2, $3, 'paid', now(), $4) RETURNING id`,
+          [o.id, method, o.total_paise, req.vendorEmail],
+        );
+        await t.query(`UPDATE orders SET payment_status = 'paid', payment_method = $2, paid_at = now() WHERE id = $1`, [o.id, method]);
+        await record(t, 'payment.cash', { vendorId: req.vendorId, orderId: o.id, paymentId: paid.rows[0].id, actor: req.vendorEmail, detail: { table_bill: true } });
+      }
+      return { ids: rows.map((o) => o.id), settled: rows.length, total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)) };
     });
-    res.json({ data: { ...result, method } });
+    const { ids, ...summary } = result;
+    for (const id of ids) await closeOpenQrs(db, id);
+    res.json({ data: { ...summary, method } });
   });
 
   // A new random code (for example after it has been shared): the printed card must be replaced.
   router.post('/:id/code', async (req, res) => {
     const { rows } = await db.query(
-      `UPDATE dining_tables SET code = lpad((floor(random() * 10000))::int::text, 4, '0'), updated_at = now()
-        WHERE id = $1 AND vendor_id = $2 RETURNING *, false AS occupied`,
-      [req.params.id, req.vendorId],
+      `UPDATE dining_tables SET code = $3, updated_at = now() WHERE id = $1 AND vendor_id = $2 RETURNING *, false AS occupied`,
+      [req.params.id, req.vendorId, randomCode()],
     );
     if (!rows[0]) throw notFound('Table');
+    await forgetAll(db, `code:${rows[0].id}`); // the new code starts with a clean count of wrong tries
+    res.json({ data: tableOut(rows[0], qrLink(rows[0].qr_token)) });
+  });
+
+  // A new table link (for example after a photo of the QR code went around): the old link stops working, and the card is printed again.
+  router.post('/:id/link', async (req, res) => {
+    const { rows } = await db.query(
+      `UPDATE dining_tables SET qr_token = replace(gen_random_uuid()::text, '-', ''), code = $3, updated_at = now()
+        WHERE id = $1 AND vendor_id = $2 RETURNING *, false AS occupied`,
+      [req.params.id, req.vendorId, randomCode()],
+    );
+    if (!rows[0]) throw notFound('Table');
+    await forgetAll(db, `code:${rows[0].id}`);
+    await record(db, 'table.new_link', { vendorId: req.vendorId, actor: req.vendorEmail, detail: { table: rows[0].number } });
     res.json({ data: tableOut(rows[0], qrLink(rows[0].qr_token)) });
   });
 
@@ -190,7 +229,7 @@ export function tablesRouter(db) {
       margin: 2,
       errorCorrectionLevel: 'H',
     });
-    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' }).send(png);
+    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store' }).send(png); // a new link must never show the old code
   });
 
   return router;

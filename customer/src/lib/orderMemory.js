@@ -27,9 +27,9 @@ export function forgetLastOrder(tableToken, orderToken) {
   if (!orderToken || getItem(lastKey(tableToken)) === orderToken) removeItem(lastKey(tableToken));
 }
 
-/** Done: cancelled, or completed and paid. Nothing more for the diner to follow. */
+/** Done: cancelled, or completed with nothing left to pay (paid, or paid and refunded). Nothing more for the diner to follow. */
 export const isFinished = (order) =>
-  order.status === 'cancelled' || (order.status === 'completed' && order.payment_status === 'paid');
+  order.status === 'cancelled' || (order.status === 'completed' && order.payment_status !== 'unpaid');
 
 // ---- Recent orders: the latest few per restaurant, kept on this device -------------------------------------------------------
 
@@ -62,6 +62,7 @@ const snapshot = (order, tableToken, before) => ({
   status: order.status,
   ready: Boolean(order.ready_at),
   paid: order.payment_status === 'paid',
+  refunded: order.payment_status === 'refunded',
   done: isFinished(order),
   // When this phone first saw it finished: the finished order stays on the list for FINISHED_STAYS_MS from then.
   doneAt: isFinished(order) ? doneAtOf(before) : undefined,

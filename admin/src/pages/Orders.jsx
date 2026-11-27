@@ -22,6 +22,8 @@ import { paidVia } from '../lib/payments.js';
 import { useFmt } from '../lib/useFmt.js';
 import OrderDetailModal from './orders/OrderDetailModal.jsx';
 
+const ATTENTION = { paid_twice: 'Paid twice', cancelled_paid: 'Cancelled but paid', refund_failed: 'Refund failed', refund_unconfirmed: 'Refund not confirmed' };
+
 const PER_PAGE = 12;
 const REFRESH_MS = 8000;
 // "Open" is every order that is not finished (pending, preparing and ready together). The others are one state each.
@@ -48,6 +50,15 @@ const FIGURES = [
   ['completed', 'Completed'],
   ['cancelled', 'Cancelled'],
 ];
+
+/** The short red line on a card whose money needs a person, or null. */
+function moneyNotice(order) {
+  if (order.extra_payments?.some((p) => p.status === 'paid')) return 'Paid twice: refund';
+  if (order.status === 'cancelled' && order.payment_status === 'paid' && order.payment_method !== 'cash') return 'Cancelled but paid: refund';
+  if (order.payment_status === 'paid' && order.refund_state === 'failed') return 'Refund failed';
+  if (order.payment_status === 'paid' && order.refund_state === 'requested') return 'Refund not confirmed yet';
+  return null;
+}
 
 function OrderCard({ order, fresh, fmt, onOpen, selected }) {
     return (
@@ -87,6 +98,7 @@ function OrderCard({ order, fresh, fmt, onOpen, selected }) {
                       ? ''
                       : 'Unpaid'}
               </span>
+              {moneyNotice(order) && <span className="mt-0.5 text-xs font-semibold text-red-700">{moneyNotice(order)}</span>}
             </span>
             <span className="inline-flex items-center gap-0.5 text-sm font-medium text-slate-800">
               View details <ChevronRightIcon size={16} />
@@ -153,6 +165,9 @@ export default function Orders() {
     { interval: REFRESH_MS },
   );
   const counts = useQuery(() => api('/api/admin/orders/counts'), [], { interval: 20_000 });
+  // Money that needs a person (paid twice, paid for a cancelled order, a refund that failed): shown on top whatever tab is open,
+  // since the order may be long completed.
+  const attention = useQuery(() => api('/api/admin/orders/attention'), [], { interval: 20_000 });
 
   // The app-wide watcher saw a new order: refresh now instead of waiting for the next timer tick.
   const arrivalsSeen = useRef(live.arrivals);
@@ -200,6 +215,7 @@ export default function Orders() {
   const refreshAll = () => {
     q.reload();
     counts.reload();
+    attention.reload();
     live.reload();
   };
 
@@ -218,6 +234,7 @@ export default function Orders() {
       onChanged={() => {
         q.reload();
         counts.reload();
+        attention.reload();
         live.reload();
       }}
     />
@@ -237,6 +254,23 @@ export default function Orders() {
           </>
         }
       />
+
+      {attention.data?.length > 0 && (
+        <Alert className="mb-4">
+          <p>
+            <strong>Money to sort out.</strong> Open the order to see what to do.
+          </p>
+          <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+            {attention.data.map((a) => (
+              <li key={`${a.kind}-${a.order_id}-${a.amount}`}>
+                <button type="button" onClick={() => openOrder(a.order_id)} className="text-left font-semibold underline underline-offset-2">
+                  {ATTENTION[a.kind] ?? 'Check'}: order #{a.order_number} · Table {a.table_number} · {fmt.money(a.amount)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
 
       <div className="mb-4 grid grid-cols-3 gap-2 @xl:gap-3 @4xl:grid-cols-6">
         {FIGURES.map(([k, label]) => (

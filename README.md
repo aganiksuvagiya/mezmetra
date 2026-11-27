@@ -18,7 +18,7 @@ Requires Node.js 22+.
 
 ```bash
 npm install
-SEED_DEMO=true npm run dev      # API :4000, admin :5180, customer menu :5174
+SEED_DEMO=true npm run dev      # API :4000, admin :5180, customer menu :5174 (with DATABASE_URL empty: a local database)
 ```
 
 - Admin panel: http://localhost:5180 - sign in with the demo vendor from `backend/src/seed.js` (change it before real use), or create a restaurant with `NEW_PASSWORD='a-long-password' npm run create-restaurant -w backend -- "My Cafe" me@example.com` (there is no public sign-up).
@@ -58,11 +58,12 @@ npm run build     # production builds of both web apps (admin/dist, customer/dis
    Keep `.env` out of git (it is in `.gitignore`). Do not paste the URI into chat or issues - it contains the password.
 4. Check the connection, create the tables and (optionally) the demo data:
    ```bash
-   npm run db:check      # connects, prints the Postgres version and whether TLS is on
-   npm run db:migrate    # applies backend/migrations/*.sql (also runs automatically when the API starts)
-   npm run db:seed       # optional demo restaurant
-   npm run dev
+   npm run db:check                        # connects, prints the Postgres version and whether TLS is on
+   ALLOW_REMOTE_DB=true npm run db:migrate # applies backend/migrations/*.sql (also runs automatically when the API starts)
    ```
+   A run on your own computer refuses a remote database without `ALLOW_REMOTE_DB=true`, so that live data is not changed by
+   accident; for everyday work keep `DATABASE_URL` empty. Demo restaurants can be seeded into a real database only with
+   `SEED_PASSWORD` and `TEAPOST_PASSWORD` set to passwords of your own.
 5. The free plan has small limits (storage, connections, possible inactivity power-off - read Aiven's current free-plan terms).
    The API keeps its pool small (`DATABASE_POOL_MAX=5`). Item photos are stored in the database (max 512 KB each, the admin
    panel shrinks them first), so keep an eye on storage; if you outgrow it, move photos to object storage and keep `photo_url`.
@@ -75,8 +76,10 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Postgres connection string. Empty = local PGlite. |
-| `DATABASE_CA_CERT_PATH` / `DATABASE_CA_CERT` | CA certificate so the TLS certificate is verified (recommended on Aiven). |
-| `APP_SECRET` | **Required in production**, 32+ chars. Signs login tokens and encrypts stored Razorpay secrets (AES-256-GCM). Changing it logs everyone out and invalidates saved Razorpay secrets. |
+| `DATABASE_CA_CERT_PATH` / `DATABASE_CA_CERT` | CA certificate of the database. **Required in production** for a database on another machine: the server refuses to start without it. |
+| `DATABASE_ALLOW_UNVERIFIED_TLS` | Emergency only: `true` lets production start without the certificate. |
+| `ALLOW_REMOTE_DB` | A run on your own computer (not production) refuses a remote database, so live data is not touched by accident. Set `true` for the one run where you mean it (`reset-password` and `create-restaurant` work without it and print the database they use). |
+| `APP_SECRET` | **Required in production**, 32+ chars. Signs login tokens and encrypts stored Razorpay secrets (AES-256-GCM). Changing it logs everyone out, invalidates saved Razorpay secrets, and makes authenticator codes of two-step sign-in unusable (recovery codes still work). |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API (your admin and customer URLs). |
 | `CUSTOMER_APP_URL` | Public URL of the customer app. It is the base of every table QR link. |
 | `SUPER_ADMIN_EMAILS` | Emails (comma separated) of the platform owner's account(s). They get the **Owner console** (`/owner`, linked from the sidebar): every restaurant with its numbers, and a switch to suspend or reactivate it. Empty = nobody has access. |
@@ -85,9 +88,13 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `PAYMENT_METHODS` | Ways of paying the product offers: any of `cash`, `razorpay`, `phonepe`, comma separated. **Default: all three.** Restaurants can only switch on what is listed here. |
 | `API_PUBLIC_URL` | Optional, e.g. `https://your-api.onrender.com`: the base of the payment webhook address shown to restaurants. Empty = read from the request (fine behind Render's proxy). |
 | `PHONEPE_API_BASE` | Optional. Leave empty: PhonePe's own live servers are used. Tests point it at a fake. |
-| `TRUST_PROXY` | How many reverse proxies sit in front of the API: `1` on Render/Fly/Heroku, `0` when none (default in production is `1`). Needed for correct per-IP rate limits. |
+| `TRUST_PROXY` | How many reverse proxies sit in front of the API: `1` on Render/Fly/Heroku, `0` when none (default in production is `1`). Used for the request's protocol and, without the next setting, its address. |
+| `CLIENT_IP_HEADER` | The header in which the proxy names the visitor; the rate limits count by it. `cf-connecting-ip` on Render (set in `render.yaml`). Set it only where no request can bypass that proxy. |
+| `MAX_OPEN_ORDERS_PER_TABLE` | How many pending, unpaid orders one table may have (default 12). |
 
-Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin.
+Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin. The admin's `Content-Security-Policy`
+(`admin/vercel.json`, `admin/public/_headers`) names the API's address: change it there too if the API moves (for example to a domain of your own),
+or the admin cannot reach it.
 
 ## Password reset, sold-out dishes, reports
 
@@ -97,7 +104,8 @@ Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are 
 - **Change password:** *Settings -> Password* (current password, new password twice, with a strength hint). Other devices are signed out; this one continues.
 - **Locked out (no email set up):** passwords are stored as one-way bcrypt hashes, so an old one can never be read back. Set a new one
   on the database `backend/.env` points to (Aiven when `DATABASE_URL` is set): `NEW_PASSWORD='a-new-password' npm run reset-password -w backend -- you@example.com`.
-  It prints which database it is talking to, needs at least 8 characters, signs out the account's old sessions, and never prints the password.
+  It prints which database it is talking to, refuses weak passwords, signs out the account's old sessions, and never prints the password. Add `DISABLE_2FA=true` when the phone with the authenticator app is lost.
+- **Two-step sign-in:** *Settings -> Two-step sign-in*: scan the QR code with any authenticator app and keep the recovery codes. Recommended for the platform owner's account.
 - **Sold out:** *Menu -> Items -> Mark sold out* is one tap. The dish stays on the menu, greyed out and labelled "Sold out", and cannot
   be ordered; carts drop it. **All back in stock** clears every sold-out dish at once (end of the day). This is separate from the
   *Available* switch, which hides a dish completely.
@@ -171,8 +179,14 @@ saved sandbox keys.
 
 How a payment is confirmed: `POST /api/public/orders/:token/pay/phonepe` opens a payment at PhonePe and returns where to send the
 diner. Coming back, the order page calls `.../pay/phonepe/verify`, which sends nothing: the **server asks PhonePe** for the order status
-and only marks the order paid for exactly the right amount. A payment made on an earlier attempt is found before a new one is opened.
-Refunds work (admin -> order -> *Refund*).
+and only marks the order paid for exactly the right amount. Every open attempt is asked about before a new one is opened (at most 10
+within 3 hours). Refunds work (admin -> order -> *Refund*).
+
+**Paid twice:** if money arrives for an order that is already paid (say cash was recorded while the diner was still paying online),
+it is kept as a second payment: Orders shows a red notice, and the order has a button to refund it.
+
+**Refund not confirmed:** if the gateway's answer to a refund gets lost, the order says so, nobody should pay the money back another
+way, and the server asks the gateway every few minutes how it ended.
 
 **Not yet tried against a real PhonePe account**: the code follows their published docs and is tested against fakes, so before relying
 on it, place a very small real order, pay it, and refund it.
@@ -195,15 +209,16 @@ dashboard, press **Test connection**, then turn online payments on. **The live s
 `rzp_test_...` keys for trying things out. Migration `028` switches Razorpay off (and cash on, if needed) for any restaurant that had
 a test key saved. Secrets are stored encrypted
 and are never sent back to the browser. Diners then see **Pay online** on their order page; the API creates the Razorpay order,
-the browser opens Razorpay Checkout, and the API verifies Razorpay's HMAC signature before marking the order paid. If a
+the browser opens Razorpay Checkout, and the API verifies Razorpay's HMAC signature, then asks Razorpay that the money is captured
+(capturing it itself if the account only authorized it) before marking the order paid. If a
 restaurant has no keys the diner is simply told to pay at the counter, and staff can record the payment (**Orders -> Record cash payment**).
 
 Paying online also **accepts the order**: once the gateway has confirmed the money, a pending order becomes accepted by itself (staff do not press Accept; they press Complete when it is served). Cash orders still wait for staff.
 
-**Scan to pay (QR):** under *Pay online* the diner can tap *Or scan a QR code to pay*. The API makes a Razorpay **UPI QR** for that order (single use, fixed amount; `POST /api/public/orders/:token/razorpay-qr`) and the page asks `.../razorpay-qr/verify` every 3 seconds; the server asks Razorpay and marks the order paid (and accepted) when a captured payment of the exact amount shows up. Razorpay must have switched **UPI QR** on for the account (an on-demand feature, ask Razorpay support); if not, the diner is told to use *Pay online* instead.
+**Scan to pay (QR):** under *Pay online* the diner can tap *Or scan a QR code to pay*. The API makes a Razorpay **UPI QR** for that order (single use, fixed amount; `POST /api/public/orders/:token/razorpay-qr`) and the page asks `.../razorpay-qr/verify` every 3 seconds; the server asks Razorpay and marks the order paid (and accepted) when a captured payment of at least the order's amount shows up. Razorpay must have switched **UPI QR** on for the account (an on-demand feature, ask Razorpay support); if not, the diner is told to use *Pay online* instead.
 
-Not built yet: a Razorpay **webhook**. Today a payment is confirmed when the diner's browser returns from Checkout; if the diner
-closes the tab right after paying, staff must reconcile it from the Razorpay dashboard. A webhook endpoint is the recommended next step before taking live payments.
+Set up the Razorpay **webhook** too (see *Payment webhooks* above): without it, a diner who closes the page right after paying is
+noticed only by the five-minute re-check.
 
 ## Deploying (Aiven + Render + Cloudflare Pages)
 
@@ -219,7 +234,8 @@ The free plans are fine for demos and first restaurants; for real daily use move
    `.env`, certificates, `.data/` and `demo/` are git-ignored; check `git status` before the first commit.
 2. **API on Render.** New -> *Blueprint* -> pick the repository (it reads `render.yaml`). When asked, fill in:
    - `DATABASE_URL`: the Aiven Service URI.
-   - `DATABASE_CA_CERT`: the full contents of `backend/aiven-ca.pem` (paste all lines, including BEGIN/END).
+   - `DATABASE_CA_CERT`: the full contents of `backend/aiven-ca.pem` (paste all lines, including BEGIN/END). The API does not
+     start in production without it.
    - `APP_SECRET`: 32+ random characters. Use the value from `backend/.env` if you also run locally against the same Aiven database
      (otherwise saved Razorpay keys cannot be decrypted by the other side).
    - `CORS_ORIGINS` and `CUSTOMER_APP_URL`: put `https://placeholder.invalid` for now, you set them in step 4.

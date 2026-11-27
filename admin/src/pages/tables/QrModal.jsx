@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/Button.jsx';
+import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import { ErrorState } from '../../components/EmptyState.jsx';
 import { DownloadIcon } from '../../components/icons.jsx';
 import Modal from '../../components/Modal.jsx';
@@ -18,7 +19,10 @@ import { buildQrCard } from '../../lib/qrCard.js';
 export default function QrModal({ table, onClose, onChanged }) {
   const { vendor } = useAuth();
   const codeOn = (vendor?.table_code_mode ?? 'off') !== 'off'; // the table code is printed on the card unless the restaurant has switched it off
-  const qr = useBlobUrl(`/api/admin/tables/${table.id}/qr.png?size=860`);
+  // The table's link, and a counter that fetches the picture again once the link is replaced.
+  const [link, setLink] = useState({ url: table.qr_url, version: 0 });
+  const [replacing, setReplacing] = useState(false);
+  const qr = useBlobUrl(`/api/admin/tables/${table.id}/qr.png?size=860&v=${link.version}`);
   const [card, setCard] = useState({ url: null, error: null });
   const [code, setCode] = useState(table.code); // the table code printed on the card (when the restaurant asks diners for it)
   const [newCode, renewing] = useAction();
@@ -108,7 +112,26 @@ export default function QrModal({ table, onClose, onChanged }) {
             </Button>
           </div>
         )}
-        <p className="w-full break-all rounded-lg bg-slate-50 px-3 py-2 text-center text-xs text-slate-500">{table.qr_url}</p>
+        <p className="w-full break-all rounded-lg bg-slate-50 px-3 py-2 text-center text-xs text-slate-500">{link.url}</p>
+        <button type="button" onClick={() => setReplacing(true)} className="text-xs font-medium text-slate-600 underline underline-offset-2 hover:text-slate-900">
+          Did a photo of this QR code get shared? Make a new link
+        </button>
+        <ConfirmDialog
+          open={replacing}
+          title={`New QR code for table ${table.number}?`}
+          message="The printed card on the table stops working at once, and so does every photo of it. Print the new card right away."
+          confirmLabel="Make new QR code"
+          cancelLabel="Keep this one"
+          onCancel={() => setReplacing(false)}
+          onConfirm={async () => {
+            const updated = await api(`/api/admin/tables/${table.id}/link`, { method: 'POST' });
+            setLink((l) => ({ url: updated.qr_url, version: l.version + 1 }));
+            setCode(updated.code);
+            setReplacing(false);
+            toast.success('New QR code made. Print the card now.');
+            onChanged?.();
+          }}
+        />
         {!table.is_active && <p className="text-center text-xs font-medium text-amber-800">This table is switched off, so the code won&rsquo;t take orders until you turn it back on.</p>}
       </div>
     </Modal>

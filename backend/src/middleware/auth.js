@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { forbidden, suspended, unauthorized } from '../lib/errors.js';
@@ -8,7 +9,8 @@ import { isSuperAdminEmail } from '../lib/serialize.js';
  * A kitchen login (`staffId`) gets a token for the same restaurant that says so (`role: 'kitchen'`), and the API lets it do the kitchen's work only.
  */
 export function signToken(vendorId, { staffId } = {}) {
-  const payload = { sub: String(vendorId) };
+  // `jti` names this one session, so that signing out can end it before it expires.
+  const payload = { sub: String(vendorId), jti: randomUUID() };
   if (staffId) {
     payload.role = 'kitchen';
     payload.stf = String(staffId);
@@ -25,6 +27,9 @@ export function requireAuth(req, _res, next) {
     const payload = jwt.verify(token, config.appSecret, { algorithms: ['HS256'] });
     req.vendorId = Number(payload.sub);
     req.tokenIssuedAt = Number(payload.iat) || 0; // seconds
+    req.tokenId = typeof payload.jti === 'string' ? payload.jti : null;
+    req.tokenExpiresAt = Number(payload.exp) || 0; // seconds
+    req.sessionKey = req.tokenId ?? `at${req.tokenIssuedAt}`; // names this sign-in (sessions from before `jti` go by their time)
     req.staffId = payload.role === 'kitchen' && payload.stf ? Number(payload.stf) : null; // set for a kitchen login
     if (payload.role === 'kitchen' && !Number.isSafeInteger(req.staffId)) throw new Error('bad staff');
     if (!Number.isSafeInteger(req.vendorId)) throw new Error('bad subject');
@@ -41,9 +46,15 @@ export function requireAuth(req, _res, next) {
 export function requireActiveVendor(db) {
   return async (req, _res, next) => {
     try {
-      const { rows } = await db.query(`SELECT email, suspended_at, suspended_reason, password_changed_at FROM vendors WHERE id = $1`, [req.vendorId]);
+      const { rows } = await db.query(
+        `SELECT email, suspended_at, suspended_reason, password_changed_at,
+                EXISTS (SELECT 1 FROM revoked_tokens r WHERE r.jti = $2) AS signed_out
+           FROM vendors WHERE id = $1`,
+        [req.vendorId, req.tokenId],
+      );
       const vendor = rows[0];
       if (!vendor) throw unauthorized('Account no longer exists');
+      if (vendor.signed_out) throw unauthorized('You have signed out. Please sign in again.');
       if (vendor.suspended_at) throw suspended(vendor.suspended_reason);
       // A password change signs out every session that started before it.
       if (vendor.password_changed_at && req.tokenIssuedAt < Math.floor(new Date(vendor.password_changed_at).getTime() / 1000)) {

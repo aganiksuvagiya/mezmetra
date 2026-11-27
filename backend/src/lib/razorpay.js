@@ -29,7 +29,9 @@ async function call(path, { keyId, keySecret, method = 'GET', body }) {
   if (!res.ok) {
     const reason = json?.error?.description || `Razorpay returned HTTP ${res.status}`;
     // 401 means the vendor's saved keys are wrong; surface that clearly to the admin, not to the diner.
-    throw new HttpError(502, res.status === 401 ? 'RAZORPAY_BAD_KEYS' : 'RAZORPAY_ERROR', reason);
+    const err = new HttpError(502, res.status === 401 ? 'RAZORPAY_BAD_KEYS' : 'RAZORPAY_ERROR', reason);
+    err.gatewayStatus = res.status; // tells a refusal (4xx) from an answer that says nothing (5xx)
+    throw err;
   }
   return json;
 }
@@ -50,6 +52,16 @@ export function verifyWebhookSignature({ secret, rawBody, signature }) {
   return safeEqual(hmacSha256Hex(secret, rawBody), String(signature ?? ''));
 }
 
+/** Whether a Razorpay payment is enough for the attempt. It may be more, when the account makes the diner pay Razorpay's fee; never less. */
+export const coversAmount = (paid, expectedPaise) => Number(paid) >= Number(expectedPaise);
+
+/** One payment as Razorpay sees it: `status` is created, authorized, captured, refunded or failed. Only `captured` money is the restaurant's. */
+export const fetchRazorpayPayment = ({ keyId, keySecret, paymentId }) => call(`/payments/${encodeURIComponent(paymentId)}`, { keyId, keySecret });
+
+/** Takes an authorized payment, for accounts that do not capture by themselves (an authorization alone is given back after a few days). */
+export const captureRazorpayPayment = ({ keyId, keySecret, paymentId, amountPaise, currency }) =>
+  call(`/payments/${encodeURIComponent(paymentId)}/capture`, { keyId, keySecret, method: 'POST', body: { amount: amountPaise, currency } });
+
 /** The payments made on a Razorpay order (items with status "captured" are money that arrived). */
 export const fetchRazorpayOrderPayments = ({ keyId, keySecret, orderId }) => call(`/orders/${encodeURIComponent(orderId)}/payments`, { keyId, keySecret });
 
@@ -67,6 +79,15 @@ export const createRazorpayQr = ({ keyId, keySecret, amountPaise, name, descript
 
 /** The QR code itself (its `image_url` is the picture to show). */
 export const fetchRazorpayQr = ({ keyId, keySecret, qrId }) => call(`/payments/qr_codes/${encodeURIComponent(qrId)}`, { keyId, keySecret });
+
+/** Closes a QR code, so that nobody can pay on it any more. */
+export const closeRazorpayQr = ({ keyId, keySecret, qrId }) => call(`/payments/qr_codes/${encodeURIComponent(qrId)}/close`, { keyId, keySecret, method: 'POST' });
+
+/** A refund as Razorpay sees it: `status` is pending, processed or failed. */
+export const fetchRazorpayRefund = ({ keyId, keySecret, refundId }) => call(`/refunds/${encodeURIComponent(refundId)}`, { keyId, keySecret });
+
+/** Every refund of one payment: `{ items: [{ id, amount, status }] }`, whoever asked for it. */
+export const fetchRazorpayPaymentRefunds = ({ keyId, keySecret, paymentId }) => call(`/payments/${encodeURIComponent(paymentId)}/refunds`, { keyId, keySecret });
 
 /** The payments made on a QR code: `{ items: [{ id, amount, status }] }`. A `captured` item means the money arrived. */
 export const fetchRazorpayQrPayments = ({ keyId, keySecret, qrId }) =>

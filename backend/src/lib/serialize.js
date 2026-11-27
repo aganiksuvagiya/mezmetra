@@ -135,6 +135,37 @@ export async function loadOrderItems(q, orderIds) {
   return byOrder;
 }
 
+/**
+ * What else there is to know about orders' money: second payments that reached an order which was already paid (to be given back, or
+ * given back), and how the refund of the payment that paid the order stands. Returns Map<orderId, { extras, refundState }>.
+ */
+export async function loadPaymentNotes(q, orderIds) {
+  const byOrder = new Map();
+  if (orderIds.length === 0) return byOrder;
+  const { rows } = await q.query(
+    `SELECT id, order_id, provider, amount_paise, status, paid_at, refunded_at, is_extra, refund_state FROM payments
+      WHERE order_id = ANY($1::bigint[]) AND (is_extra OR refund_state IS NOT NULL) ORDER BY id`,
+    [orderIds],
+  );
+  for (const p of rows) {
+    if (!byOrder.has(p.order_id)) byOrder.set(p.order_id, { extras: [], refundState: null });
+    const notes = byOrder.get(p.order_id);
+    if (!p.is_extra) notes.refundState = p.refund_state;
+    else {
+      notes.extras.push({
+        id: p.id,
+        method: p.provider,
+        amount: toRupees(p.amount_paise),
+        status: p.status,
+        refund_state: p.refund_state,
+        paid_at: p.paid_at,
+        refunded_at: p.refunded_at,
+      });
+    }
+  }
+  return byOrder;
+}
+
 const orderBase = (o, items) => ({
   // The restaurant's own order number (#1, #2, ...). `id`, where it is exposed, is the internal key used in URLs.
   number: o.order_no,
@@ -157,10 +188,13 @@ const orderBase = (o, items) => ({
   paid_at: o.paid_at,
 });
 
-export const adminOrderOut = (o, items) => ({
+export const adminOrderOut = (o, items, notes) => ({
   id: o.id,
   ...orderBase(o, items),
   pay_pref: o.pay_pref,
+  extra_payments: notes?.extras ?? [],
+  // Of the payment that paid the order: null (nothing given back), 'pending', 'processed' or 'failed'.
+  refund_state: notes?.refundState ?? null,
   receipt_url: o.payment_status === 'paid' ? `/api/admin/orders/${o.id}/receipt.pdf` : null,
 });
 

@@ -1,10 +1,12 @@
 import { config } from './config.js';
 import { createDb } from './db.js';
+import { refuseRemoteDatabase } from './lib/guard.js';
 import { migrate } from './migrate.js';
 import { createApp } from './app.js';
 import { seed } from './seed.js';
 import { startReconciler } from './lib/reconcile.js';
 
+refuseRemoteDatabase(config);
 const db = await createDb();
 if (config.autoMigrate) await migrate(db);
 // Local convenience: the file-based dev database can only be opened by one process at a time, so the demo

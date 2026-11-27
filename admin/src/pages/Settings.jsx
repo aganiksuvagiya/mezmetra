@@ -5,6 +5,7 @@ import AlertSettingsCard from '../components/AlertSettingsCard.jsx';
 import ChangePasswordCard from '../components/ChangePasswordCard.jsx';
 import KitchenLoginCard from '../components/KitchenLoginCard.jsx';
 import TableCodeCard from '../components/TableCodeCard.jsx';
+import TwoStepCard from '../components/TwoStepCard.jsx';
 import { Alert } from '../components/EmptyState.jsx';
 import LogoCard from '../components/LogoCard.jsx';
 import { focusFirstInvalid, Input } from '../components/Field.jsx';
@@ -178,6 +179,7 @@ export default function Settings() {
           <AlertSettingsCard />
           <KitchenLoginCard />
           <ChangePasswordCard />
+          <TwoStepCard />
           {accountCard}
         </div>
       </div>

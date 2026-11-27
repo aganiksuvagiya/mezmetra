@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import AuthLayout from '../components/AuthLayout.jsx';
 import { Button } from '../components/Button.jsx';
 import { Alert } from '../components/EmptyState.jsx';
@@ -11,7 +11,9 @@ export default function ResetPassword() {
   useDocumentTitle('Choose a new password');
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const token = params.get('token') ?? '';
+  // The link carries the token after '#', which is never sent to a web server (links sent earlier used '?').
+  const { hash } = useLocation();
+  const token = new URLSearchParams(hash.slice(1)).get('token') ?? params.get('token') ?? '';
   const [run, busy] = useAction();
   const [values, setValues] = useState({ password: '', confirm: '' });
   const [errors, setErrors] = useState({});

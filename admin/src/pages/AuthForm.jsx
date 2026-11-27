@@ -20,6 +20,9 @@ export default function AuthForm() {
   const [values, setValues] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState(null);
+  // Asked for after the password, when the account has two-step sign-in.
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState('');
 
   const set = (field) => (e) => {
     setValues((v) => ({ ...v, [field]: e.target.value }));
@@ -30,6 +33,7 @@ export default function AuthForm() {
     const next = {};
     if (!EMAIL_RE.test(values.email.trim())) next.email = 'Enter a valid email address.';
     if (!values.password) next.password = 'Enter your password.';
+    if (needsCode && !code.trim()) next.otp = 'Enter the code from your authenticator app.';
     return next;
   };
 
@@ -45,9 +49,18 @@ export default function AuthForm() {
     }
     run(async () => {
       try {
-        await login(values.email.trim(), values.password);
+        await login(values.email.trim(), values.password, needsCode ? code.trim() : undefined);
         // On success AuthProvider flips to "authed" and the route guard redirects.
       } catch (error) {
+        if (error.code === 'OTP_REQUIRED') {
+          setNeedsCode(true);
+          return;
+        }
+        if (error.code === 'OTP_WRONG') {
+          setErrors({ otp: error.message });
+          focusFirstInvalid(form);
+          return;
+        }
         const { fields, formError } = splitFieldErrors(error, ['email', 'password']);
         setErrors(fields);
         setServerError(formError);
@@ -93,6 +106,24 @@ export default function AuthForm() {
           error={errors.password}
           required
         />
+        {needsCode && (
+          <Input
+            label="Code from your authenticator app"
+            name="otp"
+            autoComplete="one-time-code"
+            autoCapitalize="characters"
+            spellCheck={false}
+            autoFocus
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setErrors((prev) => ({ ...prev, otp: undefined }));
+            }}
+            error={errors.otp}
+            hint="6 digits. Lost your phone? Type one of your recovery codes."
+            required
+          />
+        )}
         <p className="-mt-2 text-right text-sm">
           <Link to="/forgot-password" className="font-medium text-brand-700 underline-offset-2 hover:underline">
             Forgot password?
