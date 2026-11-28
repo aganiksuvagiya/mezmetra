@@ -1,3 +1,5 @@
+import { dishInHindi } from './hindiWords.js';
+
 // The "new order" chime. It is generated with the Web Audio API (no sound file to ship). Browsers keep audio locked until
 // the person has clicked or tapped the page, so `unlockAudio()` has to run from such a gesture; until then `playOrderChime()`
 // stays silent instead of failing.
@@ -73,11 +75,34 @@ export function playOrderChime(times = 2) {
 }
 
 // --- Voice -----------------------------------------------------------------------------------------------------------------
-// A kitchen is loud and nobody stares at the screen, so each new order is also read out ("New order. Table 3. 2 items.") with the
+// A kitchen is loud and nobody stares at the screen, so each new order is also read out ("New order. Table 3. 1 Tea, 2 Samosa.") with the
 // browser's own text-to-speech: nothing to ship, and it works offline. Like the chime it needs one click on the page first.
 // The choices (on/off, language, voice, speed) are kept per device, because every phone and computer has its own voices.
 
 const VOICE_KEY = 'mezmitra_order_voice';
+
+/** "T-03" is read as "T 3" (a text-to-speech voice spells "03" badly). */
+const spokenTable = (number) =>
+  String(number)
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b0+(?=\d)/g, '')
+    .trim();
+
+// How the English letters of a table name are said in Hindi; a Hindi voice reads the bare letters badly.
+const HINDI_LETTERS = {
+  A: 'ए', B: 'बी', C: 'सी', D: 'डी', E: 'ई', F: 'एफ', G: 'जी', H: 'एच', I: 'आई', J: 'जे', K: 'के', L: 'एल', M: 'एम',
+  N: 'एन', O: 'ओ', P: 'पी', Q: 'क्यू', R: 'आर', S: 'एस', T: 'टी', U: 'यू', V: 'वी', W: 'डब्ल्यू', X: 'एक्स', Y: 'वाई', Z: 'ज़ेड',
+};
+
+/** A table the way staff say it in Hindi: "T-03" and "Table 3" are "टेबल नंबर 3", "A-2" is "टेबल ए 2". Longer names stay as written. */
+const hindiTable = (number) => {
+  const name = spokenTable(number)
+    .replace(/^(?:t|tbl|table)\s*(?=\d)/i, '') // the T of "T-3" only means "table"
+    .replace(/([A-Za-z])(?=\d)/g, '$1 ')
+    .replace(/\b0+(?=\d)/g, '')
+    .replace(/\b[A-Za-z]{1,2}\b/g, (letters) => [...letters.toUpperCase()].map((letter) => HINDI_LETTERS[letter]).join(' '));
+  return /^\d+$/.test(name) ? `टेबल नंबर ${name}` : `टेबल ${name}`;
+};
 
 /** What is said, per language. `locale` is the BCP-47 tag the voice is looked up by. */
 export const VOICE_LANGS = {
@@ -85,18 +110,26 @@ export const VOICE_LANGS = {
     label: 'English',
     locale: 'en-IN',
     start: 'New order.',
-    table: (t) => `Table ${t}.`,
+    table: (number) => `Table ${spokenTable(number)}.`,
     items: (n) => `${n} ${n === 1 ? 'item' : 'items'}.`,
     paid: 'Paid online.',
+    more: (n) => `And ${n} more, see the screen.`,
+    many: (n) => `${n} new orders.`,
+    waiter: (number) => `Table ${spokenTable(number)} is calling the waiter.`,
+    bill: (number) => `Table ${spokenTable(number)} wants the bill.`,
     sample: 'Voice is on. New orders will be read out.',
   },
   hi: {
     label: 'हिन्दी (Hindi)',
     locale: 'hi-IN',
-    start: 'नया ऑर्डर।',
-    table: (t) => `टेबल ${t}।`,
+    start: 'नया ऑर्डर आया है।',
+    table: (number) => `${hindiTable(number)}।`,
     items: (n) => `${n} आइटम।`,
-    paid: 'ऑनलाइन भुगतान हो गया।',
+    paid: 'ऑनलाइन पेमेंट हो चुका है।',
+    more: (n) => `और ${n} आइटम स्क्रीन पर देखें।`,
+    many: (n) => `${n} नए ऑर्डर आए हैं।`,
+    waiter: (number) => `${hindiTable(number)} पर वेटर को बुलाया है।`,
+    bill: (number) => `${hindiTable(number)} पर बिल माँगा है।`,
     sample: 'आवाज़ चालू है। नए ऑर्डर बोले जाएंगे।',
   },
 };
@@ -138,10 +171,25 @@ export function writeVoicePrefs(patch) {
 
 const langCode = (voice) => String(voice.lang ?? '').toLowerCase().replace('_', '-').split('-')[0];
 
-/** The voices this device has for a language ('en', 'hi'). The list can be empty until the browser has loaded them. */
+// Devices often list a plain, mechanical voice first. These marks in a voice's name pick a better one, best first: Google's Hindi
+// voice was chosen by ear; the others are the natural voices of browsers that have no Google one.
+const NATURAL_NAMES = [/^google/i, /natural|neural/i, /premium/i, /enhanced/i];
+const naturalness = (voice) => {
+  const at = NATURAL_NAMES.findIndex((pattern) => pattern.test(voice.name ?? ''));
+  return at < 0 ? 0 : NATURAL_NAMES.length - at;
+};
+
+/** The voices this device has for a language ('en', 'hi'), the Hindi ones most natural first. The list can be empty until the browser has loaded them. */
 export function voicesFor(lang) {
   if (!speechSupported()) return [];
-  return window.speechSynthesis.getVoices().filter((v) => langCode(v) === lang);
+  const list = window.speechSynthesis.getVoices().filter((v) => langCode(v) === lang);
+  return lang === 'hi' ? list.sort((a, b) => naturalness(b) - naturalness(a)) : list;
+}
+
+/** A device with voices but none for Hindi would mangle the Hindi text, so it is read in English there instead. */
+function usablePrefs(prefs) {
+  const missing = prefs.lang !== 'en' && speechSupported() && window.speechSynthesis.getVoices().length > 0 && voicesFor(prefs.lang).length === 0;
+  return missing ? { ...prefs, lang: 'en', voice: '' } : prefs;
 }
 
 /** The chosen voice if this device still has it, else an Indian-English voice for English, else the first voice of the language. */
@@ -150,28 +198,49 @@ function pickVoice(prefs) {
   return list.find((v) => v.voiceURI === prefs.voice) ?? (prefs.lang === 'en' ? list.find((v) => v.lang === 'en-IN') : null) ?? list[0] ?? null;
 }
 
-/** "T-03" is read as "T 3" (a text-to-speech voice spells "03" badly). */
-const spokenTable = (number) =>
-  String(number)
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b0+(?=\d)/g, '')
-    .trim();
+/** How many different dishes are named before the voice sends staff to the screen (a very long sentence helps nobody). */
+const DISHES_SPOKEN = 6;
 
-/** What is said for one new order. `order` is a row of the admin orders list. */
-export function orderSentence(order, lang = 'en') {
+/** [name, how many] of each dish in the order; the same dish ordered twice (say, with different extras) is counted once. */
+function dishesOf(order) {
+  const counts = new Map();
+  for (const line of order.items ?? []) {
+    const name = String(line.name ?? '').trim();
+    if (name) counts.set(name, (counts.get(name) ?? 0) + (Number(line.quantity) || 1));
+  }
+  return [...counts];
+}
+
+/** The sentences for one new order. `order` is a row of the admin orders list. */
+function orderSentences(order, lang) {
   const words = VOICE_LANGS[lang] ?? VOICE_LANGS.en;
+  const parts = [words.start, words.table(order.table_number)];
+  const dishes = dishesOf(order);
   const qty = Number(order.total_quantity) || 0;
-  const parts = [words.start, words.table(spokenTable(order.table_number))];
-  if (qty > 0) parts.push(words.items(qty));
+  if (dishes.length > 0) {
+    const named = dishes.slice(0, DISHES_SPOKEN);
+    // In Hindi every dish is its own sentence, with its name written in Hindi.
+    if (lang === 'hi') parts.push(...named.map(([name, count]) => `${count} ${dishInHindi(name)}।`));
+    else parts.push(`${named.map(([name, count]) => `${count} ${name}`).join(', ')}.`);
+    if (dishes.length > DISHES_SPOKEN) parts.push(words.more(dishes.length - DISHES_SPOKEN));
+  } else if (qty > 0) parts.push(words.items(qty));
   if (order.payment_status === 'paid') parts.push(words.paid);
-  return parts.join(' ');
+  return parts;
+}
+
+/** What is said for one new order, as one text. */
+export const orderSentence = (order, lang = 'en') => orderSentences(order, lang).join(' ');
+
+/** Reads one order. In Hindi each sentence is spoken by itself, which leaves a short pause between the dishes. */
+function sayOrder(order, prefs) {
+  const texts = prefs.lang === 'hi' ? orderSentences(order, 'hi') : [orderSentence(order, prefs.lang)];
+  return texts.map((text) => speak(text, prefs)).some(Boolean);
 }
 
 /** What is said when a diner calls the waiter or asks for the bill. */
 export function requestSentence(request, lang = 'en') {
-  const table = spokenTable(request.table_number);
-  if (lang === 'hi') return request.kind === 'bill' ? `टेबल ${table} को बिल चाहिए।` : `टेबल ${table} वेटर को बुला रहा है।`;
-  return request.kind === 'bill' ? `Table ${table} wants the bill.` : `Table ${table} is calling the waiter.`;
+  const words = VOICE_LANGS[lang] ?? VOICE_LANGS.en;
+  return (request.kind === 'bill' ? words.bill : words.waiter)(request.table_number);
 }
 
 export function speak(text, prefs = readVoicePrefs()) {
@@ -191,22 +260,23 @@ export function speak(text, prefs = readVoicePrefs()) {
 }
 
 /** Says a made-up order, so the person can hear the chosen voice and speed. */
-export const speakSample = (prefs = readVoicePrefs()) =>
-  speak(orderSentence({ table_number: 'T-03', total_quantity: 2, payment_status: 'unpaid' }, prefs.lang), prefs);
+export function speakSample(prefs = readVoicePrefs()) {
+  const usable = usablePrefs(prefs);
+  const items = [{ name: 'Cutting Chai', quantity: 1 }, { name: 'Bun Maska', quantity: 2 }];
+  return sayOrder({ table_number: 'T-03', items, total_quantity: 3, payment_status: 'unpaid' }, usable);
+}
 
 /** Reads out new orders: each one by itself (up to 3), or a count when a lot arrive at once. Does nothing when voice is off. */
 export function announceOrders(orders) {
-  const prefs = readVoicePrefs();
+  const prefs = usablePrefs(readVoicePrefs());
   if (!prefs.on || !speechSupported() || orders.length === 0) return false;
-  if (orders.length > 3) {
-    return speak(prefs.lang === 'en' ? `${orders.length} new orders.` : `${VOICE_LANGS[prefs.lang].start} ${orders.length}`, prefs);
-  }
-  return orders.map((o) => speak(orderSentence(o, prefs.lang), prefs)).some(Boolean);
+  if (orders.length > 3) return speak(VOICE_LANGS[prefs.lang].many(orders.length), prefs);
+  return orders.map((o) => sayOrder(o, prefs)).some(Boolean);
 }
 
 /** Reads out new waiter / bill requests (up to 3). Does nothing when voice is off. */
 export function announceRequests(requests) {
-  const prefs = readVoicePrefs();
+  const prefs = usablePrefs(readVoicePrefs());
   if (!prefs.on || !speechSupported() || requests.length === 0) return false;
   return requests.slice(0, 3).map((r) => speak(requestSentence(r, prefs.lang), prefs)).some(Boolean);
 }

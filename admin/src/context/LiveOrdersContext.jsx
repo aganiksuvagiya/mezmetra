@@ -192,7 +192,7 @@ export function LiveOrdersProvider({ children }) {
     setSoundReady(true);
     playOrderChime(1);
     if (voiceActive()) setTimeout(() => speakSample(), 900);
-    toast.success(voiceActive() ? "Sound is on. You'll hear a chime and the table number for every new order." : "Sound is on. You'll hear a chime for every new order.");
+    toast.success(voiceActive() ? "Sound is on. You'll hear a chime, the table and the dishes for every new order." : "Sound is on. You'll hear a chime for every new order.");
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
   }, [toast]);
 

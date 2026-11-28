@@ -47,7 +47,7 @@ export default function AlertSettingsCard() {
         <SwitchField
           label="Read new orders out loud"
           description={
-            supported ? 'Says the table and the number of items after the chime, like “New order. Table 3. 2 items.”' : 'This browser cannot read text out loud, so you will only hear the chime.'
+            supported ? 'Says the table and each dish with its quantity after the chime, like “New order. Table 3. 1 Tea, 2 Samosa.”' : 'This browser cannot read text out loud, so you will only hear the chime.'
           }
           checked={supported && prefs.on}
           disabled={!supported}
@@ -69,7 +69,7 @@ export default function AlertSettingsCard() {
                 value={prefs.voice}
                 disabled={voices.length === 0}
                 onChange={(e) => change({ voice: e.target.value })}
-                hint={voices.length === 0 ? 'No voice for this language on this device.' : undefined}
+                hint={voices.length === 0 ? 'No voice for this language on this device.' : prefs.lang === 'hi' ? 'Automatic picks the most natural one. In Chrome, “Google हिन्दी” is usually the clearest.' : undefined}
               >
                 <option value="">Automatic</option>
                 {voices.map((v) => (
@@ -89,8 +89,8 @@ export default function AlertSettingsCard() {
 
             {voices.length === 0 && (
               <Alert tone="warning">
-                This device has no {language.label} voice, so the order may be read badly or not at all. Choose English, or add a {language.label} voice in this device’s
-                language / accessibility settings. (Many computers have only English.)
+                This device has no {language.label} voice, so orders are read in English here. To hear {language.label}, add that voice in this device’s language /
+                accessibility settings, or open the admin in Chrome. (Many computers have only English.)
               </Alert>
             )}
 

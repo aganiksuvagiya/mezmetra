@@ -4670,3 +4670,88 @@ describe('a refunded order never turns paid again, whatever arrives later', () =
     for (const path of ['razorpay', 'razorpay-qr']) assert.equal((await api('POST', `/api/public/orders/${order.token}/${path}`)).body.error.code, 'ALREADY_REFUNDED', path);
   });
 });
+
+describe('the spoken new-order alert', () => {
+  const load = () => import('../../admin/src/lib/orderAlert.js');
+
+  it('says Hindi sentences the way staff would, with the table name made speakable', async () => {
+    const { orderSentence, requestSentence } = await load();
+    const order = { table_number: 'T-03', total_quantity: 2, payment_status: 'paid' };
+    assert.equal(orderSentence(order, 'hi'), 'नया ऑर्डर आया है। टेबल नंबर 3। 2 आइटम। ऑनलाइन पेमेंट हो चुका है।');
+    for (const [name, said] of [['T3', 'टेबल नंबर 3'], ['Table 12', 'टेबल नंबर 12'], ['07', 'टेबल नंबर 7'], ['A-02', 'टेबल ए 2'], ['VIP', 'टेबल VIP'], ['Patio 2', 'टेबल Patio 2']]) {
+      assert.ok(orderSentence({ table_number: name, total_quantity: 0 }, 'hi').includes(`${said}।`), name);
+    }
+    assert.equal(requestSentence({ table_number: 'T-05', kind: 'bill' }, 'hi'), 'टेबल नंबर 5 पर बिल माँगा है।');
+    assert.equal(requestSentence({ table_number: 'T-05', kind: 'waiter' }, 'hi'), 'टेबल नंबर 5 पर वेटर को बुलाया है।');
+    // English is as it was.
+    assert.equal(orderSentence(order, 'en'), 'New order. Table T 3. 2 items. Paid online.');
+  });
+
+  it('names every dish with its quantity', async () => {
+    const { orderSentence } = await load();
+    const order = {
+      table_number: 'T-03',
+      total_quantity: 4,
+      items: [{ name: 'Cutting Chai', quantity: 1 }, { name: 'Bun Maska', quantity: 2 }, { name: 'Cutting Chai', quantity: 1 }],
+    };
+    assert.equal(orderSentence(order, 'hi'), 'नया ऑर्डर आया है। टेबल नंबर 3। 2 कटिंग चाय। 2 बन मस्का।');
+    assert.equal(orderSentence(order, 'en'), 'New order. Table T 3. 2 Cutting Chai, 2 Bun Maska.');
+    const long = { table_number: '1', payment_status: 'paid', items: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ name: `Dish ${n}`, quantity: 1 })) };
+    assert.equal(orderSentence(long, 'en'), 'New order. Table 1. 1 Dish 1, 1 Dish 2, 1 Dish 3, 1 Dish 4, 1 Dish 5, 1 Dish 6. And 2 more, see the screen. Paid online.');
+    assert.match(orderSentence(long, 'hi'), /1 Dish 6। और 2 आइटम स्क्रीन पर देखें।/);
+  });
+
+  it('writes dish names in Hindi, for every dish of the demo menus', async () => {
+    const { dishInHindi } = await import('../../admin/src/lib/hindiWords.js');
+    assert.equal(dishInHindi('Brownie with Ice Cream'), 'ब्राउनी विद आइसक्रीम');
+    assert.equal(dishInHindi('Samosa (2 pcs)'), 'समोसा 2 पीस');
+    assert.equal(dishInHindi('Paneer Zafrani'), 'पनीर Zafrani'); // an unknown word stays as typed
+    assert.equal(dishInHindi('constructor पनीर'), 'constructor पनीर');
+    const { readFile } = await import('node:fs/promises');
+    const seeded = [...(await readFile(new URL('../src/seed.js', import.meta.url), 'utf8')).matchAll(/name: '([^']+)',\s+description:/g)].map((m) => m[1]);
+    assert.ok(seeded.length > 25, `found ${seeded.length} demo dishes`);
+    assert.deepEqual(seeded.filter((name) => /[A-Za-z]/.test(dishInHindi(name))), []);
+  });
+
+  it('prefers a natural Hindi voice, and reads in English where there is no Hindi voice', async () => {
+    const { announceOrders, voicesFor } = await load();
+    const saved = { window: globalThis.window, utterance: globalThis.SpeechSynthesisUtterance, storage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage') };
+    let voices = [
+      { name: 'Lekha', lang: 'hi-IN', voiceURI: 'lekha' },
+      { name: 'Google हिन्दी', lang: 'hi-IN', voiceURI: 'google-hi' },
+      { name: 'Rishi', lang: 'en-IN', voiceURI: 'rishi' },
+    ];
+    const spoken = [];
+    globalThis.window = { speechSynthesis: { getVoices: () => voices, speak: (u) => spoken.push(u) } };
+    globalThis.SpeechSynthesisUtterance = class {
+      constructor(text) {
+        this.text = text;
+      }
+    };
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => JSON.stringify({ on: true, lang: 'hi' }), setItem: () => {} } });
+    try {
+      assert.deepEqual(voicesFor('hi').map((v) => v.name), ['Google हिन्दी', 'Lekha']);
+      announceOrders([1, 2, 3, 4, 5].map((n) => ({ table_number: `T-${n}`, total_quantity: 1 })));
+      assert.equal(spoken[0].text, '5 नए ऑर्डर आए हैं।');
+      assert.equal(spoken[0].voice.voiceURI, 'google-hi');
+      // One order in Hindi: each sentence by itself.
+      spoken.length = 0;
+      announceOrders([{ table_number: 'T-02', items: [{ name: 'Cutting Chai', quantity: 1 }, { name: 'Bun Maska', quantity: 2 }] }]);
+      assert.deepEqual(
+        spoken.map((u) => u.text),
+        ['नया ऑर्डर आया है।', 'टेबल नंबर 2।', '1 कटिंग चाय।', '2 बन मस्का।'],
+      );
+      spoken.length = 1;
+      voices = [voices[2]];
+      announceOrders([{ table_number: 'T-01', total_quantity: 1 }]);
+      assert.equal(spoken[1].text, 'New order. Table T 1. 1 item.');
+      assert.equal(spoken[1].voice.voiceURI, 'rishi');
+    } finally {
+      globalThis.window = saved.window;
+      globalThis.SpeechSynthesisUtterance = saved.utterance;
+      if (saved.storage) Object.defineProperty(globalThis, 'localStorage', saved.storage);
+      else delete globalThis.localStorage;
+    }
+  });
+});
+
