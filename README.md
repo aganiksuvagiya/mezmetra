@@ -92,9 +92,10 @@ All SQL is plain PostgreSQL 14+, so moving to another provider later (Supabase, 
 | `CLIENT_IP_HEADER` | The header in which the proxy names the visitor; the rate limits count by it. `cf-connecting-ip` on Render (set in `render.yaml`). Set it only where no request can bypass that proxy. |
 | `MAX_OPEN_ORDERS_PER_TABLE` | How many pending, unpaid orders one table may have (default 12). |
 
-Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin. The admin's `Content-Security-Policy`
-(`admin/vercel.json`, `admin/public/_headers`) names the API's address: change it there too if the API moves (for example to a domain of your own),
-or the admin cannot reach it.
+Web apps: set `VITE_API_URL` (build time) to the API's public URL when they are not served from the same origin. Each build writes its app's
+`Content-Security-Policy` (from `admin/vercel.json` or `customer/vercel.json`) into the page itself, and allows the `VITE_API_URL` origin, so the
+policy also holds when both sites are built from the repository root and only the root `vercel.json` is read. If the API moves, update
+`admin/vercel.json` and `admin/public/_headers` too (the customer's report-only policy names it as well).
 
 ## Password reset, sold-out dishes, reports
 

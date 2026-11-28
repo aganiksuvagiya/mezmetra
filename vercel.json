@@ -33,7 +33,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://*.razorpay.com"
+          "value": "base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://*.razorpay.com"
         },
         {
           "key": "Permissions-Policy",

@@ -4421,9 +4421,34 @@ describe('server configuration: the database, the log, local runs and the web ap
     const diner = await headersOf('customer/vercel.json');
     assert.match(diner['Content-Security-Policy'], /object-src 'none'; base-uri 'self'; frame-ancestors 'none'/);
     assert.match(diner['Content-Security-Policy-Report-Only'], /script-src 'self' https:\/\/\*\.razorpay\.com;/);
-    for (const h of [admin, diner, await headersOf('vercel.json')]) {
+    const shared = await headersOf('vercel.json');
+    for (const h of [admin, diner, shared]) {
       assert.ok(h['Permissions-Policy'] && h['X-Content-Type-Options'] && h['X-Frame-Options'] && h['Referrer-Policy']);
     }
+    assert.match(shared['Content-Security-Policy'], /frame-ancestors 'none'/);
+    // A shared rule applies on top of each page's own policy, so it must not forbid what one of the apps needs.
+    assert.doesNotMatch(shared['Content-Security-Policy'], /object-src|default-src|script-src/);
+  });
+
+  it('writes each app\'s policy into its built page, for hosts that read only the shared settings', async () => {
+    const { pagePolicy } = await import('../../shared/vite-csp.js');
+    const policyOf = (app, apiUrl) => {
+      const plugin = pagePolicy(new URL(`../../${app}/`, import.meta.url));
+      plugin.configResolved({ env: { VITE_API_URL: apiUrl } });
+      const [tag] = plugin.transformIndexHtml('');
+      assert.equal(tag.attrs['http-equiv'], 'Content-Security-Policy');
+      return tag.attrs.content;
+    };
+    const admin = policyOf('admin', 'https://mezmitra-api.onrender.com');
+    assert.match(admin, /^default-src 'self'; script-src 'self';/);
+    assert.match(admin, /connect-src 'self' https:\/\/mezmitra-api\.onrender\.com;/);
+    assert.doesNotMatch(admin, /frame-ancestors/);
+    const moved = policyOf('admin', 'https://api.example.test/base');
+    assert.match(moved, /connect-src 'self' https:\/\/mezmitra-api\.onrender\.com https:\/\/api\.example\.test;/);
+    assert.match(moved, /img-src [^;]*https:\/\/api\.example\.test;/);
+    assert.match(moved, /script-src 'self';/);
+    const diner = policyOf('customer', '');
+    assert.equal(diner, "object-src 'none'; base-uri 'self'; form-action 'self' https://*.razorpay.com");
   });
 });
 
