@@ -4755,3 +4755,58 @@ describe('the spoken new-order alert', () => {
   });
 });
 
+
+describe('the A4 bill', () => {
+  const draw = async (vendor, order) => {
+    const { writeReceipt } = await import('../src/lib/receipt.js');
+    const { PassThrough } = await import('node:stream');
+    const out = new PassThrough();
+    const chunks = [];
+    out.on('data', (c) => chunks.push(c));
+    const done = new Promise((resolve) => out.on('end', resolve));
+    writeReceipt(out, {
+      vendor: { name: 'Bill Cafe', timezone: 'Asia/Kolkata', theme_primary: '#2f6f62', tax_percent: '10.00', ...vendor },
+      order: {
+        number: 7,
+        table_number: 'T-01',
+        created_at: new Date(),
+        paid_at: new Date(),
+        payment_method: 'cash',
+        payment_status: 'paid',
+        subtotal: 2,
+        tax: 0.2,
+        total: 2.2,
+        items: [{ name: 'Chai', quantity: 2, line_total: 2, options: [], instructions: null }],
+        ...order,
+      },
+    });
+    await done;
+    const pdf = Buffer.concat(chunks).toString('latin1');
+    return { pdf, pages: (pdf.match(/\/Type \/Page$/gm) ?? []).length, pictures: (pdf.match(/\/Subtype \/Image/g) ?? []).length };
+  };
+
+  it('is an A4 page, and goes on to more pages for a long order', async () => {
+    const short = await draw();
+    assert.match(short.pdf, /\/MediaBox \[0 0 595\.28 841\.89\]/);
+    assert.equal(short.pages, 1);
+    const items = Array.from({ length: 60 }, (_, i) => ({ name: `Dish ${i}`, quantity: 1, line_total: 1, options: [{ name: 'Large', price: 1 }], instructions: 'Less spicy' }));
+    const long = await draw({}, { items });
+    assert.ok(long.pages >= 3, `${long.pages} pages`);
+  });
+
+  it('prints a JPEG or PNG logo, and manages without one it cannot print', async () => {
+    assert.equal((await draw()).pictures, 0);
+    assert.ok((await draw({ logo: PNG_1X1 })).pictures >= 1);
+    assert.equal((await draw({ logo: Buffer.from('RIFF0000WEBPnot-printable') })).pages, 1);
+  });
+
+  it('writes the amount in words the Indian way', async () => {
+    const { amountInWords } = await import('../src/lib/receipt.js');
+    assert.equal(amountInWords(0), 'Rupees Zero Only');
+    assert.equal(amountInWords(2.2), 'Rupees Two and Twenty Paise Only');
+    assert.equal(amountInWords(105), 'Rupees One Hundred Five Only');
+    assert.equal(amountInWords(1592.85), 'Rupees One Thousand Five Hundred Ninety Two and Eighty Five Paise Only');
+    assert.equal(amountInWords(100000), 'Rupees One Lakh Only');
+    assert.equal(amountInWords(12345678.01), 'Rupees One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight and One Paise Only');
+  });
+});

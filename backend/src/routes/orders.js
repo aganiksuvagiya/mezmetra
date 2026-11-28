@@ -273,13 +273,15 @@ export function ordersRouter(db) {
   router.get('/:id/receipt.pdf', async (req, res) => {
     const order = await loadOne(db, req.params.id, req.vendorId);
     if (order.payment_status !== 'paid') throw conflict('NOT_PAID', 'A receipt is available once the order is paid.');
-    const { rows } = await db.query(`SELECT name, timezone FROM vendors WHERE id = $1`, [req.vendorId]);
+    const { rows } = await db.query(`SELECT name, timezone, theme_primary, tax_percent FROM vendors WHERE id = $1`, [req.vendorId]);
+    // A PDF can hold a JPEG or PNG picture only.
+    const logo = await db.query(`SELECT data FROM vendor_logos WHERE vendor_id = $1 AND mime IN ('image/jpeg', 'image/png')`, [req.vendorId]);
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `inline; filename="receipt-${order.number}.pdf"`,
       'Cache-Control': 'private, no-store',
     });
-    writeReceipt(res, { vendor: rows[0], order });
+    writeReceipt(res, { vendor: { ...rows[0], logo: logo.rows[0] && Buffer.from(logo.rows[0].data) }, order });
   });
 
   return router;

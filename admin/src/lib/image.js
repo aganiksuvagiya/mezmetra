@@ -26,7 +26,7 @@ async function decode(file) {
 const toBlob = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 
 /** Resolves to `{ blob, width, height }` or throws an Error with a message that is safe to show. */
-export async function prepareImage(file, { maxSide = MAX_SIDE, maxBytes = MAX_BYTES } = {}) {
+export async function prepareImage(file, { maxSide = MAX_SIDE, maxBytes = MAX_BYTES, type: wanted = 'image/webp' } = {}) {
   if (!file?.type?.startsWith('image/')) throw new Error('Please choose an image (JPEG, PNG or WebP).');
 
   let source;
@@ -40,7 +40,7 @@ export async function prepareImage(file, { maxSide = MAX_SIDE, maxBytes = MAX_BY
   if (!srcW || !srcH) throw new Error('That image could not be read. Try a JPEG, PNG or WebP file.');
 
   let scale = Math.min(1, maxSide / Math.max(srcW, srcH));
-  let type = 'image/webp';
+  let type = wanted;
 
   try {
     for (let attempt = 0; attempt < 5; attempt += 1) {

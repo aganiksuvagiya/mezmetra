@@ -26,7 +26,8 @@ export default function LogoCard() {
     setError(null);
     setBusy('upload');
     try {
-      const { blob } = await prepareImage(file, { maxSide: 512, maxBytes: 200 * 1024 });
+      // JPEG, not WebP: the PDF bill can print it. (Transparent parts are filled white either way.)
+      const { blob } = await prepareImage(file, { maxSide: 512, maxBytes: 200 * 1024, type: 'image/jpeg' });
       const updated = await api('/api/admin/vendor/logo', { method: 'PUT', body: blob });
       updateVendor(updated);
       toast.success(`Logo saved (${formatBytes(blob.size)}). Diners see it on your menu now.`);
@@ -47,7 +48,7 @@ export default function LogoCard() {
 
   return (
     <Card as="section" aria-labelledby="logo">
-      <CardHeader id="logo" title="Logo" description="Shown at the top of your customer menu and order pages." />
+      <CardHeader id="logo" title="Logo" description="Shown at the top of your customer menu and order pages, and on your bills." />
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
         <div className="flex size-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-white text-slate-400">
           {shown ? (
