@@ -1,5 +1,8 @@
 import PDFDocument from 'pdfkit';
+import { amountInWords, taxLines } from '../../../shared/bill.js';
 import { PAYMENT_LABELS } from './paymentLabels.js';
+
+export { amountInWords };
 
 // The built-in PDF fonts have no rupee glyph, so amounts are printed as "Rs 399.00".
 const money = (rupees) => `Rs ${Number(rupees).toFixed(2)}`;
@@ -7,24 +10,6 @@ const plain = (rupees) => Number(rupees).toFixed(2);
 
 function formatDate(date, timeZone) {
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(new Date(date));
-}
-
-const ONES = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
-const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-
-/** A whole number in words, grouped the Indian way (thousand, lakh, crore). */
-function inWords(n) {
-  if (n < 20) return ONES[n];
-  if (n < 100) return [TENS[Math.floor(n / 10)], n % 10 ? ONES[n % 10] : ''].filter(Boolean).join(' ');
-  const [size, name] = [[10_000_000, 'Crore'], [100_000, 'Lakh'], [1000, 'Thousand'], [100, 'Hundred']].find(([s]) => n >= s);
-  return [inWords(Math.floor(n / size)), name, n % size ? inWords(n % size) : ''].filter(Boolean).join(' ');
-}
-
-/** 1250.5 -> "Rupees One Thousand Two Hundred Fifty and Fifty Paise Only" */
-export function amountInWords(rupees) {
-  const paise = Math.round(Number(rupees) * 100);
-  const rest = paise % 100;
-  return `Rupees ${inWords(Math.floor(paise / 100))}${rest ? ` and ${inWords(rest)} Paise` : ''} Only`;
 }
 
 /** Black or white, whichever can be read on this background colour. */
@@ -53,7 +38,8 @@ const SHADE = '#f3f4f6';
 /**
  * Stream an A4 bill for a paid order into `res` (anything writable).
  * `order` is the admin serialisation (see serialize.adminOrderOut); `vendor` has name, timezone and, optionally, theme_primary,
- * tax_percent and `logo` (the bytes of a JPEG or PNG; other pictures cannot be put in a PDF).
+ * tax_percent, `logo` (the bytes of a JPEG or PNG; other pictures cannot be put in a PDF) and the bill details bill_name,
+ * bill_address, gstin, fssai and bill_contact.
  */
 export function writeReceipt(res, { vendor, order }) {
   const doc = new PDFDocument({ size: 'A4', margin: 40, info: { Title: `Bill #${order.number}` } });
@@ -87,12 +73,16 @@ export function writeReceipt(res, { vendor, order }) {
     text([...vendor.name.trim()][0]?.toUpperCase() ?? '', left, 54, { width: mark, align: 'center', lineBreak: false }, { font: 'Helvetica-Bold', size: 28, color: textOn(colour) });
   }
   const nameX = left + mark + 16;
+  const seller = vendor.bill_name || vendor.name;
+  const details = [vendor.bill_address, vendor.gstin && `GSTIN: ${vendor.gstin}`, vendor.fssai && `FSSAI: ${vendor.fssai}`].filter(Boolean).join('\n');
   doc.font('Helvetica-Bold').fontSize(22);
-  const nameHeight = doc.heightOfString(vendor.name, { width: 290 });
-  const nameTop = 40 + Math.max(0, (mark - nameHeight) / 2); // level with the logo
-  text(vendor.name, nameX, nameTop, { width: 290 }, { font: 'Helvetica-Bold', size: 22 });
-  const headerEnd = Math.max(nameTop + nameHeight, 40 + mark);
-  text('BILL', right - 150, 40, { width: 150, align: 'right' }, { font: 'Helvetica-Bold', size: 28, color: strong });
+  const nameHeight = doc.heightOfString(seller, { width: 290 });
+  const nameTop = details ? 40 : 40 + Math.max(0, (mark - nameHeight) / 2); // alone, the name sits level with the logo
+  text(seller, nameX, nameTop, { width: 290 }, { font: 'Helvetica-Bold', size: 22 });
+  if (details) text(details, nameX, nameTop + nameHeight + 3, { width: 290 }, { size: 9, color: MUTED });
+  const headerEnd = Math.max(details ? doc.y : nameTop + nameHeight, 40 + mark);
+  // With a GSTIN this is a tax invoice, and is headed as one.
+  text(vendor.gstin ? 'TAX INVOICE' : 'BILL', right - 160, 40, { width: 160, align: 'right' }, { font: 'Helvetica-Bold', size: vendor.gstin ? 20 : 28, color: strong });
   doc.roundedRect(right - 70, 76, 70, 22, 11).fill('#dcfce7');
   text('PAID', right - 70, 82, { width: 70, align: 'center', characterSpacing: 1.5, lineBreak: false }, { font: 'Helvetica-Bold', size: 11, color: '#166534' });
 
@@ -163,18 +153,13 @@ export function writeReceipt(res, { vendor, order }) {
   y += 16;
   const boxX = right - 230;
   const totalRow = (label, value) => {
-    text(label, boxX + 12, y, { width: 110, lineBreak: false }, { color: MUTED });
+    text(label, boxX + 12, y, { width: 150, lineBreak: false }, { color: MUTED });
     text(money(value), boxX + 100, y, { width: 120, align: 'right', lineBreak: false });
     y += 19;
   };
   const wordsTop = y;
   totalRow('Subtotal', order.subtotal);
-  if (order.tax > 0) {
-    // The rate is named only when it gives exactly this tax (the restaurant may have changed its rate since).
-    const rate = Number(vendor.tax_percent);
-    const fits = rate > 0 && Math.round((Math.round(order.subtotal * 100) * rate) / 100) === Math.round(order.tax * 100);
-    totalRow(fits ? `Tax (${rate}%)` : 'Tax', order.tax);
-  }
+  for (const line of taxLines(order, vendor)) totalRow(line.label, line.amount);
   y += 4;
   doc.roundedRect(boxX, y, 230, 34, 8).fill(colour);
   text('TOTAL', boxX + 12, y + 12, { width: 80, lineBreak: false }, { font: 'Helvetica-Bold', size: 11, color: textOn(colour) });
@@ -191,7 +176,8 @@ export function writeReceipt(res, { vendor, order }) {
   const foot = doc.page.height - 96;
   rule(foot);
   text('Thank you! Visit again.', left, foot + 12, { width, align: 'center', lineBreak: false }, { font: 'Helvetica-Bold', size: 12, color: strong });
-  text('This is a computer-generated bill and needs no signature.', left, foot + 30, { width, align: 'center', lineBreak: false }, { size: 8.5, color: MUTED });
+  const small = vendor.bill_contact ? `For any query: ${vendor.bill_contact}` : 'This is a computer-generated bill and needs no signature.';
+  text(small, left, foot + 30, { width, align: 'center', lineBreak: false, ellipsis: true }, { size: 8.5, color: MUTED });
   // "[mark] Billed with MezMitra", centred as one.
   doc.font('Helvetica').fontSize(8);
   const credit = doc.widthOfString('Billed with MezMitra');

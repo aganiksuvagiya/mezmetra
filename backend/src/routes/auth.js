@@ -224,6 +224,18 @@ const vendorPatchSchema = z
     theme_accent: hexColour,
     theme_style: z.enum(STYLE_IDS),
     table_code_mode: z.enum(['off', 'optional', 'required']),
+    bill_name: z.string().trim().max(120),
+    bill_address: z.string().trim().max(200),
+    gstin: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^$|^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]{3}$/, 'A GSTIN has 15 characters, like 24ABCDE1234F1Z5'),
+    fssai: z
+      .string()
+      .trim()
+      .regex(/^$|^\d{14}$/, 'An FSSAI licence number has 14 digits'),
+    bill_contact: z.string().trim().max(120),
   })
   .partial();
 
@@ -255,9 +267,17 @@ export function vendorRouter(db) {
          theme_primary = COALESCE($5, theme_primary),
          theme_accent  = COALESCE($6, theme_accent),
          table_code_mode = COALESCE($7, table_code_mode),
-         theme_style   = COALESCE($8, theme_style)
+         theme_style   = COALESCE($8, theme_style),
+         bill_name     = COALESCE($9, bill_name),
+         bill_address  = COALESCE($10, bill_address),
+         gstin         = COALESCE($11, gstin),
+         fssai         = COALESCE($12, fssai),
+         bill_contact  = COALESCE($13, bill_contact)
        WHERE id = $1 RETURNING *`,
-      [req.vendorId, body.name ?? null, body.tax_percent ?? null, body.timezone ?? null, body.theme_primary ?? null, body.theme_accent ?? null, body.table_code_mode ?? null, body.theme_style ?? null],
+      [
+        req.vendorId,
+        ...['name', 'tax_percent', 'timezone', 'theme_primary', 'theme_accent', 'table_code_mode', 'theme_style', 'bill_name', 'bill_address', 'gstin', 'fssai', 'bill_contact'].map((key) => body[key] ?? null),
+      ],
     );
     res.json({ data: vendorOut(rows[0]) });
   });

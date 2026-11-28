@@ -5,6 +5,7 @@ import { Alert } from './EmptyState.jsx';
 import { Select, SwitchField } from './Field.jsx';
 import { useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { readVoicePrefs, speakSample, speechSupported, VOICE_LANGS, VOICE_SPEEDS, voicesFor, writeVoicePrefs } from '../lib/orderAlert.js';
+import { readAutoSlip, writeAutoSlip } from '../lib/orderSlip.js';
 
 /** Voices arrive a moment after the page opens (browsers announce them with an event), so re-read the list when they do. */
 function useVoicesLoaded() {
@@ -23,6 +24,7 @@ function useVoicesLoaded() {
 export default function AlertSettingsCard() {
   const { sound } = useLiveOrders();
   const [prefs, setPrefs] = useState(readVoicePrefs);
+  const [autoSlip, setAutoSlip] = useState(readAutoSlip);
   useVoicesLoaded();
   const change = (patch) => setPrefs(writeVoicePrefs(patch));
 
@@ -43,6 +45,16 @@ export default function AlertSettingsCard() {
             onChange={() => sound.toggle()}
           />
         )}
+
+        <SwitchField
+          label="Print an order slip for every new order"
+          description="A kitchen ticket with the table, dishes and notes, without prices. Your browser shows its print window each time; Chrome started with kiosk printing prints straight away."
+          checked={autoSlip}
+          onChange={(on) => {
+            writeAutoSlip(on);
+            setAutoSlip(on);
+          }}
+        />
 
         <SwitchField
           label="Read new orders out loud"

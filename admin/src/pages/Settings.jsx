@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { Button } from '../components/Button.jsx';
 import { Card, CardHeader, PageHeader } from '../components/Card.jsx';
 import AlertSettingsCard from '../components/AlertSettingsCard.jsx';
+import BillDetailsCard from '../components/BillDetailsCard.jsx';
 import ChangePasswordCard from '../components/ChangePasswordCard.jsx';
 import KitchenLoginCard from '../components/KitchenLoginCard.jsx';
 import TableCodeCard from '../components/TableCodeCard.jsx';
@@ -173,6 +174,7 @@ export default function Settings() {
         <div className="min-w-0 space-y-3 @xl:space-y-4">
           <LogoCard />
           {restaurantCard}
+          <BillDetailsCard />
           <TableCodeCard />
         </div>
         <div className="min-w-0 space-y-3 @xl:space-y-4">

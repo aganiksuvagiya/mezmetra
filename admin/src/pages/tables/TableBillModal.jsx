@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Button } from '../../components/Button.jsx';
 import { Alert, ErrorState } from '../../components/EmptyState.jsx';
+import { PrinterIcon } from '../../components/icons.jsx';
 import Modal from '../../components/Modal.jsx';
 import { Skeleton } from '../../components/Spinner.jsx';
 import { useToast } from '../../components/Toast.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { api } from '../../lib/api.js';
+import { billOfTable, printBill } from '../../lib/billSlip.js';
 import { useAction, useQuery } from '../../lib/hooks.js';
 import { useFmt } from '../../lib/useFmt.js';
 
@@ -49,6 +51,11 @@ export default function TableBillModal({ table, onClose, onChanged }) {
       <Button variant="secondary" onClick={onClose}>
         Close
       </Button>
+      {bill && bill.count > 0 && !confirm && (
+        <Button variant="secondary" icon={PrinterIcon} onClick={() => printBill(billOfTable(bill), vendor)}>
+          Print bill
+        </Button>
+      )}
       {bill && bill.count > 0 && cashOffered && !confirm && (
         <Button disabled={busy} onClick={() => setConfirm(true)}>
           Paid by cash

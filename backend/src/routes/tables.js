@@ -132,13 +132,16 @@ export function tablesRouter(db) {
         table_number: table.rows[0].number,
         count: rows.length,
         total: toRupees(rows.reduce((n, o) => n + o.total_paise, 0)),
+        // For the printed bill.
+        subtotal: toRupees(rows.reduce((n, o) => n + o.subtotal_paise, 0)),
+        tax: toRupees(rows.reduce((n, o) => n + o.tax_paise, 0)),
         orders: rows.map((o) => ({
           id: o.id,
           number: o.order_no,
           status: o.status,
           total: toRupees(o.total_paise),
           created_at: o.created_at,
-          items: (items.get(o.id) ?? []).map((i) => ({ name: i.name, quantity: i.quantity })),
+          items: (items.get(o.id) ?? []).map((i) => ({ name: i.name, quantity: i.quantity, line_total: i.line_total, options: i.options.map((o) => ({ name: o.name })) })),
         })),
       },
     });

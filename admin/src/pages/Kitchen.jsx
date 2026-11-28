@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
-import { ExpandIcon, LogoMark, MoonIcon, SunIcon, VolumeIcon, VolumeOffIcon } from '../components/icons.jsx';
+import { ExpandIcon, LogoMark, MoonIcon, PrinterIcon, SunIcon, VolumeIcon, VolumeOffIcon } from '../components/icons.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { LiveOrdersProvider, useLiveOrders } from '../context/LiveOrdersContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { api } from '../lib/api.js';
 import { cx } from '../lib/cx.js';
 import { useDocumentTitle } from '../lib/hooks.js';
+import { printOrderSlips, readAutoSlip, writeAutoSlip } from '../lib/orderSlip.js';
 
 // The kitchen screen, drawn the way Apple draws its own apps: system fonts and colours, a grouped grey background, white cards with large
 // rounded corners, hairline separators, tinted capsules and filled system buttons (the look itself lives in index.css as `.kitchen`).
@@ -227,7 +228,7 @@ function MoreMenu({ disabled, onReject }) {
 }
 
 /** One order as a card: the table, the dishes as a plain list, and a small capsule button in the corner (the way the App Store puts "Get"). */
-function Ticket({ order, lane, now, fresh, busy, flipRef, onAccept, onReady, onReject }) {
+function Ticket({ order, lane, now, fresh, busy, flipRef, onAccept, onReady, onReject, onPrint }) {
   const age = minutesSince(order.created_at, now);
   const late = lane !== 'ready' && age >= LATE_MIN;
   const warn = lane !== 'ready' && !late && age >= WARN_MIN;
@@ -248,8 +249,10 @@ function Ticket({ order, lane, now, fresh, busy, flipRef, onAccept, onReady, onR
           </p>
           <p className="truncate text-[2rem] font-bold leading-[1.05] tracking-[-0.025em]">{order.table_number}</p>
         </div>
-        {lane !== 'ready' && (
-          <div className="flex shrink-0 items-center gap-2 pt-1">
+        <div className="flex shrink-0 items-center gap-2 pt-1">
+            <RoundButton onClick={onPrint} aria-label={`Print the slip of order ${order.number}`} title="Print order slip">
+              <PrinterIcon size={17} />
+            </RoundButton>
             {lane === 'new' && <MoreMenu disabled={busy} onReject={onReject} />}
             {lane === 'new' && (
               <Capsule busy={busy} onClick={onAccept} tone="k-fill-blue">
@@ -261,8 +264,7 @@ function Ticket({ order, lane, now, fresh, busy, flipRef, onAccept, onReady, onR
                 Ready
               </Capsule>
             )}
-          </div>
-        )}
+        </div>
       </div>
       <div className="flex items-center justify-between gap-3 px-4 pt-1.5">
         <p className="k-l2 text-[0.8125rem]">
@@ -312,6 +314,7 @@ function Kitchen() {
   const [rejecting, setRejecting] = useState(null);
   const [fullscreen, setFullscreen] = useState(Boolean(document.fullscreenElement));
   const [awake, setAwake] = useState(false);
+  const [autoSlip, setAutoSlip] = useState(readAutoSlip);
 
   // A bigger or smaller screen text: the whole page scales (everything is in rem).
   useEffect(() => {
@@ -498,6 +501,20 @@ function Kitchen() {
                 <span className={sound.on && sound.ready ? 'hidden lg:inline' : ''}>{sound.on ? (sound.ready ? 'Sound on' : 'Tap to enable sound') : 'Sound off'}</span>
               </button>
             )}
+            <button
+              type="button"
+              aria-pressed={autoSlip}
+              title="Print a slip for every new order, on this device"
+              onClick={() => {
+                writeAutoSlip(!autoSlip);
+                setAutoSlip(!autoSlip);
+                toast.success(autoSlip ? 'Slips are no longer printed by themselves.' : 'A slip will be printed for every new order on this device.');
+              }}
+              className={cx('inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[0.8125rem] font-semibold transition active:scale-95', autoSlip ? 'k-fill-blue text-white' : 'k-fill k-l2')}
+            >
+              <PrinterIcon size={17} />
+              <span className="hidden lg:inline">{autoSlip ? 'Auto print on' : 'Auto print off'}</span>
+            </button>
             <Segmented
               label="Look"
               value={look}
@@ -610,6 +627,7 @@ function Kitchen() {
                           onAccept={() => accept(o)}
                           onReady={() => ready(o)}
                           onReject={() => setRejecting(o)}
+                          onPrint={() => printOrderSlips([o], { restaurant: vendor?.name, timeZone: vendor?.timezone })}
                         />
                       ))}
                     </ul>

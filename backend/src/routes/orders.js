@@ -273,7 +273,10 @@ export function ordersRouter(db) {
   router.get('/:id/receipt.pdf', async (req, res) => {
     const order = await loadOne(db, req.params.id, req.vendorId);
     if (order.payment_status !== 'paid') throw conflict('NOT_PAID', 'A receipt is available once the order is paid.');
-    const { rows } = await db.query(`SELECT name, timezone, theme_primary, tax_percent FROM vendors WHERE id = $1`, [req.vendorId]);
+    const { rows } = await db.query(
+      `SELECT name, timezone, theme_primary, tax_percent, bill_name, bill_address, gstin, fssai, bill_contact FROM vendors WHERE id = $1`,
+      [req.vendorId],
+    );
     // A PDF can hold a JPEG or PNG picture only.
     const logo = await db.query(`SELECT data FROM vendor_logos WHERE vendor_id = $1 AND mime IN ('image/jpeg', 'image/png')`, [req.vendorId]);
     res.set({

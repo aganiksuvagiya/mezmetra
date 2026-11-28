@@ -6,6 +6,7 @@ import { api, apiPage } from '../lib/api.js';
 import { formatMoney } from '../lib/format.js';
 import { useQuery } from '../lib/hooks.js';
 import { announceOrders, announceRequests, audioRunning, playOrderChime, readSoundPref, soundSupported, speakSample, voiceActive, unlockAudio, writeSoundPref } from '../lib/orderAlert.js';
+import { printOrderSlips, readAutoSlip } from '../lib/orderSlip.js';
 
 const noop = () => {};
 const LiveOrdersContext = createContext({
@@ -33,6 +34,7 @@ const TITLE_COUNT = /^\(\d+\)\s/;
  *  - `count` feeds the badges, `pending` (orders waiting to be accepted) is shown in the browser tab title;
  *  - a chime plays and each new order is read out loud ("New order. Table 3. 2 items."), when the person switched sound on; a toast appears (except on the Orders page, which has its own),
  *    and a desktop notification is shown if the tab is in the background and the person allowed notifications;
+ *  - a device told to print order slips prints one for each new order;
  *  - `arrivals` counts new orders seen so far, so the Orders page can refresh the moment one comes in.
  * Orders that already exist when the page opens never trigger an alert.
  */
@@ -70,7 +72,7 @@ export function LiveOrdersProvider({ children }) {
 
   const latest = useRef({});
   useEffect(() => {
-    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders') || pathname.startsWith('/kitchen'), navigate };
+    latest.current = { soundOn, soundReady, onOrdersPage: pathname.startsWith('/orders') || pathname.startsWith('/kitchen'), navigate, vendor };
   });
 
   // New orders: anything newer than the newest order we have already seen.
@@ -99,6 +101,12 @@ export function LiveOrdersProvider({ children }) {
       } else {
         playOrderChime();
       }
+    }
+    // The slip for the kitchen, where this device was told to print one. After the chime and the voice have started: the print
+    // window holds up the page while it is open.
+    if (readAutoSlip()) {
+      const { name, timezone } = latest.current.vendor ?? {};
+      setTimeout(() => printOrderSlips(fresh, { restaurant: name, timeZone: timezone }), 2500);
     }
     // Opening the notification shows the order itself (one new order) or the orders list (several).
     const openIt = () => latest.current.navigate(fresh.length === 1 ? `/orders?order=${fresh[0].id}` : '/orders');

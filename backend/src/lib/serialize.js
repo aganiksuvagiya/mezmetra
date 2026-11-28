@@ -16,6 +16,12 @@ export const vendorOut = (v, kitchen = null) => ({
   currency: v.currency,
   timezone: v.timezone,
   tax_percent: Number(v.tax_percent),
+  // Printed on bills; empty strings are left out of them.
+  bill_name: v.bill_name ?? '',
+  bill_address: v.bill_address ?? '',
+  gstin: v.gstin ?? '',
+  fssai: v.fssai ?? '',
+  bill_contact: v.bill_contact ?? '',
   theme: themeOut(v),
   logo_url: logoUrl(v),
   // Whether diners are asked for the code printed on their table: 'off', 'optional' (may skip it) or 'required' (stops orders from people who only have the link).

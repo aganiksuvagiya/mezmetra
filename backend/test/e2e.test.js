@@ -4810,3 +4810,88 @@ describe('the A4 bill', () => {
     assert.equal(amountInWords(12345678.01), 'Rupees One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight and One Paise Only');
   });
 });
+
+describe('the order slip for the kitchen', () => {
+  const order = {
+    number: 25,
+    table_number: '6',
+    created_at: '2026-11-28T09:37:00Z',
+    payment_status: 'unpaid',
+    note: 'Bring water <first>',
+    total: 2.2,
+    items: [
+      { name: 'Cutting Chai', quantity: 2, line_total: 2.2, options: [{ name: 'Less sugar', price: 0 }], instructions: 'Very hot' },
+      { name: '<img src=x onerror=alert(1)>', quantity: 1, line_total: 0, options: [], instructions: null },
+    ],
+  };
+
+  it('says what to make and for which table, without prices, and shows typed text as text', async () => {
+    const { orderSlipDocument } = await import('../../admin/src/lib/orderSlip.js');
+    const page = orderSlipDocument([order], { restaurant: 'Tea & Post', timeZone: 'Asia/Kolkata' });
+    for (const said of ['Tea &amp; Post', 'TABLE 6', '#25', '3:07', '2 ×', 'Cutting Chai', '+ Less sugar', '** Very hot', 'Bring water &lt;first&gt;', 'Items: 3', 'NOT PAID']) {
+      assert.ok(page.includes(said), said);
+    }
+    assert.ok(!page.includes('<img'), 'a dish name cannot add markup');
+    assert.ok(!/2\.2|₹|Rs /.test(page), 'no prices');
+  });
+
+  it('prints one slip for each order, each on its own paper', async () => {
+    const { orderSlipDocument, printOrderSlips } = await import('../../admin/src/lib/orderSlip.js');
+    const page = orderSlipDocument([order, { ...order, number: 26, payment_status: 'paid' }], {});
+    assert.equal(page.match(/<article>/g).length, 2);
+    assert.match(page, /break-before: page/);
+    assert.match(page, />PAID</);
+    assert.equal(printOrderSlips([order], {}), false); // nothing to print on outside a browser
+  });
+});
+
+describe('the printed bill and the bill details', () => {
+  const PASSWORD = 'a-long-enough-password';
+
+  it('saves bill details, checks them, and shows them to the printed and the PDF bill', async () => {
+    const token = (await signupAccount({ name: 'Detail Cafe', email: 'detail@example.test', password: PASSWORD })).body.data.token;
+    const fresh = (await api('GET', '/api/admin/vendor', { token })).body.data;
+    assert.deepEqual([fresh.bill_name, fresh.bill_address, fresh.gstin, fresh.fssai, fresh.bill_contact], ['', '', '', '', '']);
+    for (const body of [{ gstin: '12345' }, { fssai: '12' }, { bill_address: 'x'.repeat(201) }]) {
+      assert.equal((await api('PATCH', '/api/admin/vendor', { token, body })).status, 400, JSON.stringify(body));
+    }
+    const saved = await api('PATCH', '/api/admin/vendor', { token, body: { bill_name: 'M/s Detail Foods', gstin: '24abcde1234f1z5', fssai: '10000000000000', bill_address: '1, Test Road', bill_contact: 'care@example.test', tax_percent: 5 } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.data.gstin, '24ABCDE1234F1Z5');
+    // Saving something else leaves them; an empty text clears one.
+    await api('PATCH', '/api/admin/vendor', { token, body: { name: 'Detail Cafe 2' } });
+    const cleared = (await api('PATCH', '/api/admin/vendor', { token, body: { bill_contact: '' } })).body.data;
+    assert.deepEqual([cleared.bill_name, cleared.bill_contact], ['M/s Detail Foods', '']);
+
+    const cat = (await api('POST', '/api/admin/categories', { token, body: { name: 'Tea' } })).body.data;
+    const itemId = (await api('POST', '/api/admin/items', { token, body: { category_id: cat.id, name: 'Chai', price: 40 } })).body.data.id;
+    const table = (await api('POST', '/api/admin/tables', { token, body: { number: 'B1', capacity: 2 } })).body.data;
+    const qr = table.qr_url.split('/').pop();
+    for (const quantity of [1, 2]) await api('POST', `/api/public/t/${qr}/orders`, { body: { items: [{ item_id: itemId, quantity }], payment_method: 'cash' } });
+    const bill = (await api('GET', `/api/admin/tables/${table.id}/bill`, { token })).body.data;
+    assert.deepEqual([bill.subtotal, bill.tax, bill.total], [120, 6, 126]);
+    assert.deepEqual(bill.orders[1].items, [{ name: 'Chai', quantity: 2, line_total: 80, options: [] }]);
+
+    const { billDocument, billOfTable, billOfOrder } = await import('../../admin/src/lib/billSlip.js');
+    const page = billDocument(billOfTable(bill, new Date('2026-11-28T12:03:00Z')), { ...cleared, name: 'Detail Cafe 2' });
+    for (const said of ['M/s Detail Foods', '1, Test Road', 'GSTIN: 24ABCDE1234F1Z5', 'FSSAI: 10000000000000', 'Tax Invoice', 'Memo# 1, 2', '05:33 PM', '28-Nov-2026', 'Table: B1', '<td>3</td><td>40.00</td><td>120.00</td>', 'CGST Output 2.5% (Excl)', 'SGST Output 2.5% (Excl)', '<span>3.00</span>', 'Total Qty: 3', '<b>126.00</b>', '(Rupees One Hundred Twenty Six Only)', 'NOT PAID YET', '>E &amp; OE<']) {
+      assert.ok(page.includes(said), said);
+    }
+    assert.ok(!page.includes('feedback'), 'no contact line without a contact');
+
+    const orders = (await api('GET', '/api/admin/orders', { token })).body.data;
+    const paid = (await api('POST', `/api/admin/orders/${orders[0].id}/cash-payment`, { token })).body.data;
+    const single = billDocument(billOfOrder(paid), { name: '<b>Plain</b> Cafe', tax_percent: 5 });
+    assert.ok(single.includes('&lt;b&gt;Plain&lt;/b&gt; Cafe') && single.includes('<h2>Bill</h2>') && single.includes('Tax (5%)') && single.includes('Pay Mode: Cash at counter'));
+    const pdf = await api('GET', `/api/admin/orders/${orders[0].id}/receipt.pdf`, { token });
+    assert.equal(pdf.status, 200);
+  });
+
+  it('splits the tax into two halves that add up, only for a restaurant with a GSTIN', async () => {
+    const { taxLines } = await import('../../shared/bill.js');
+    assert.deepEqual(taxLines({ subtotal: 80.95, tax: 4.05 }, { gstin: 'x', tax_percent: 5 }).map((l) => l.amount), [2.03, 2.02]);
+    assert.deepEqual(taxLines({ subtotal: 100, tax: 18 }, { gstin: '', tax_percent: 18 }), [{ label: 'Tax (18%)', amount: 18 }]);
+    assert.deepEqual(taxLines({ subtotal: 100, tax: 12 }, { gstin: 'x', tax_percent: 5 }).map((l) => l.label), ['CGST Output (Excl)', 'SGST Output (Excl)']);
+    assert.deepEqual(taxLines({ subtotal: 100, tax: 0 }, { gstin: 'x', tax_percent: 0 }), []);
+  });
+});

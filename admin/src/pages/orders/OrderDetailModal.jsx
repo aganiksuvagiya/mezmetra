@@ -3,7 +3,7 @@ import { Badge, PaymentBadge, StatusBadge } from '../../components/Badge.jsx';
 import { Button } from '../../components/Button.jsx';
 import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import { Alert, ErrorState } from '../../components/EmptyState.jsx';
-import { CloseIcon, InfoIcon, ReceiptIcon } from '../../components/icons.jsx';
+import { CloseIcon, InfoIcon, PrinterIcon, ReceiptIcon } from '../../components/icons.jsx';
 import Modal from '../../components/Modal.jsx';
 import SidePanel from '../../components/SidePanel.jsx';
 import { Skeleton } from '../../components/Spinner.jsx';
@@ -11,6 +11,8 @@ import { useToast } from '../../components/Toast.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { api, apiBlob } from '../../lib/api.js';
 import { downloadUrl, useAction, useQuery } from '../../lib/hooks.js';
+import { billOfOrder, printBill } from '../../lib/billSlip.js';
+import { printOrderSlips } from '../../lib/orderSlip.js';
 import { useFmt } from '../../lib/useFmt.js';
 import OrderTimeline from './OrderTimeline.jsx';
 
@@ -291,7 +293,7 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
     const canRefund = paid && REFUNDABLE.includes(order.payment_method);
     const waitingForPayment = order.status === 'accepted' && !paid;
 
-    if (main.length || order.receipt_url || canCancel || canRefund || waitingForPayment) {
+    if (main.length || order.receipt_url || active || canCancel || canRefund || waitingForPayment) {
       footer = (
         <div className="@container grid w-full gap-2.5">
           {waitingForPayment && (
@@ -301,10 +303,20 @@ export default function OrderDetailModal({ orderId, onClose, onChanged, docked =
             </p>
           )}
           {main.length > 0 && <div className={main.length > 1 ? 'grid grid-cols-1 gap-2.5 @[26rem]:grid-cols-2 [&>button]:w-full' : '[&>button]:w-full'}>{main}</div>}
-          {order.receipt_url && (
-            <Button variant="secondary" icon={ReceiptIcon} busy={pending === 'receipt'} disabled={busy} onClick={openReceipt} className="w-full">
-              View receipt
+          {active && (
+            <Button variant="secondary" icon={PrinterIcon} onClick={() => printOrderSlips([order], { restaurant: vendor?.name, timeZone: vendor?.timezone })} className="w-full">
+              Print order slip
             </Button>
+          )}
+          {order.receipt_url && (
+            <>
+              <Button variant="secondary" icon={PrinterIcon} onClick={() => printBill(billOfOrder(order), vendor)} className="w-full">
+                Print bill
+              </Button>
+              <Button variant="secondary" icon={ReceiptIcon} busy={pending === 'receipt'} disabled={busy} onClick={openReceipt} className="w-full">
+                A4 bill (PDF)
+              </Button>
+            </>
           )}
           {canCancel && (
             <Button variant="ghost" icon={CloseIcon} disabled={busy} onClick={() => setConfirm('cancel')} className="w-full !text-red-700 hover:!bg-red-50">
