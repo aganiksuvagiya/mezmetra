@@ -1,3 +1,6 @@
+import { useId } from 'react';
+import { LOGO } from '../../../shared/logo.js';
+
 // Small inline icons (24px grid, 1.8 stroke). They are decorative: callers label the surrounding control.
 function make(children, { fill = 'none' } = {}) {
   return function Icon({ size = 20, className = '', filled = false, ...rest }) {
@@ -227,10 +230,18 @@ export const PlugIcon = make(<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 
 
 /** The MezMitra mark: a rounded orange square with a stylised table. */
 export function LogoMark({ size = 36, className = '' }) {
+  const shade = `mark${useId().replace(/[^a-zA-Z0-9]/g, '')}`; // each copy on a page needs its own gradient name
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false" className={`shrink-0 ${className}`}>
-      <rect width="32" height="32" rx="9" fill="#E8782F" />
-      <path d="M7 12h18M10 12v10M22 12v10M7 12l1.5-4h15L25 12" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" focusable="false" className={`shrink-0 ${className}`}>
+      <defs>
+        <linearGradient id={shade} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor={LOGO.from} />
+          <stop offset="1" stopColor={LOGO.to} />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx={LOGO.radius} fill={`url(#${shade})`} />
+      <circle {...LOGO.head} fill="#fff" />
+      <path d={LOGO.arms} fill="none" stroke="#fff" strokeWidth={LOGO.stroke} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

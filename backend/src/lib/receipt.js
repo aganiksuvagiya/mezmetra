@@ -33,6 +33,18 @@ function textOn(hex) {
   return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#111827' : '#ffffff';
 }
 
+/** The MezMitra mark (shared/logo.js has the same shapes), `size` points square. */
+function drawMark(doc, x, y, size) {
+  doc.save();
+  doc.translate(x, y).scale(size / 64);
+  const shade = doc.linearGradient(0, 0, 64, 64);
+  shade.stop(0, '#F7A04B').stop(1, '#D9560F');
+  doc.roundedRect(0, 0, 64, 64, 17).fill(shade);
+  doc.circle(32, 17, 6.5).fill('#ffffff');
+  doc.path('M15 49V25L32 39.5L49 25V49').lineWidth(7.5).lineCap('round').lineJoin('round').stroke('#ffffff');
+  doc.restore();
+}
+
 const INK = '#111827';
 const MUTED = '#6b7280';
 const LINE = '#e5e7eb';
@@ -180,6 +192,11 @@ export function writeReceipt(res, { vendor, order }) {
   rule(foot);
   text('Thank you! Visit again.', left, foot + 12, { width, align: 'center', lineBreak: false }, { font: 'Helvetica-Bold', size: 12, color: strong });
   text('This is a computer-generated bill and needs no signature.', left, foot + 30, { width, align: 'center', lineBreak: false }, { size: 8.5, color: MUTED });
-  text('Billed with MezMitra', left, foot + 43, { width, align: 'center', lineBreak: false }, { size: 8, color: MUTED });
+  // "[mark] Billed with MezMitra", centred as one.
+  doc.font('Helvetica').fontSize(8);
+  const credit = doc.widthOfString('Billed with MezMitra');
+  const creditX = left + (width - credit - 15) / 2;
+  drawMark(doc, creditX, foot + 41, 11);
+  text('Billed with MezMitra', creditX + 15, foot + 43, { lineBreak: false }, { size: 8, color: MUTED });
   doc.end();
 }

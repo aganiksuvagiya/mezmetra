@@ -2,6 +2,7 @@
 // "Made with ♥ by Raavora" credit. Drawn in the browser (canvas) from the QR image the API already serves, so what the owner
 // sees in the preview is exactly what they download and print.
 
+import { LOGO } from '../../../shared/logo.js';
 import { CREDIT } from './brand.js';
 
 export const CARD_W = 1200;
@@ -9,6 +10,30 @@ export const CARD_H = 1680;
 const QR_SIZE = 860;
 const FONT = '"Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 const HEART = 'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z';
+
+/** The MezMitra mark, `size` pixels square, with its top left corner at (x, y). */
+function drawMark(ctx, x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 64, size / 64);
+  const shade = ctx.createLinearGradient(0, 0, 64, 64);
+  shade.addColorStop(0, LOGO.from);
+  shade.addColorStop(1, LOGO.to);
+  ctx.fillStyle = shade;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, 64, 64, LOGO.radius);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(LOGO.head.cx, LOGO.head.cy, LOGO.head.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = LOGO.stroke;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke(new Path2D(LOGO.arms));
+  ctx.restore();
+}
 
 const loadImage = (src) =>
   new Promise((resolve, reject) => {
@@ -138,7 +163,7 @@ export async function buildQrCard({ qrSrc, restaurantName, tableNumber, tableCod
     ctx.fillText(`Table code: ${tableCode}`, cx, tableBaseline + 74);
   }
 
-  // Credit: "Made with ♥ by Raavora · raavora.com"
+  // Credit: "[mark] MezMitra · Made with ♥ by Raavora · raavora.com"
   const baseline = CARD_H - 110;
   const size = 34;
   const heart = size * 1.1;
@@ -150,9 +175,22 @@ export async function buildQrCard({ qrSrc, restaurantName, tableNumber, tableCod
   const wTail = ctx.measureText(`  ·  ${CREDIT.site}`).width;
   ctx.font = `700 ${size}px ${FONT}`;
   const wBrand = ctx.measureText(CREDIT.by).width;
-  let x = cx - (wMade + gap + heart + gap + wBy + wBrand + wTail) / 2;
+  const markSize = size * 1.35;
+  ctx.font = `800 ${size}px ${FONT}`;
+  const wProduct = ctx.measureText('MezMitra').width;
+  ctx.font = `500 ${size}px ${FONT}`;
+  const wDot = ctx.measureText('  ·  ').width;
+  let x = cx - (markSize + gap + wProduct + wDot + wMade + gap + heart + gap + wBy + wBrand + wTail) / 2;
+  drawMark(ctx, x, baseline - markSize * 0.82, markSize);
+  x += markSize + gap;
+  ctx.fillStyle = '#1c1c1e';
+  ctx.font = `800 ${size}px ${FONT}`;
+  ctx.fillText('MezMitra', x, baseline);
+  x += wProduct;
   ctx.fillStyle = '#8a8a8e';
   ctx.font = `500 ${size}px ${FONT}`;
+  ctx.fillText('  ·  ', x, baseline);
+  x += wDot;
   ctx.fillText('Made with', x, baseline);
   x += wMade + gap;
   ctx.save();

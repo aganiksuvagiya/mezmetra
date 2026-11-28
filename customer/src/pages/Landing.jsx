@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
-import { MenuBookIcon, QrIcon } from '../components/Icons';
+import { QrIcon } from '../components/Icons';
+import LogoMark from '../components/LogoMark';
 import { parseTableLink } from '../lib/ids';
 import { applyClassicLook } from '../lib/theme';
 import { usePageTitle } from '../lib/usePageTitle';
@@ -79,10 +80,10 @@ export default function Landing() {
         <span aria-hidden="true" className="pointer-events-none absolute -bottom-28 -left-20 size-60 rounded-full bg-brand-400/35 blur-3xl" />
         <div className="relative">
           <div className="flex items-center gap-2.5">
-            <span className="grid size-10 place-items-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/25">
-              <MenuBookIcon className="size-6" />
+            <LogoMark size={40} />
+            <span className="text-xl font-extrabold tracking-tight">
+              Mez<span className="text-saffron-300">Mitra</span>
             </span>
-            <span className="text-xl font-extrabold tracking-tight">MezMitra</span>
           </div>
 
           <div className="mt-8 flex items-center gap-5">
